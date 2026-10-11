@@ -50,6 +50,32 @@ export interface GroupTypingPayload {
 export type GroupTypingListener = (payload: GroupTypingPayload) => void;
 
 /* ────────────────────────────────────────────────────────── */
+/* Case-tolerant field reader                                 */
+/* ────────────────────────────────────────────────────────── */
+
+/**
+ * Read a field from a SignalR payload regardless of whether the
+ * backend sends camelCase, PascalCase, or SCREAMING_CASE keys.
+ */
+function field<T = unknown>(obj: unknown, ...names: string[]): T | undefined {
+  if (!obj || typeof obj !== 'object') return undefined;
+  const rec = obj as Record<string, unknown>;
+  for (const name of names) {
+    if (name in rec && rec[name] !== undefined) return rec[name] as T;
+  }
+  // Case-insensitive fallback
+  const lower = new Map<string, unknown>();
+  for (const [k, v] of Object.entries(rec)) {
+    lower.set(k.toLowerCase(), v);
+  }
+  for (const name of names) {
+    const v = lower.get(name.toLowerCase());
+    if (v !== undefined) return v as T;
+  }
+  return undefined;
+}
+
+/* ────────────────────────────────────────────────────────── */
 /* Payload normalisation                                      */
 /* ────────────────────────────────────────────────────────── */
 
@@ -77,7 +103,7 @@ function extractIsOnlineFromPayload(payload: unknown): boolean {
 }
 
 /* ────────────────────────────────────────────────────────── */
-/* Token helper — refresh before reconnect                    */
+/* Token helper                                               */
 /* ────────────────────────────────────────────────────────── */
 
 async function getFreshToken(): Promise<string> {
@@ -96,7 +122,7 @@ async function getFreshToken(): Promise<string> {
       }
     }
   } catch {
-    /* non-JWT or malformed — use as-is */
+    /* non-JWT — use as-is */
   }
   return token;
 }
@@ -155,15 +181,9 @@ class SignalRService {
 
       const baseHubUrl = `${API_BASE_URL.replace(/\/+$/, '')}/hubs/chat`;
 
-      // accessTokenFactory must return string | Promise<string>.
-      // Wrapping in an async IIFE guarantees a Promise<string> for
-      // both @microsoft/signalr v6 and v7+ type definitions.
       const builder = new HubConnectionBuilder()
         .withUrl(baseHubUrl, {
-          accessTokenFactory: async () => {
-            const token = await getFreshToken();
-            return token;
-          },
+          accessTokenFactory: async () => await getFreshToken(),
         })
         .withAutomaticReconnect([0, 2000, 5000, 10000, 30000])
         .configureLogging(LogLevel.Warning);
@@ -171,7 +191,6 @@ class SignalRService {
       this.connection = builder.build();
       this.bindInternalEvents(this.connection);
 
-      // Surface reconnect events so we can see when drops happen.
       this.connection.onreconnecting((err) => {
         console.warn('[SignalR] Reconnecting:', err);
       });
@@ -200,19 +219,15 @@ class SignalRService {
   private bindInternalEvents(conn: HubConnection): void {
     /* ── Direct messages ─────────────────────────────── */
     conn.on('ReceiveDirectMessage', (message: DirectMessageDto) => {
-      this.directMessageListeners.forEach((listener) => {
-        try { listener(message); } catch (err) {
-          console.error('Error in ReceiveDirectMessage listener:', err);
-        }
+      this.directMessageListeners.forEach((l) => {
+        try { l(message); } catch (e) { console.error(e); }
       });
     });
 
     /* ── Group messages ──────────────────────────────── */
     conn.on('ReceiveGroupMessage', (message: GroupMessageDto) => {
-      this.groupMessageListeners.forEach((listener) => {
-        try { listener(message); } catch (err) {
-          console.error('Error in ReceiveGroupMessage listener:', err);
-        }
+      this.groupMessageListeners.forEach((l) => {
+        try { l(message); } catch (e) { console.error(e); }
       });
     });
 
@@ -224,10 +239,8 @@ class SignalRService {
         if (online) presenceStore.setOnline(uid);
         else presenceStore.setOffline(uid);
       }
-      this.presenceListeners.forEach((listener) => {
-        try { listener(payload); } catch (err) {
-          console.error(`Error in ${source} listener:`, err);
-        }
+      this.presenceListeners.forEach((l) => {
+        try { l(payload); } catch (e) { console.error(source, e); }
       });
     };
 
@@ -235,7 +248,7 @@ class SignalRService {
     conn.on('userstatuschanged', (p: UserPresencePayload) => handlePresence(p, 'userstatuschanged'));
     conn.on('UserPresenceChanged', (p: UserPresencePayload) => handlePresence(p, 'UserPresenceChanged'));
 
-    /* ── Initial presence snapshot ───────────────────── */
+    /* ── Initial presence ────────────────────────────── */
     const handleInitialPresence = (onlineUserIds: unknown, source: string) => {
       const list = Array.isArray(onlineUserIds) ? onlineUserIds : [];
       const ids: string[] = [];
@@ -244,115 +257,139 @@ class SignalRService {
         if (id) ids.push(id);
       }
       presenceStore.setAll(ids);
-      this.initialPresenceListeners.forEach((listener) => {
-        try { listener(list); } catch (err) {
-          console.error(`Error in ${source} listener:`, err);
-        }
+      this.initialPresenceListeners.forEach((l) => {
+        try { l(list); } catch (e) { console.error(source, e); }
       });
     };
 
     conn.on('InitialPresenceList', (ids: unknown) => handleInitialPresence(ids, 'InitialPresenceList'));
     conn.on('initialpresencelist', (ids: unknown) => handleInitialPresence(ids, 'initialpresencelist'));
 
-    /* ── Typing indicators ───────────────────────────── */
+    /* ── Typing ──────────────────────────────────────── */
     conn.on('DirectTypingStatus', (data: DirectTypingPayload) => {
-      this.directTypingListeners.forEach((listener) => {
-        try { listener(data); } catch (err) {
-          console.error('Error in DirectTypingStatus listener:', err);
-        }
+      this.directTypingListeners.forEach((l) => {
+        try { l(data); } catch (e) { console.error(e); }
       });
     });
-
     conn.on('GroupTypingStatus', (data: GroupTypingPayload) => {
-      this.groupTypingListeners.forEach((listener) => {
-        try { listener(data); } catch (err) {
-          console.error('Error in GroupTypingStatus listener:', err);
-        }
+      this.groupTypingListeners.forEach((l) => {
+        try { l(data); } catch (e) { console.error(e); }
       });
     });
 
-    /* ── Incoming call (canonical — backend sends callType) ── */
-    conn.on('IncomingCall', (call: CallSessionDto) => {
-      this.incomingCallListeners.forEach((listener) => {
-        try { listener(call); } catch (err) {
-          console.error('Error in IncomingCall listener:', err);
-        }
+    /* ── Incoming call ───────────────────────────────── */
+    conn.on('IncomingCall', (raw: unknown) => {
+      const call: CallSessionDto = {
+        sessionId: String(field<string>(raw, 'sessionId', 'SessionId') ?? ''),
+        callType: Number(field<number>(raw, 'callType', 'CallType') ?? 0),
+        status: Number(field<number>(raw, 'status', 'Status') ?? 0),
+        initiatorId: field<string>(raw, 'initiatorId', 'InitiatorId'),
+        peerId: field<string>(raw, 'peerId', 'PeerId') ?? null,
+        groupId: field<number>(raw, 'groupId', 'GroupId') ?? null,
+        startedAt: field<string>(raw, 'startedAt', 'StartedAt'),
+        endedAt: field<string>(raw, 'endedAt', 'EndedAt'),
+      };
+      this.incomingCallListeners.forEach((l) => {
+        try { l(call); } catch (e) { console.error(e); }
       });
     });
 
     /* ── WebRTC signaling ────────────────────────────── */
 
-    // Offer is delivered by the backend as a discrete event.
-    // Note: DO NOT synthesise a second "IncomingCall" here — the
-    // backend already sends one. Duplicating causes the callee to
-    // see two calls and the second one wins with possibly-wrong data.
-    conn.on(
-      'ReceiveCallOffer',
-      (data: { callerId: string; callerHandle?: string; sdp: unknown; sessionId: string }) => {
-        const signalPayload: CallSignalPayload = {
-          sessionId: data.sessionId,
-          senderId: data.callerId,
-          signalData: { type: 'offer', sdp: data.sdp },
-        };
-        this.callSignalListeners.forEach((listener) => {
-          try { listener(signalPayload); } catch (err) {
-            console.error('Error in ReceiveCallOffer listener:', err);
-          }
-        });
-      },
-    );
+    conn.on('ReceiveCallOffer', (raw: unknown) => {
+      const callerId = field<string>(raw, 'callerId', 'CallerId');
+      const sdp = field<string>(raw, 'sdp', 'Sdp', 'sdpOffer', 'SdpOffer');
+      const sessionId = field<string>(raw, 'sessionId', 'SessionId');
 
-    conn.on(
-      'ReceiveCallAnswer',
-      (data: { responderId: string; sdp: unknown; sessionId: string }) => {
-        const payload: CallSignalPayload = {
-          sessionId: data.sessionId,
-          senderId: data.responderId,
-          signalData: { type: 'answer', sdp: data.sdp },
-        };
-        this.callSignalListeners.forEach((listener) => {
-          try { listener(payload); } catch (err) {
-            console.error('Error in ReceiveCallAnswer listener:', err);
-          }
+      if (!callerId || !sdp || !sessionId) {
+        console.warn('[SignalR] ReceiveCallOffer — missing fields:', {
+          hasCallerId: !!callerId,
+          hasSdp: !!sdp,
+          hasSessionId: !!sessionId,
+          raw,
         });
-      },
-    );
+        return;
+      }
 
-    conn.on(
-      'ReceiveIceCandidate',
-      (data: { senderId: string; candidate: unknown; sessionId: string }) => {
-        const payload: CallSignalPayload = {
-          sessionId: data.sessionId,
-          senderId: data.senderId,
-          signalData: { type: 'candidate', candidate: data.candidate },
-        };
-        this.callSignalListeners.forEach((listener) => {
-          try { listener(payload); } catch (err) {
-            console.error('Error in ReceiveIceCandidate listener:', err);
-          }
+      const payload: CallSignalPayload = {
+        sessionId: String(sessionId),
+        senderId: callerId,
+        signalData: { type: 'offer', sdp },
+      };
+      this.callSignalListeners.forEach((l) => {
+        try { l(payload); } catch (e) { console.error(e); }
+      });
+    });
+
+    conn.on('ReceiveCallAnswer', (raw: unknown) => {
+      const responderId = field<string>(raw, 'responderId', 'ResponderId', 'senderId', 'SenderId');
+      const sdp = field<string>(raw, 'sdp', 'Sdp', 'sdpAnswer', 'SdpAnswer');
+      const sessionId = field<string>(raw, 'sessionId', 'SessionId');
+
+      if (!responderId || !sdp || !sessionId) {
+        console.warn('[SignalR] ReceiveCallAnswer — missing fields:', {
+          hasResponderId: !!responderId,
+          hasSdp: !!sdp,
+          hasSessionId: !!sessionId,
+          raw,
         });
-      },
-    );
+        return;
+      }
+
+      const payload: CallSignalPayload = {
+        sessionId: String(sessionId),
+        senderId: responderId,
+        signalData: { type: 'answer', sdp },
+      };
+      this.callSignalListeners.forEach((l) => {
+        try { l(payload); } catch (e) { console.error(e); }
+      });
+    });
+
+    conn.on('ReceiveIceCandidate', (raw: unknown) => {
+      const senderId = field<string>(raw, 'senderId', 'SenderId');
+      const candidate = field<unknown>(raw, 'candidate', 'Candidate');
+      const sessionId = field<string>(raw, 'sessionId', 'SessionId');
+
+      if (!senderId || !candidate || !sessionId) {
+        console.warn('[SignalR] ReceiveIceCandidate — missing fields:', {
+          hasSenderId: !!senderId,
+          hasCandidate: !!candidate,
+          hasSessionId: !!sessionId,
+          raw,
+        });
+        return;
+      }
+
+      const payload: CallSignalPayload = {
+        sessionId: String(sessionId),
+        senderId,
+        signalData: { type: 'candidate', candidate: candidate as RTCIceCandidateInit },
+      };
+      this.callSignalListeners.forEach((l) => {
+        try { l(payload); } catch (e) { console.error(e); }
+      });
+    });
 
     /* ── Call terminated ─────────────────────────────── */
-    const handleCallTerminated = (payload: CallEndedPayload, source: string) => {
-      this.callEndedListeners.forEach((listener) => {
-        try { listener(payload); } catch (err) {
-          console.error(`Error in ${source} listener:`, err);
-        }
+    const handleCallTerminated = (raw: unknown, source: string) => {
+      const sessionId = field<string>(raw, 'sessionId', 'SessionId');
+      if (!sessionId) {
+        console.warn(`[SignalR] ${source} — missing sessionId:`, raw);
+        return;
+      }
+      const payload: CallEndedPayload = {
+        sessionId: String(sessionId),
+        endedBy: field<string>(raw, 'endedBy', 'EndedBy', 'terminatedBy', 'TerminatedBy'),
+        reason: field<string>(raw, 'reason', 'Reason'),
+      };
+      this.callEndedListeners.forEach((l) => {
+        try { l(payload); } catch (e) { console.error(source, e); }
       });
     };
 
-    conn.on(
-      'CallTerminated',
-      (data: { terminatedBy: string; sessionId: string; reason?: string }) => {
-        handleCallTerminated(
-          { sessionId: data.sessionId, endedBy: data.terminatedBy },
-          'CallTerminated',
-        );
-      },
-    );
-    conn.on('CallEnded', (p: CallEndedPayload) => handleCallTerminated(p, 'CallEnded'));
+    conn.on('CallTerminated', (raw: unknown) => handleCallTerminated(raw, 'CallTerminated'));
+    conn.on('CallEnded', (raw: unknown) => handleCallTerminated(raw, 'CallEnded'));
   }
 
   /* ────────────────────────────────────────────────────── */
@@ -409,18 +446,14 @@ class SignalRService {
     try {
       const conn = await this.ensureConnected();
       await conn.invoke('SendDirectTyping', recipientId, isTyping);
-    } catch {
-      /* best-effort */
-    }
+    } catch { /* best-effort */ }
   }
 
   public async sendGroupTyping(groupId: number, isTyping: boolean): Promise<void> {
     try {
       const conn = await this.ensureConnected();
       await conn.invoke('SendGroupTyping', groupId, isTyping);
-    } catch {
-      /* best-effort */
-    }
+    } catch { /* best-effort */ }
   }
 
   public async joinGroupChannel(groupId: number): Promise<void> {
@@ -438,26 +471,10 @@ class SignalRService {
     await conn.invoke('SendGroupMessage', dto);
   }
 
-  public async sendCallOffer(targetUserId: string, sdpOffer: unknown, sessionId: string): Promise<void> {
-    const conn = await this.ensureConnected();
-    await conn.invoke('SendCallOffer', targetUserId, sdpOffer, sessionId);
-  }
-
-  public async sendCallAnswer(targetUserId: string, sdpAnswer: unknown, sessionId: string): Promise<void> {
-    const conn = await this.ensureConnected();
-    await conn.invoke('SendCallAnswer', targetUserId, sdpAnswer, sessionId);
-  }
-
-  public async sendIceCandidate(targetUserId: string, iceCandidate: unknown, sessionId: string): Promise<void> {
-    const conn = await this.ensureConnected();
-    await conn.invoke('SendIceCandidate', targetUserId, iceCandidate, sessionId);
-  }
-
-  public async terminateCall(targetUserId: string, sessionId: string, reason: string): Promise<void> {
-    const conn = await this.ensureConnected();
-    await conn.invoke('RejectOrEndCall', targetUserId, sessionId, reason);
-  }
-
+  /**
+   * Send a WebRTC signal (offer / answer / candidate) to the peer.
+   * The backend's `RejectOrEndCall` accepts `(targetUserId, sessionId, reason)`.
+   */
   public async sendCallSignal(
     sessionId: string,
     targetUserId: string,
@@ -472,28 +489,30 @@ class SignalRService {
     }
 
     const type = parsed.type as string | undefined;
-    if (type === 'offer') await this.sendCallOffer(targetUserId, parsed.sdp, sessionId);
-    else if (type === 'answer') await this.sendCallAnswer(targetUserId, parsed.sdp, sessionId);
-    else if (type === 'candidate') await this.sendIceCandidate(targetUserId, parsed.candidate, sessionId);
+    const conn = await this.ensureConnected();
+
+    if (type === 'offer') {
+      await conn.invoke('SendCallOffer', targetUserId, parsed.sdp, sessionId);
+    } else if (type === 'answer') {
+      await conn.invoke('SendCallAnswer', targetUserId, parsed.sdp, sessionId);
+    } else if (type === 'candidate') {
+      await conn.invoke('SendIceCandidate', targetUserId, parsed.candidate, sessionId);
+    }
   }
 
   public async notifyCallEnded(sessionId: string, targetUserId?: string): Promise<void> {
     if (!targetUserId) return;
-    await this.terminateCall(targetUserId, sessionId, 'ended');
+    const conn = await this.ensureConnected();
+    await conn.invoke('RejectOrEndCall', targetUserId, sessionId, 'ended');
   }
 
   private async ensureConnected(): Promise<HubConnection> {
-    if (!this.connection) {
-      return this.start();
-    }
+    if (!this.connection) return this.start();
 
     if (this.connection.state === HubConnectionState.Connected) {
       return this.connection;
     }
 
-    // In-flight connection: wait for it to settle instead of
-    // tearing it down. Prevents mid-call ICE drops when SignalR
-    // is reconnecting.
     if (
       this.connection.state === HubConnectionState.Connecting ||
       this.connection.state === HubConnectionState.Reconnecting
@@ -501,17 +520,12 @@ class SignalRService {
       const deadline = Date.now() + 10_000;
       while (Date.now() < deadline) {
         const state = this.connection.state;
-        if (state === HubConnectionState.Connected) {
-          return this.connection;
-        }
-        if (state === HubConnectionState.Disconnected) {
-          break; // dead — fall through to restart
-        }
+        if (state === HubConnectionState.Connected) return this.connection;
+        if (state === HubConnectionState.Disconnected) break;
         await new Promise((r) => setTimeout(r, 100));
       }
     }
 
-    // Disconnected → restart
     return this.start();
   }
 }

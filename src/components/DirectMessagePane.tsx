@@ -20,7 +20,7 @@ import { useCall } from '../context/CallContext';
 import {
   useDmTypingEmitter,
   useDmTypingReceiver,
-} from '../hooks/useTypingIndicator'; // Adjust path if needed
+} from '../hooks/useTypingIndicator';
 import {
   CallType,
   DirectMessageDto,
@@ -464,7 +464,6 @@ function DirectMessagePane(): React.JSX.Element {
   const { initiateCall, incomingCall, acceptCall, rejectCall } = useCall();
   const reduceMotion = useReducedMotion();
 
-  // Typing hooks
   const { onType, stop: stopTyping } = useDmTypingEmitter(userId);
   const isPeerTyping = useDmTypingReceiver(userId);
 
@@ -484,7 +483,6 @@ function DirectMessagePane(): React.JSX.Element {
   const [pendingDeleteId, setPendingDeleteId] = useState<string | number | null>(null);
   const [infoOpen, setInfoOpen] = useState(false);
 
-  // Auto-hide composer state
   const [composerVisible, setComposerVisible] = useState(true);
   const [showJumpToLatest, setShowJumpToLatest] = useState(false);
 
@@ -495,6 +493,12 @@ function DirectMessagePane(): React.JSX.Element {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const composerRef = useRef<HTMLTextAreaElement | null>(null);
   const lastScrollTopRef = useRef(0);
+  const messagesRef = useRef<DirectMessageDto[]>([]);
+
+  // Keep a ref of latest messages for the polling callback
+  useEffect(() => {
+    messagesRef.current = messages;
+  }, [messages]);
 
   const autoGrow = (el: HTMLTextAreaElement) => {
     el.style.height = 'auto';
@@ -636,7 +640,9 @@ function DirectMessagePane(): React.JSX.Element {
           if (prev.some((m) => m.id === msg.id)) return prev;
           return [...prev, msg];
         });
-        if (msg.senderId === userId) void apiService.markDmRead(userId);
+        if (msg.senderId === userId) {
+          void apiService.markDmRead(userId);
+        }
         setTimeout(() => {
           messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
         }, 50);
@@ -645,7 +651,94 @@ function DirectMessagePane(): React.JSX.Element {
     return () => { unsub(); };
   }, [userId, user?.id]);
 
-  // Keep scroll pinned to bottom if user is close to bottom when peer begins typing
+  /* ──────────────────────────────────────────────────────
+     READ RECEIPT SYNC — polling + focus refetch
+     ────────────────────────────────────────────────────── */
+
+  // Poll every 3s. Only fires when the tab is visible and there are
+  // messages sent by us that aren't yet marked read.
+  useEffect(() => {
+    if (!userId) return;
+
+    const pollReadStatus = async () => {
+      if (document.visibilityState !== 'visible') return;
+
+      const snapshot = messagesRef.current;
+      const hasUnreadOutgoing = snapshot.some(
+        (m) => m.senderId === user?.id && !m.isRead,
+      );
+      // If every outgoing message is already marked read, skip the request.
+      if (!hasUnreadOutgoing) return;
+
+      try {
+        const history = await apiService.getDmHistory(userId, 50);
+        setMessages((prev) => {
+          const fresh = new Map(history.map((m) => [m.id, m]));
+          let changed = false;
+          const next = prev.map((m) => {
+            const f = fresh.get(m.id);
+            if (f && f.isRead !== m.isRead) {
+              changed = true;
+              return { ...m, isRead: f.isRead };
+            }
+            return m;
+          });
+          return changed ? next : prev;
+        });
+      } catch {
+        /* silent — retry next tick */
+      }
+    };
+
+    const interval = window.setInterval(pollReadStatus, 3000);
+
+    // Also refetch immediately when the tab regains focus
+    const onFocus = () => { void pollReadStatus(); };
+    const onVisibility = () => {
+      if (document.visibilityState === 'visible') void pollReadStatus();
+    };
+    window.addEventListener('focus', onFocus);
+    document.addEventListener('visibilitychange', onVisibility);
+
+    return () => {
+      window.clearInterval(interval);
+      window.removeEventListener('focus', onFocus);
+      document.removeEventListener('visibilitychange', onVisibility);
+    };
+  }, [userId, user?.id]);
+
+  // When we regain focus and there are unread incoming messages,
+  // re-mark them as read (in case they arrived while we were away).
+  useEffect(() => {
+    if (!userId) return;
+
+    const reMarkRead = async () => {
+      const snapshot = messagesRef.current;
+      const hasUnreadIncoming = snapshot.some(
+        (m) => m.senderId === userId && !m.isRead,
+      );
+      if (!hasUnreadIncoming) return;
+      try {
+        await apiService.markDmRead(userId);
+      } catch {
+        /* silent */
+      }
+    };
+
+    const onFocus = () => { void reMarkRead(); };
+    const onVisibility = () => {
+      if (document.visibilityState === 'visible') void reMarkRead();
+    };
+    window.addEventListener('focus', onFocus);
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => {
+      window.removeEventListener('focus', onFocus);
+      document.removeEventListener('visibilitychange', onVisibility);
+    };
+  }, [userId]);
+
+  /* ────────────────────────────────────────────────────── */
+
   useEffect(() => {
     if (isPeerTyping && messagesContainerRef.current) {
       const el = messagesContainerRef.current;
@@ -775,7 +868,6 @@ function DirectMessagePane(): React.JSX.Element {
     setMessages([]);
   };
 
-  /* Auto-hide scroll logic */
   const handleMessagesScroll = (e: React.UIEvent<HTMLDivElement>) => {
     const el = e.currentTarget;
     const scrollTop = el.scrollTop;
@@ -807,7 +899,6 @@ function DirectMessagePane(): React.JSX.Element {
     setShowJumpToLatest(false);
   };
 
-  /* Grouping */
   const grouped = useMemo(() => {
     type Item =
       | { type: 'date'; key: string; label: string }
@@ -1129,7 +1220,6 @@ function DirectMessagePane(): React.JSX.Element {
                 })
               )}
 
-              {/* Typing indicator bubble */}
               <AnimatePresence>
                 {isPeerTyping && (
                   <motion.div
@@ -1158,7 +1248,6 @@ function DirectMessagePane(): React.JSX.Element {
               <div ref={messagesEndRef} />
             </div>
 
-            {/* Jump to latest button */}
             <AnimatePresence>
               {showJumpToLatest && (
                 <motion.button
@@ -1324,7 +1413,7 @@ function DirectMessagePane(): React.JSX.Element {
         )}
       </div>
 
-      {/* ─── Delete confirmation modal ──────────────────── */}
+      {/* Delete confirmation modal */}
       <AnimatePresence>
         {pendingDeleteId != null && (
           <motion.div
@@ -1370,7 +1459,6 @@ function DirectMessagePane(): React.JSX.Element {
         )}
       </AnimatePresence>
 
-      {/* ─── Info modal ─────────────────────────────────── */}
       {targetUser && (
         <InfoModal
           open={infoOpen}
