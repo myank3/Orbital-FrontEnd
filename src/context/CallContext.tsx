@@ -73,7 +73,6 @@ const API_TIMEOUT_MS = 5000;
 /* ─────────────────────────────────────────────────────────
    Metered TURN servers — static credentials
    Workspace: orbitalhq
-   Credentials created 2026-10-11, never expire.
    ───────────────────────────────────────────────────────── */
 
 const METERED_USERNAME = '314b509605be09e502e550bd';
@@ -315,7 +314,49 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
   const callStateRef = useRef<CallState>('idle');
   const callStartedAtRef = useRef<number | null>(null);
 
+  /**
+   * Persistent hidden <video> used ONLY for remote audio playback.
+   * Created once at mount, never touched by React state, never
+   * re-rendered. Audio tracks are attached DIRECTLY to this element
+   * inside `pc.ontrack` — bypassing the React re-render race that
+   * was losing the audio track.
+   */
+  const audioSinkRef = useRef<HTMLVideoElement | null>(null);
+
+  // Install audio unlock on mount
   useEffect(() => installAudioUnlock(), []);
+
+  // Create the persistent audio sink element once
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    if (audioSinkRef.current) return;
+
+    const el = document.createElement('video');
+    el.setAttribute('playsinline', '');
+    el.setAttribute('autoplay', '');
+    el.muted = false;
+    el.volume = 1;
+    el.style.position = 'fixed';
+    el.style.width = '1px';
+    el.style.height = '1px';
+    el.style.opacity = '0';
+    el.style.pointerEvents = 'none';
+    el.style.left = '-9999px';
+    el.style.top = '-9999px';
+    el.setAttribute('data-call-audio-sink', 'true');
+    document.body.appendChild(el);
+    audioSinkRef.current = el;
+
+    return () => {
+      try {
+        el.pause();
+      } catch {
+        /* ignore */
+      }
+      el.remove();
+      audioSinkRef.current = null;
+    };
+  }, []);
 
   useEffect(() => {
     callStateRef.current = callState;
@@ -426,7 +467,6 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
       { urls: 'stun:stun1.l.google.com:19302' },
     ];
 
-    // Try backend-provided servers. If they include TURN, prefer them.
     try {
       const serverConfigs: IceServerConfigDto[] = await withTimeout(
         apiService.getIceServers(),
@@ -497,6 +537,16 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
         try { t.stop(); } catch { /* ignore */ }
       });
       remoteStreamRef.current = null;
+
+      // Clear the persistent audio sink's stream but keep the element alive.
+      if (audioSinkRef.current) {
+        try {
+          audioSinkRef.current.pause();
+          audioSinkRef.current.srcObject = null;
+        } catch {
+          /* ignore */
+        }
+      }
 
       remoteDescriptionSetRef.current = false;
       pendingRemoteOfferRef.current = null;
@@ -607,7 +657,7 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
       remoteDescriptionSetRef.current = false;
       activePeerIdRef.current = targetPeerId;
 
-      // DEBUG — expose for chrome://webrtc-internals-style scripts
+      // DEBUG
       if (typeof window !== 'undefined') {
         (window as unknown as { __pc?: RTCPeerConnection }).__pc = pc;
       }
@@ -643,23 +693,78 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
           readyState: event.track.readyState,
         });
 
-        let target = remoteStreamRef.current;
-        if (!target) {
-          target = new MediaStream();
-          remoteStreamRef.current = target;
-          setRemoteStream(target);
+        /* ── AUDIO: attach directly to the persistent sink ───
+           This bypasses React entirely. No state update, no
+           re-render, no srcObject race. */
+        if (event.track.kind === 'audio') {
+          const sink = audioSinkRef.current;
+          if (!sink) {
+            console.warn('[Call] No audio sink available');
+            return;
+          }
+
+          const existingTracks =
+            sink.srcObject instanceof MediaStream
+              ? sink.srcObject.getAudioTracks()
+              : [];
+          const allAudio: MediaStreamTrack[] = [...existingTracks];
+          if (!allAudio.some((t) => t.id === event.track.id)) {
+            allAudio.push(event.track);
+          }
+
+          sink.srcObject = new MediaStream(allAudio);
+          sink.muted = false;
+          sink.volume = 1;
+
+          const attemptPlay = () => {
+            sink
+              .play()
+              .then(() => {
+                console.log('[Call] ✓ Audio sink playing', {
+                  trackCount: allAudio.length,
+                  paused: sink.paused,
+                  muted: sink.muted,
+                  volume: sink.volume,
+                });
+              })
+              .catch((err) => {
+                console.warn('[Call] Audio sink play blocked:', err);
+                const resume = () => {
+                  sink
+                    .play()
+                    .catch((e) => console.warn('[Call] Resume failed:', e));
+                  document.removeEventListener('click', resume);
+                  document.removeEventListener('keydown', resume);
+                  document.removeEventListener('touchstart', resume);
+                };
+                document.addEventListener('click', resume, { once: true });
+                document.addEventListener('keydown', resume, { once: true });
+                document.addEventListener('touchstart', resume, { once: true });
+              });
+          };
+          attemptPlay();
         }
 
-        if (!target.getTracks().some((t) => t.id === event.track.id)) {
-          target.addTrack(event.track);
-        }
-
-        if (event.streams?.[0]) {
-          event.streams[0].getTracks().forEach((t) => {
-            if (!target!.getTracks().some((x) => x.id === t.id)) {
-              target!.addTrack(t);
-            }
-          });
+        /* ── VIDEO: still accumulate into remoteStream so the
+           overlay can render it. Audio will be muted on that
+           element in the overlay — audio comes from the sink. */
+        if (event.track.kind === 'video') {
+          let target = remoteStreamRef.current;
+          if (!target) {
+            target = new MediaStream();
+            remoteStreamRef.current = target;
+            setRemoteStream(target);
+          }
+          if (!target.getTracks().some((t) => t.id === event.track.id)) {
+            target.addTrack(event.track);
+          }
+          if (event.streams?.[0]) {
+            event.streams[0].getVideoTracks().forEach((t) => {
+              if (!target!.getTracks().some((x) => x.id === t.id)) {
+                target!.addTrack(t);
+              }
+            });
+          }
         }
 
         setCallState((prev) =>

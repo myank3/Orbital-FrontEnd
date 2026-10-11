@@ -144,22 +144,30 @@ function VideoCallOverlay(): React.JSX.Element | null {
     }
   }, [localStream]);
 
-  /* ── Attach remote stream to the off-screen / visible video ── */
-
+  /* ── Attach remote video stream (MUTED) ──────────────── */
+  // Audio playback is handled by a persistent <video> sink inside
+  // CallContext. The overlay's video element only carries the video
+  // track — audio is muted here to prevent double-play and the
+  // Chrome "one-way audio" bug where muting the element silences it.
   useEffect(() => {
     const el = remoteVideoRef.current;
     if (!el) return;
+
+    el.srcObject = null;
+
     if (remoteStream) {
-      el.srcObject = remoteStream;
-      el.muted = false;
-      el.volume = isSpeakerOn ? 1 : 0.25;
-      el.play().catch((err) => {
-        console.warn('[Overlay] Remote video play failed:', err);
-      });
-    } else {
-      el.srcObject = null;
+      // Only attach video tracks (audio comes from the sink)
+      const videoOnly = new MediaStream(remoteStream.getVideoTracks());
+      if (videoOnly.getVideoTracks().length > 0) {
+        el.srcObject = videoOnly;
+        el.muted = true;
+        el.volume = 0;
+        el.play().catch((err) => {
+          console.warn('[Overlay] Remote video play failed:', err);
+        });
+      }
     }
-  }, [remoteStream, isSpeakerOn]);
+  }, [remoteStream]);
 
   /* ── Formatted timer from shared duration ────────────── */
 
@@ -275,19 +283,13 @@ function VideoCallOverlay(): React.JSX.Element | null {
   if (isVideoCall) {
     return (
       <div className="fixed inset-0 z-[100] bg-[#0B141A] flex flex-col select-none">
-        {/*
-          The remote <video> element is the ONLY audio sink.
-          It plays the full remote MediaStream (audio + video).
-          We never use display:none — Chrome 140 will not route
-          audio through a display:none media element. We use
-          opacity:0 instead when there is no video track to show.
-        */}
         <video
           ref={remoteVideoRef}
           autoPlay
           playsInline
-          style={{ opacity: hasRemoteVideo ? 1 : 0 }}
-          className="absolute inset-0 w-full h-full object-cover transition-opacity duration-300"
+          className={`absolute inset-0 w-full h-full object-cover ${
+            hasRemoteVideo ? 'block' : 'hidden'
+          }`}
         />
 
         {!hasRemoteVideo && (
@@ -428,28 +430,8 @@ function VideoCallOverlay(): React.JSX.Element | null {
 
   return (
     <div className="fixed inset-0 z-[100] bg-gradient-to-b from-[#0B141A] via-[#0F1A21] to-[#0B141A] flex flex-col select-none">
-      {/*
-        Chrome 140 will not route WebRTC audio through a media
-        element with `display: none` or when it's removed from the
-        render tree. So we render the remote <video> element
-        off-screen but still laid out — 1×1 px, fully transparent,
-        positioned off-canvas. It carries the audio track and
-        nothing else, since audio calls have no video track.
-      */}
-      <video
-        ref={remoteVideoRef}
-        autoPlay
-        playsInline
-        style={{
-          position: 'fixed',
-          width: 1,
-          height: 1,
-          opacity: 0,
-          pointerEvents: 'none',
-          left: -9999,
-          top: -9999,
-        }}
-      />
+      {/* Remote audio is played by the persistent sink inside CallContext.
+          No local element needed here. */}
 
       {/* Top bar */}
       <div className="flex items-center justify-between px-4 sm:px-6 py-4">
