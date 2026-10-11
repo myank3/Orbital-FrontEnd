@@ -14,6 +14,7 @@ import React, {
 } from 'react';
 import { apiService, API_BASE_URL, getAccessToken } from '../services/api';
 import { signalRService } from '../services/signalr';
+import { useAuth } from './AuthContext';
 import {
   CallEndedPayload,
   CallSessionDto,
@@ -38,6 +39,10 @@ export interface CallContextType {
   isVideoOff: boolean;
   isMinimized: boolean;
   incomingCall: CallSessionDto | null;
+  /** Which peer ID this call is with (always the *other* user). */
+  peerId: string | null;
+  /** High-level state, useful for ring logic in UI. */
+  callState: CallState;
   initiateCall: (peerId: string, callType: number) => Promise<void>;
   acceptCall: () => Promise<void>;
   rejectCall: () => Promise<void>;
@@ -48,6 +53,14 @@ export interface CallContextType {
   expand: () => void;
 }
 
+export type CallState =
+  | 'idle'         // no call
+  | 'outgoing'     // we initiated, waiting for answer
+  | 'incoming'     // incoming, waiting for us to accept
+  | 'connecting'   // accepted, negotiating SDP/ICE
+  | 'active'       // media flowing
+  | 'ending';      // teardown in flight
+
 export const CallContext = createContext<CallContextType | undefined>(undefined);
 
 export interface CallProviderProps {
@@ -55,28 +68,23 @@ export interface CallProviderProps {
 }
 
 const ACTIVE_CALL_STORAGE_KEY = 'orbital.activeCallSessionId';
+const DISCONNECT_WATCHDOG_MS = 8000;
+const API_TIMEOUT_MS = 4000;
 
 /* ─────────────────────────────────────────────────────────
-   Ringtone — Web Audio, pattern-based (no MP3 files)
+   Ringtone — Web Audio, pattern-based
    ───────────────────────────────────────────────────────── */
 
 interface ToneStep {
-  /** Frequency in Hz. */
   freq: number;
-  /** Duration in ms. */
   durationMs: number;
-  /** Optional gap after this step before the next (ms). */
   gapAfterMs?: number;
 }
 
 interface RingtoneOptions {
-  /** Sequence of notes to play in one ring burst. */
   pattern: ToneStep[];
-  /** Silence between bursts (ms). */
   silenceMs: number;
-  /** Overall volume 0–1. */
   volume?: number;
-  /** Waveform. 'sine' is softest; 'triangle' cuts through. */
   wave?: OscillatorType;
 }
 
@@ -87,7 +95,6 @@ function useRingtone(
   const ctxRef = useRef<AudioContext | null>(null);
   const timerRef = useRef<number | null>(null);
 
-  // Serialize the pattern so effect deps are stable across renders
   const patternKey = useMemo(
     () =>
       pattern
@@ -109,10 +116,7 @@ function useRingtone(
       ctxRef.current = new Ctx();
     }
     const ctx = ctxRef.current;
-
-    if (ctx.state === 'suspended') {
-      ctx.resume().catch(() => {});
-    }
+    if (ctx.state === 'suspended') ctx.resume().catch(() => {});
 
     const burstMs = pattern.reduce(
       (sum, step) => sum + step.durationMs + (step.gapAfterMs ?? 0),
@@ -126,22 +130,16 @@ function useRingtone(
           const dur = step.durationMs / 1000;
           const osc = ctx.createOscillator();
           const gain = ctx.createGain();
-
           osc.type = wave;
           osc.frequency.value = step.freq;
-
-          // Attack → sustain → release envelope
           gain.gain.setValueAtTime(0, t);
           gain.gain.linearRampToValueAtTime(volume, t + 0.02);
           gain.gain.setValueAtTime(volume, t + dur - 0.03);
           gain.gain.linearRampToValueAtTime(0, t + dur);
-
           osc.connect(gain);
           gain.connect(ctx.destination);
-
           osc.start(t);
           osc.stop(t + dur);
-
           t += dur + (step.gapAfterMs ?? 0) / 1000;
         });
       } catch {
@@ -169,42 +167,55 @@ function useRingtone(
   }, []);
 }
 
-/* ─────────────────────────────────────────────────────────
-   Ring pattern presets
-   ───────────────────────────────────────────────────────── */
+/* ── Ringtone presets ─────────────────────────────────── */
 
-/** Classic US/EU ringback: 440 + 480 Hz, 1s burst, ~2s silence. */
 const RINGBACK_PATTERN: ToneStep[] = [
   { freq: 440, durationMs: 500, gapAfterMs: 0 },
   { freq: 480, durationMs: 500, gapAfterMs: 0 },
 ];
 
-/** Modern incoming: digital "ring-ring" burst, ~1s cycle. */
-const INCOMING_PATTERN: ToneStep[] = [
-  { freq: 620, durationMs: 180, gapAfterMs: 60 },
-  { freq: 480, durationMs: 180, gapAfterMs: 60 },
-  { freq: 620, durationMs: 180, gapAfterMs: 60 },
-  { freq: 480, durationMs: 180, gapAfterMs: 0 },
-];
-
-/** Soft musical chime: C5 → E5 → G5, ~1s burst. */
 const INCOMING_SOFT_PATTERN: ToneStep[] = [
-  { freq: 523.25, durationMs: 220, gapAfterMs: 40 }, // C5
-  { freq: 659.25, durationMs: 220, gapAfterMs: 40 }, // E5
-  { freq: 783.99, durationMs: 320, gapAfterMs: 0 },  // G5
+  { freq: 523.25, durationMs: 220, gapAfterMs: 40 },
+  { freq: 659.25, durationMs: 220, gapAfterMs: 40 },
+  { freq: 783.99, durationMs: 320, gapAfterMs: 0 },
 ];
 
-/** End-of-call descending tone. */
 const END_PATTERN: ToneStep[] = [
   { freq: 480, durationMs: 150, gapAfterMs: 40 },
   { freq: 350, durationMs: 250, gapAfterMs: 0 },
 ];
 
 /* ─────────────────────────────────────────────────────────
+   Timeout helper — never hang forever on a fetch
+   ───────────────────────────────────────────────────────── */
+
+async function withTimeout<T>(
+  promise: Promise<T>,
+  ms: number,
+  label = 'operation',
+): Promise<T> {
+  let timer: number | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = window.setTimeout(
+      () => reject(new Error(`${label} timed out after ${ms}ms`)),
+      ms,
+    );
+  });
+  try {
+    return await Promise.race([promise, timeout]);
+  } finally {
+    if (timer != null) window.clearTimeout(timer);
+  }
+}
+
+/* ─────────────────────────────────────────────────────────
    Provider
    ───────────────────────────────────────────────────────── */
 
 function CallProviderComponent({ children }: CallProviderProps): React.JSX.Element {
+  const { user } = useAuth();
+  const myUserId = user?.userId ?? null;
+
   const [session, setSession] = useState<CallSessionDto | null>(null);
   const [localStream, setLocalStream] = useState<MediaStream | null>(null);
   const [remoteStream, setRemoteStream] = useState<MediaStream | null>(null);
@@ -212,6 +223,8 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
   const [isVideoOff, setIsVideoOff] = useState<boolean>(false);
   const [isMinimized, setIsMinimized] = useState<boolean>(false);
   const [incomingCall, setIncomingCall] = useState<CallSessionDto | null>(null);
+  const [callState, setCallState] = useState<CallState>('idle');
+  const [peerId, setPeerId] = useState<string | null>(null);
   const [endToneActive, setEndToneActive] = useState<boolean>(false);
 
   const peerConnectionRef = useRef<RTCPeerConnection | null>(null);
@@ -220,12 +233,19 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
   const pendingRemoteOfferRef = useRef<RTCSessionDescriptionInit | null>(null);
   const activePeerIdRef = useRef<string | null>(null);
   const remoteStreamRef = useRef<MediaStream | null>(null);
+  const fallbackAudioRefs = useRef<HTMLAudioElement[]>([]);
+  const watchdogRef = useRef<number | null>(null);
+  const callStateRef = useRef<CallState>('idle');
 
-  /* ── Ringtone ────────────────────────────────────────── */
+  // Keep the ref in sync so callbacks always see the latest state
+  useEffect(() => {
+    callStateRef.current = callState;
+  }, [callState]);
 
-  // Caller hears ringback until the callee answers (or the call ends)
-  const isOutgoingRinging =
-    Boolean(session) && !remoteStream && !incomingCall && !isMinimized;
+  /* ── Ringtone wiring ─────────────────────────────────── */
+
+  const isOutgoingRinging = callState === 'outgoing' && !isMinimized;
+  const isIncomingRinging = callState === 'incoming';
 
   useRingtone(isOutgoingRinging, {
     pattern: RINGBACK_PATTERN,
@@ -234,9 +254,6 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
     wave: 'sine',
   });
 
-  // Callee hears ring while there's a pending incoming call
-  const isIncomingRinging = Boolean(incomingCall);
-
   useRingtone(isIncomingRinging, {
     pattern: INCOMING_SOFT_PATTERN,
     silenceMs: 900,
@@ -244,7 +261,6 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
     wave: 'sine',
   });
 
-  // Short descending tone when the call ends
   useRingtone(endToneActive, {
     pattern: END_PATTERN,
     silenceMs: 0,
@@ -257,6 +273,85 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
     window.setTimeout(() => setEndToneActive(false), 600);
   }, []);
 
+  /* ── Peer ID resolver ────────────────────────────────── */
+
+  /**
+   * Returns the ID of the *other* user in the call.
+   * Prefers stored peer, then derives from session, then incoming.
+   * Never returns our own ID.
+   */
+  const resolvePeerId = useCallback(
+    (session?: CallSessionDto | null, incoming?: CallSessionDto | null): string | null => {
+      const stored = activePeerIdRef.current;
+      if (stored && stored !== myUserId) return stored;
+
+      const candidates: Array<string | undefined> = [
+        session?.peerId,
+        session?.initiatorId,
+        incoming?.initiatorId,
+        incoming?.peerId,
+      ];
+
+      for (const id of candidates) {
+        if (id && id !== myUserId) return id;
+      }
+      return null;
+    },
+    [myUserId],
+  );
+
+  /* ── Fallback audio elements ─────────────────────────── */
+
+  const attachFallbackAudio = useCallback((track: MediaStreamTrack) => {
+    try {
+      const el = new Audio();
+      el.srcObject = new MediaStream([track]);
+      el.autoplay = true;
+      // @ts-expect-error — playsInline isn't in all TS lib defs for HTMLAudioElement
+      el.playsInline = true;
+      el.volume = 1;
+      el.play().catch((err) => {
+        console.warn('[Call] Fallback audio autoplay blocked:', err);
+      });
+      fallbackAudioRefs.current.push(el);
+    } catch (err) {
+      console.warn('[Call] Could not create fallback audio element:', err);
+    }
+  }, []);
+
+  const detachAllFallbackAudio = useCallback(() => {
+    fallbackAudioRefs.current.forEach((el) => {
+      try {
+        el.pause();
+        el.srcObject = null;
+      } catch {
+        /* ignore */
+      }
+    });
+    fallbackAudioRefs.current = [];
+  }, []);
+
+  /* ── Watchdog ────────────────────────────────────────── */
+
+  const clearWatchdog = useCallback(() => {
+    if (watchdogRef.current != null) {
+      window.clearTimeout(watchdogRef.current);
+      watchdogRef.current = null;
+    }
+  }, []);
+
+  const armWatchdog = useCallback(() => {
+    clearWatchdog();
+    watchdogRef.current = window.setTimeout(() => {
+      console.warn('[Call] Watchdog fired — forcing teardown');
+      try {
+        peerConnectionRef.current?.close();
+      } catch {
+        /* ignore */
+      }
+    }, DISCONNECT_WATCHDOG_MS);
+  }, [clearWatchdog]);
+
   /* ── ICE config ──────────────────────────────────────── */
 
   const getRtcConfiguration = useCallback(async (): Promise<RTCConfiguration> => {
@@ -266,56 +361,83 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
     ];
 
     try {
-      const serverConfigs: IceServerConfigDto[] = await apiService.getIceServers();
+      const serverConfigs: IceServerConfigDto[] = await withTimeout(
+        apiService.getIceServers(),
+        3000,
+        'getIceServers',
+      );
       if (serverConfigs && serverConfigs.length > 0) {
-        const iceServers: RTCIceServer[] = serverConfigs.map((config) => ({
-          urls: config.urls,
-          username: config.username,
-          credential: config.credential,
-        }));
-        return { iceServers };
+        return {
+          iceServers: serverConfigs.map((c) => ({
+            urls: c.urls,
+            username: c.username,
+            credential: c.credential,
+          })),
+        };
       }
     } catch {
-      /* ignore — fall through to STUN only */
+      /* fall through */
     }
 
     return { iceServers: fallbackServers };
   }, []);
 
-  /* ── Cleanup ─────────────────────────────────────────── */
+  /* ── Teardown — the only function that resets state ─── */
 
-  const cleanupWebRTC = useCallback(() => {
-    if (peerConnectionRef.current) {
-      peerConnectionRef.current.onicecandidate = null;
-      peerConnectionRef.current.ontrack = null;
-      peerConnectionRef.current.close();
-      peerConnectionRef.current = null;
-    }
+  const teardown = useCallback(
+    (opts: { playTone?: boolean } = {}) => {
+      clearWatchdog();
 
-    iceCandidateQueueRef.current = [];
-    remoteDescriptionSetRef.current = false;
-    pendingRemoteOfferRef.current = null;
-    activePeerIdRef.current = null;
+      if (peerConnectionRef.current) {
+        try {
+          peerConnectionRef.current.onicecandidate = null;
+          peerConnectionRef.current.ontrack = null;
+          peerConnectionRef.current.onconnectionstatechange = null;
+          peerConnectionRef.current.oniceconnectionstatechange = null;
+          peerConnectionRef.current.close();
+        } catch {
+          /* ignore */
+        }
+        peerConnectionRef.current = null;
+      }
 
-    setLocalStream((prev) => {
-      if (prev) prev.getTracks().forEach((t) => t.stop());
-      return null;
-    });
-    setRemoteStream((prev) => {
-      if (prev) prev.getTracks().forEach((t) => t.stop());
-      return null;
-    });
-    remoteStreamRef.current = null;
+      iceCandidateQueueRef.current = [];
+      remoteDescriptionSetRef.current = false;
+      pendingRemoteOfferRef.current = null;
+      activePeerIdRef.current = null;
 
-    setSession(null);
-    setIsMuted(false);
-    setIsVideoOff(false);
-    setIsMinimized(false);
+      detachAllFallbackAudio();
 
-    if (typeof window !== 'undefined') {
-      sessionStorage.removeItem(ACTIVE_CALL_STORAGE_KEY);
-    }
-  }, []);
+      setLocalStream((prev) => {
+        prev?.getTracks().forEach((t) => {
+          try { t.stop(); } catch { /* ignore */ }
+        });
+        return null;
+      });
+      setRemoteStream((prev) => {
+        prev?.getTracks().forEach((t) => {
+          try { t.stop(); } catch { /* ignore */ }
+        });
+        return null;
+      });
+      remoteStreamRef.current = null;
+
+      setSession(null);
+      setIncomingCall(null);
+      setPeerId(null);
+      setIsMuted(false);
+      setIsVideoOff(false);
+      setIsMinimized(false);
+      setCallState('idle');
+
+      if (typeof window !== 'undefined') {
+        sessionStorage.removeItem(ACTIVE_CALL_STORAGE_KEY);
+      }
+
+      if (opts.playTone) playEndTone();
+    },
+    [clearWatchdog, detachAllFallbackAudio, playEndTone],
+  );
 
   /* ── ICE queue draining ──────────────────────────────── */
 
@@ -323,12 +445,11 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
     remoteDescriptionSetRef.current = true;
     while (iceCandidateQueueRef.current.length > 0) {
       const candidateInit = iceCandidateQueueRef.current.shift();
-      if (candidateInit) {
-        try {
-          await pc.addIceCandidate(new RTCIceCandidate(candidateInit));
-        } catch {
-          /* ignore */
-        }
+      if (!candidateInit) continue;
+      try {
+        await pc.addIceCandidate(new RTCIceCandidate(candidateInit));
+      } catch {
+        /* ignore */
       }
     }
   }, []);
@@ -338,7 +459,7 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
   const acquireMediaStream = useCallback(
     async (callType: number): Promise<MediaStream> => {
       const hasVideo = callType === CallType.Video;
-      const constraints: MediaStreamConstraints = {
+      return navigator.mediaDevices.getUserMedia({
         audio: {
           echoCancellation: true,
           noiseSuppression: true,
@@ -351,13 +472,12 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
               facingMode: 'user',
             }
           : false,
-      };
-      return navigator.mediaDevices.getUserMedia(constraints);
+      });
     },
     [],
   );
 
-  /* ── Peer connection ─────────────────────────────────── */
+  /* ── Peer connection creation ────────────────────────── */
 
   const createPeerConnection = useCallback(
     async (
@@ -372,10 +492,7 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
       remoteDescriptionSetRef.current = false;
       activePeerIdRef.current = targetPeerId;
 
-      // ── Explicit transceivers ───────────────────────────
-      // Ensures audio m-line negotiates with correct direction
-      // even when one side has no matching track.
-      // ────────────────────────────────────────────────────
+      // Explicit transceivers — critical for audio reliability
       const audioTrack = stream.getAudioTracks()[0];
       if (audioTrack) {
         pc.addTransceiver(audioTrack, {
@@ -396,12 +513,9 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
         pc.addTransceiver('video', { direction: 'recvonly' });
       }
 
-      // ── ontrack: accumulate into one remote stream ──────
-      // Prevents a later track event from overwriting the
-      // existing remote stream (a known cause of silent audio).
+      // Accumulate remote tracks into one stream + fallback audio
       pc.ontrack = (event: RTCTrackEvent) => {
         let target = remoteStreamRef.current;
-
         if (!target) {
           target = new MediaStream();
           remoteStreamRef.current = target;
@@ -422,44 +536,70 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
 
         event.track.enabled = true;
         event.track.muted = false;
+
+        // FALLBACK: attach audio to a dedicated <audio> element.
+        // This works around the Chrome/Edge 140 regression where
+        // audio from a MediaStream on a <video> element is silent.
+        if (event.track.kind === 'audio') {
+          attachFallbackAudio(event.track);
+        }
+
+        // Once we have any remote track, negotiation is done.
+        // Flip out of 'connecting' → 'active' so the ring stops.
+        setCallState((prev) =>
+          prev === 'connecting' || prev === 'outgoing' ? 'active' : prev,
+        );
       };
 
       pc.onicecandidate = (event: RTCPeerConnectionIceEvent) => {
         if (event.candidate) {
-          const candidateData: CallSignalMessage = {
+          void signalRService.sendCallSignal(targetSessionId, targetPeerId, {
             type: 'candidate',
             candidate: event.candidate.toJSON(),
-          };
-          void signalRService.sendCallSignal(
-            targetSessionId,
-            targetPeerId,
-            candidateData,
-          );
+          });
+        }
+      };
+
+      // If the peer connection dies unexpectedly, tear down.
+      pc.onconnectionstatechange = () => {
+        const s = pc.connectionState;
+        if (s === 'failed' || s === 'closed' || s === 'disconnected') {
+          console.warn('[Call] Peer connection state:', s);
+          if (s === 'failed' || s === 'closed') {
+            teardown({ playTone: true });
+          }
         }
       };
 
       return pc;
     },
-    [getRtcConfiguration],
+    [getRtcConfiguration, attachFallbackAudio, teardown],
   );
 
   /* ── Initiate (caller) ───────────────────────────────── */
 
   const initiateCall = useCallback(
-    async (peerId: string, callType: number): Promise<void> => {
-      if (!peerId) throw new Error('Peer ID is required to initiate a call.');
+    async (targetPeerId: string, callType: number): Promise<void> => {
+      if (!targetPeerId) throw new Error('Peer ID is required to initiate a call.');
 
-      cleanupWebRTC();
+      teardown();
+      setCallState('outgoing');
+      setPeerId(targetPeerId);
+      activePeerIdRef.current = targetPeerId;
 
       const stream = await acquireMediaStream(callType);
       setLocalStream(stream);
 
-      const newSession = await apiService.initiateCall({ peerId, callType });
+      const newSession = await withTimeout(
+        apiService.initiateCall({ peerId: targetPeerId, callType }),
+        API_TIMEOUT_MS,
+        'initiateCall',
+      );
       setSession(newSession);
 
       const pc = await createPeerConnection(
         newSession.sessionId,
-        peerId,
+        targetPeerId,
         stream,
         callType,
       );
@@ -467,37 +607,51 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
       const offer = await pc.createOffer();
       await pc.setLocalDescription(offer);
 
-      const offerData: CallSignalMessage = { type: 'offer', sdp: offer.sdp };
-      await signalRService.sendCallSignal(newSession.sessionId, peerId, offerData);
+      await signalRService.sendCallSignal(newSession.sessionId, targetPeerId, {
+        type: 'offer',
+        sdp: offer.sdp,
+      });
     },
-    [cleanupWebRTC, acquireMediaStream, createPeerConnection],
+    [teardown, acquireMediaStream, createPeerConnection],
   );
 
   /* ── Accept (callee) ─────────────────────────────────── */
 
   const acceptCall = useCallback(async (): Promise<void> => {
-    if (!incomingCall) return;
+    const incoming = incomingCall;
+    if (!incoming) return;
 
-    const currentIncoming = incomingCall;
-    setIncomingCall(null);
-    setSession(currentIncoming);
+    const resolvedPeer = resolvePeerId(null, incoming);
+    if (!resolvedPeer) {
+      console.error('[Call] Cannot resolve peer ID from incoming call');
+      teardown();
+      return;
+    }
 
-    const peerId = currentIncoming.initiatorId ?? currentIncoming.peerId ?? '';
-    if (!peerId) throw new Error('No initiator ID found on incoming call.');
+    setCallState('connecting');
+    setPeerId(resolvedPeer);
+    activePeerIdRef.current = resolvedPeer;
 
-    const stream = await acquireMediaStream(currentIncoming.callType);
+    const stream = await acquireMediaStream(incoming.callType);
     setLocalStream(stream);
+    setSession(incoming);
+    setIncomingCall(null);
 
-    await apiService.updateCallStatus(
-      currentIncoming.sessionId,
-      CallSessionStatus.Active,
-    );
+    try {
+      await withTimeout(
+        apiService.updateCallStatus(incoming.sessionId, CallSessionStatus.Active),
+        API_TIMEOUT_MS,
+        'updateCallStatus',
+      );
+    } catch (err) {
+      console.warn('[Call] Failed to update call status:', err);
+    }
 
     const pc = await createPeerConnection(
-      currentIncoming.sessionId,
-      peerId,
+      incoming.sessionId,
+      resolvedPeer,
       stream,
-      currentIncoming.callType,
+      incoming.callType,
     );
 
     const offerSdp = pendingRemoteOfferRef.current;
@@ -508,37 +662,40 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
       const answer = await pc.createAnswer();
       await pc.setLocalDescription(answer);
 
-      const answerData: CallSignalMessage = { type: 'answer', sdp: answer.sdp };
-      await signalRService.sendCallSignal(
-        currentIncoming.sessionId,
-        peerId,
-        answerData,
-      );
+      await signalRService.sendCallSignal(incoming.sessionId, resolvedPeer, {
+        type: 'answer',
+        sdp: answer.sdp,
+      });
       pendingRemoteOfferRef.current = null;
     }
-  }, [incomingCall, acquireMediaStream, createPeerConnection, drainIceCandidateQueue]);
+  }, [incomingCall, resolvePeerId, teardown, acquireMediaStream, createPeerConnection, drainIceCandidateQueue]);
 
   /* ── Reject (callee) ─────────────────────────────────── */
 
   const rejectCall = useCallback(async (): Promise<void> => {
-    if (!incomingCall) return;
+    const incoming = incomingCall;
+    if (!incoming) return;
 
-    const callToReject = incomingCall;
-    const peerId = callToReject.initiatorId ?? callToReject.peerId ?? '';
-    setIncomingCall(null);
+    const resolvedPeer = resolvePeerId(null, incoming);
+    teardown();
 
     try {
-      await apiService.updateCallStatus(
-        callToReject.sessionId,
-        CallSessionStatus.Rejected,
+      await withTimeout(
+        apiService.updateCallStatus(incoming.sessionId, CallSessionStatus.Rejected),
+        API_TIMEOUT_MS,
+        'reject',
       );
-      if (peerId) {
-        await signalRService.notifyCallEnded(callToReject.sessionId, peerId);
+      if (resolvedPeer) {
+        await withTimeout(
+          signalRService.notifyCallEnded(incoming.sessionId, resolvedPeer),
+          API_TIMEOUT_MS,
+          'notifyCallEnded',
+        );
       }
-    } catch {
-      /* ignore */
+    } catch (err) {
+      console.warn('[Call] Reject cleanup error (ignored):', err);
     }
-  }, [incomingCall]);
+  }, [incomingCall, resolvePeerId, teardown]);
 
   /* ── End (either side) ───────────────────────────────── */
 
@@ -547,29 +704,39 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
     const currentIncoming = incomingCall;
     const currentSessionId =
       currentSession?.sessionId ?? currentIncoming?.sessionId;
-    const peerId =
-      activePeerIdRef.current ??
-      currentSession?.peerId ??
-      currentSession?.initiatorId ??
-      currentIncoming?.initiatorId ??
-      undefined;
+    const resolvedPeer =
+      activePeerIdRef.current ?? resolvePeerId(currentSession, currentIncoming);
 
-    // Play the end tone if a call was actually in progress
-    if (currentSessionId) playEndTone();
+    const hadActiveCall = callStateRef.current !== 'idle';
+    setCallState('ending');
 
-    cleanupWebRTC();
+    // Tear down local state immediately — never wait on the API.
+    teardown({ playTone: hadActiveCall });
 
     if (currentSessionId) {
+      // Fire-and-forget — we don't block the UI on these.
       try {
-        await apiService.endCall(currentSessionId);
-        if (peerId) {
-          await signalRService.notifyCallEnded(currentSessionId, peerId);
+        await withTimeout(
+          apiService.endCall(currentSessionId),
+          API_TIMEOUT_MS,
+          'endCall',
+        );
+      } catch (err) {
+        console.warn('[Call] endCall API error (ignored):', err);
+      }
+      if (resolvedPeer) {
+        try {
+          await withTimeout(
+            signalRService.notifyCallEnded(currentSessionId, resolvedPeer),
+            API_TIMEOUT_MS,
+            'notifyCallEnded',
+          );
+        } catch (err) {
+          console.warn('[Call] notifyCallEnded error (ignored):', err);
         }
-      } catch {
-        /* ignore */
       }
     }
-  }, [session, incomingCall, cleanupWebRTC, playEndTone]);
+  }, [session, incomingCall, resolvePeerId, teardown]);
 
   /* ── Session storage recovery ────────────────────────── */
 
@@ -584,18 +751,12 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
-
     const handleBeforeUnload = () => {
-      const activeSessionId = sessionStorage.getItem(ACTIVE_CALL_STORAGE_KEY);
-      if (!activeSessionId) return;
+      const activeId = sessionStorage.getItem(ACTIVE_CALL_STORAGE_KEY);
+      if (!activeId) return;
       const token = getAccessToken();
       if (!token) return;
-
-      const url = `${API_BASE_URL.replace(
-        /\/+$/,
-        '',
-      )}/api/Call/${encodeURIComponent(activeSessionId)}/end`;
-
+      const url = `${API_BASE_URL.replace(/\/+$/, '')}/api/Call/${encodeURIComponent(activeId)}/end`;
       try {
         fetch(url, {
           method: 'POST',
@@ -606,37 +767,32 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
         /* ignore */
       }
     };
-
     window.addEventListener('beforeunload', handleBeforeUnload);
     return () => window.removeEventListener('beforeunload', handleBeforeUnload);
   }, []);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
-    const staleSessionId = sessionStorage.getItem(ACTIVE_CALL_STORAGE_KEY);
-    if (!staleSessionId) return;
+    const stale = sessionStorage.getItem(ACTIVE_CALL_STORAGE_KEY);
+    if (!stale) return;
     sessionStorage.removeItem(ACTIVE_CALL_STORAGE_KEY);
-    void apiService.endCall(staleSessionId).catch(() => {});
+    void apiService.endCall(stale).catch(() => {});
   }, []);
 
   /* ── Mute / video toggles ────────────────────────────── */
 
   const toggleMute = useCallback(() => {
     if (!localStream) return;
-    const newMuted = !isMuted;
-    localStream.getAudioTracks().forEach((t) => {
-      t.enabled = !newMuted;
-    });
-    setIsMuted(newMuted);
+    const next = !isMuted;
+    localStream.getAudioTracks().forEach((t) => { t.enabled = !next; });
+    setIsMuted(next);
   }, [localStream, isMuted]);
 
   const toggleVideo = useCallback(() => {
     if (!localStream) return;
-    const newVideoOff = !isVideoOff;
-    localStream.getVideoTracks().forEach((t) => {
-      t.enabled = !newVideoOff;
-    });
-    setIsVideoOff(newVideoOff);
+    const next = !isVideoOff;
+    localStream.getVideoTracks().forEach((t) => { t.enabled = !next; });
+    setIsVideoOff(next);
   }, [localStream, isVideoOff]);
 
   const minimize = useCallback(() => setIsMinimized(true), []);
@@ -647,7 +803,6 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
   const handleSignalMessage = useCallback(
     async (payload: CallSignalPayload) => {
       let messageData: CallSignalMessage;
-
       if (typeof payload.signalData === 'string') {
         try {
           messageData = JSON.parse(payload.signalData) as CallSignalMessage;
@@ -657,8 +812,7 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
       } else {
         messageData = payload.signalData as unknown as CallSignalMessage;
       }
-
-      if (!messageData || !messageData.type) return;
+      if (!messageData?.type) return;
 
       const pc = peerConnectionRef.current;
 
@@ -667,23 +821,15 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
           type: 'offer',
           sdp: messageData.sdp,
         };
-
         if (pc) {
           await pc.setRemoteDescription(new RTCSessionDescription(description));
           await drainIceCandidateQueue(pc);
-
           const answer = await pc.createAnswer();
           await pc.setLocalDescription(answer);
-
-          const answerData: CallSignalMessage = {
+          await signalRService.sendCallSignal(payload.sessionId, payload.senderId, {
             type: 'answer',
             sdp: answer.sdp,
-          };
-          await signalRService.sendCallSignal(
-            payload.sessionId,
-            payload.senderId,
-            answerData,
-          );
+          });
         } else {
           pendingRemoteOfferRef.current = description;
         }
@@ -693,6 +839,7 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
             new RTCSessionDescription({ type: 'answer', sdp: messageData.sdp }),
           );
           await drainIceCandidateQueue(pc);
+          setCallState((prev) => (prev === 'outgoing' ? 'connecting' : prev));
         }
       } else if (messageData.type === 'candidate' && messageData.candidate) {
         if (!pc || !remoteDescriptionSetRef.current || !pc.remoteDescription) {
@@ -709,10 +856,26 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
     [drainIceCandidateQueue],
   );
 
+  /* ── SignalR subscriptions ───────────────────────────── */
+
   useEffect(() => {
     const unsubIncoming = signalRService.onIncomingCall((call: CallSessionDto) => {
       if (call.groupId) return;
+      // Ignore self-calls (same user logged in two tabs)
+      const peer = resolvePeerId(null, call);
+      if (!peer || peer === myUserId) {
+        console.warn('[Call] Ignoring self/invalid incoming call');
+        return;
+      }
+      // If already in a call, auto-reject the new one
+      if (callStateRef.current !== 'idle') {
+        signalRService
+          .notifyCallEnded(call.sessionId, peer)
+          .catch(() => {});
+        return;
+      }
       setIncomingCall(call);
+      setCallState('incoming');
     });
 
     const unsubSignal = signalRService.onCallSignal((payload: CallSignalPayload) => {
@@ -722,11 +885,8 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
     const unsubEnded = signalRService.onCallEnded((payload: CallEndedPayload) => {
       const matchesSession = session?.sessionId === payload.sessionId;
       const matchesIncoming = incomingCall?.sessionId === payload.sessionId;
-
       if (matchesSession || matchesIncoming) {
-        if (matchesSession) playEndTone();
-        cleanupWebRTC();
-        setIncomingCall(null);
+        teardown({ playTone: matchesSession });
       }
     });
 
@@ -735,7 +895,18 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
       unsubSignal();
       unsubEnded();
     };
-  }, [session, incomingCall, handleSignalMessage, cleanupWebRTC, playEndTone]);
+  }, [session, incomingCall, resolvePeerId, myUserId, teardown, handleSignalMessage]);
+
+  /* ── Auto-arm/disarm the watchdog ────────────────────── */
+
+  useEffect(() => {
+    if (callState === 'active' || callState === 'connecting') {
+      armWatchdog();
+    } else {
+      clearWatchdog();
+    }
+    return clearWatchdog;
+  }, [callState, armWatchdog, clearWatchdog]);
 
   /* ── Context value ───────────────────────────────────── */
 
@@ -748,6 +919,8 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
       isVideoOff,
       isMinimized,
       incomingCall,
+      peerId,
+      callState,
       initiateCall,
       acceptCall,
       rejectCall,
@@ -758,21 +931,10 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
       expand,
     }),
     [
-      session,
-      localStream,
-      remoteStream,
-      isMuted,
-      isVideoOff,
-      isMinimized,
-      incomingCall,
-      initiateCall,
-      acceptCall,
-      rejectCall,
-      endCall,
-      toggleMute,
-      toggleVideo,
-      minimize,
-      expand,
+      session, localStream, remoteStream, isMuted, isVideoOff, isMinimized,
+      incomingCall, peerId, callState,
+      initiateCall, acceptCall, rejectCall, endCall,
+      toggleMute, toggleVideo, minimize, expand,
     ],
   );
 
