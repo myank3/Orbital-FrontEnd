@@ -550,7 +550,6 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
       });
       remoteStreamRef.current = null;
 
-      iceCandidateQueueRef.current = [];
       remoteDescriptionSetRef.current = false;
       pendingRemoteOfferRef.current = null;
       activePeerIdRef.current = null;
