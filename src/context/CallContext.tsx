@@ -49,6 +49,8 @@ export interface CallContextType {
   incomingCall: CallSessionDto | null;
   peerId: string | null;
   callState: CallState;
+  /** Seconds since the call became active (media flowing). 0 when idle. */
+  duration: number;
   initiateCall: (peerId: string, callType: number) => Promise<void>;
   acceptCall: () => Promise<void>;
   rejectCall: () => Promise<void>;
@@ -131,8 +133,6 @@ function useRingtone(
           osc.type = wave;
           osc.frequency.value = step.freq;
 
-          // Soft attack / release — no clicks, no hard edges.
-          // Use exponential ramps so the tone feels natural.
           gain.gain.setValueAtTime(0.0001, t);
           gain.gain.exponentialRampToValueAtTime(volume, t + 0.08);
           gain.gain.setValueAtTime(volume, t + Math.max(0.09, dur - 0.08));
@@ -169,27 +169,17 @@ function useRingtone(
   }, []);
 }
 
-/* ── Ringtone presets ────────────────────────────────────
-   Frequencies chosen to match real phone tones:
-     - Ringback: 350 Hz + 440 Hz is the classic US ringback pair.
-       We use a single soft 350 Hz so it feels calm rather than urgent.
-     - Incoming: C5 → E5 (523 → 659 Hz) is a major third, the
-       most consonant interval — reads as "pleasant chime."
-     - End: A4 (440 Hz) — neutral, closing.
-   ──────────────────────────────────────────────────────── */
+/* ── Ringtone presets ────────────────────────────────────── */
 
-/** Caller — soft "brrrr" pulse, one every ~3 seconds. */
 const RINGBACK_PATTERN: ToneStep[] = [
   { freq: 350, durationMs: 900, gapAfterMs: 0 },
 ];
 
-/** Callee — gentle two-note rise: C5 → E5. */
 const INCOMING_SOFT_PATTERN: ToneStep[] = [
   { freq: 523.25, durationMs: 280, gapAfterMs: 80 },  // C5
   { freq: 659.25, durationMs: 420, gapAfterMs: 0 },   // E5
 ];
 
-/** End of call — single soft note, fades quickly. */
 const END_PATTERN: ToneStep[] = [
   { freq: 440, durationMs: 300, gapAfterMs: 0 },      // A4
 ];
@@ -216,6 +206,59 @@ async function withTimeout<T>(
 }
 
 /* ─────────────────────────────────────────────────────────
+   Audio unlock — silent play on first user gesture
+   ───────────────────────────────────────────────────────── */
+
+/**
+ * Browsers block autoplay of audio until the user interacts.
+ * This plays a tiny silent tone once on the first gesture,
+ * unlocking the AudioContext for the rest of the session.
+ */
+function installAudioUnlock(): () => void {
+  if (typeof window === 'undefined') return () => {};
+
+  let unlocked = false;
+
+  const unlock = () => {
+    if (unlocked) return;
+    unlocked = true;
+
+    try {
+      const Ctx =
+        window.AudioContext ||
+        (window as unknown as { webkitAudioContext: typeof AudioContext })
+          .webkitAudioContext;
+      if (Ctx) {
+        const ctx = new Ctx();
+        // Play a 1-sample silent buffer
+        const buf = ctx.createBuffer(1, 1, 22050);
+        const src = ctx.createBufferSource();
+        src.buffer = buf;
+        src.connect(ctx.destination);
+        src.start(0);
+        ctx.close().catch(() => {});
+      }
+    } catch {
+      /* ignore */
+    }
+
+    document.removeEventListener('click', unlock);
+    document.removeEventListener('touchstart', unlock);
+    document.removeEventListener('keydown', unlock);
+  };
+
+  document.addEventListener('click', unlock, { once: false });
+  document.addEventListener('touchstart', unlock, { once: false });
+  document.addEventListener('keydown', unlock, { once: false });
+
+  return () => {
+    document.removeEventListener('click', unlock);
+    document.removeEventListener('touchstart', unlock);
+    document.removeEventListener('keydown', unlock);
+  };
+}
+
+/* ─────────────────────────────────────────────────────────
    Provider
    ───────────────────────────────────────────────────────── */
 
@@ -233,6 +276,7 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
   const [callState, setCallState] = useState<CallState>('idle');
   const [peerId, setPeerId] = useState<string | null>(null);
   const [endToneActive, setEndToneActive] = useState<boolean>(false);
+  const [duration, setDuration] = useState<number>(0);
 
   const peerConnectionRef = useRef<RTCPeerConnection | null>(null);
   const iceCandidateQueueRef = useRef<RTCIceCandidateInit[]>([]);
@@ -246,6 +290,17 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
   const watchdogRef = useRef<number | null>(null);
   const callStateRef = useRef<CallState>('idle');
 
+  /**
+   * Both sides compute duration from this shared reference point,
+   * set the moment `pc.connectionState === 'connected'`. The two
+   * sides will be within a few hundred ms of each other — visually
+   * indistinguishable on a MM:SS display.
+   */
+  const callStartedAtRef = useRef<number | null>(null);
+
+  // Install audio unlock on mount
+  useEffect(() => installAudioUnlock(), []);
+
   useEffect(() => {
     callStateRef.current = callState;
   }, [callState]);
@@ -257,14 +312,14 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
 
   useRingtone(isOutgoingRinging, {
     pattern: RINGBACK_PATTERN,
-    silenceMs: 2100,  // ~3s total cycle
+    silenceMs: 2100,
     volume: 0.08,
     wave: 'sine',
   });
 
   useRingtone(isIncomingRinging, {
     pattern: INCOMING_SOFT_PATTERN,
-    silenceMs: 2000,  // ~2.8s total cycle
+    silenceMs: 2000,
     volume: 0.12,
     wave: 'sine',
   });
@@ -280,6 +335,23 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
     setEndToneActive(true);
     window.setTimeout(() => setEndToneActive(false), 500);
   }, []);
+
+  /* ── Duration ticker ─────────────────────────────────── */
+
+  useEffect(() => {
+    if (callState !== 'active' || callStartedAtRef.current == null) {
+      setDuration(0);
+      return;
+    }
+    const tick = () => {
+      const start = callStartedAtRef.current;
+      if (start == null) return;
+      setDuration(Math.max(0, Math.floor((Date.now() - start) / 1000)));
+    };
+    tick();
+    const id = window.setInterval(tick, 250);
+    return () => window.clearInterval(id);
+  }, [callState]);
 
   /* ── Peer ID resolver ────────────────────────────────── */
 
@@ -321,18 +393,43 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
       el.setAttribute('data-call-audio', 'true');
       el.style.display = 'none';
       document.body.appendChild(el);
-      el.play().catch((err) => {
-        console.warn('[Call] Fallback audio autoplay blocked:', err);
-        const resume = () => {
-          el.play().catch(() => {});
-          window.removeEventListener('click', resume);
-          window.removeEventListener('keydown', resume);
-          window.removeEventListener('touchstart', resume);
-        };
-        window.addEventListener('click', resume, { once: true });
-        window.addEventListener('keydown', resume, { once: true });
-        window.addEventListener('touchstart', resume, { once: true });
-      });
+
+      const tryPlay = () => {
+        el.play()
+          .then(() => {
+            console.log('[Call] Fallback audio playing', {
+              trackId: track.id,
+              readyState: track.readyState,
+              enabled: track.enabled,
+              muted: track.muted,
+              volume: el.volume,
+              paused: el.paused,
+            });
+          })
+          .catch((err) => {
+            console.warn('[Call] Fallback audio autoplay blocked:', err);
+            const resume = () => {
+              el.play().catch(() => {});
+              window.removeEventListener('click', resume);
+              window.removeEventListener('keydown', resume);
+              window.removeEventListener('touchstart', resume);
+            };
+            window.addEventListener('click', resume, { once: true });
+            window.addEventListener('keydown', resume, { once: true });
+            window.addEventListener('touchstart', resume, { once: true });
+          });
+      };
+
+      // If the track is already live, play immediately.
+      // If not, wait for it to unmute before trying again.
+      tryPlay();
+
+      const onUnmute = () => {
+        if (!el.paused && el.volume > 0) return;
+        tryPlay();
+      };
+      track.addEventListener('unmute', onUnmute);
+
       fallbackAudioRefs.current.push(el);
       fallbackAudioByTrackId.current.set(track.id, el);
     } catch (err) {
@@ -407,7 +504,6 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
           credential: c.credential,
         }));
 
-        // Safe check whether backend already provided a TURN server
         const hasTurn = mapped.some((s) => {
           const urls = Array.isArray(s.urls) ? s.urls : [s.urls];
           return urls.some(
@@ -431,7 +527,6 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
     (opts: { playTone?: boolean } = {}) => {
       clearWatchdog();
 
-      // Close peer connection first — detaches ontrack listeners
       if (peerConnectionRef.current) {
         try {
           peerConnectionRef.current.onicecandidate = null;
@@ -445,7 +540,6 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
         peerConnectionRef.current = null;
       }
 
-      // Stop tracks via refs (before clearing them)
       localStreamRef.current?.getTracks().forEach((t) => {
         try { t.stop(); } catch { /* ignore */ }
       });
@@ -456,15 +550,14 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
       });
       remoteStreamRef.current = null;
 
-      // Clear queued state
       iceCandidateQueueRef.current = [];
       remoteDescriptionSetRef.current = false;
       pendingRemoteOfferRef.current = null;
       activePeerIdRef.current = null;
+      callStartedAtRef.current = null;
 
       detachAllFallbackAudio();
 
-      // Reset React state (idempotent)
       setLocalStream(null);
       setRemoteStream(null);
       setSession(null);
@@ -474,6 +567,7 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
       setIsVideoOff(false);
       setIsMinimized(false);
       setCallState('idle');
+      setDuration(0);
 
       if (typeof window !== 'undefined') {
         sessionStorage.removeItem(ACTIVE_CALL_STORAGE_KEY);
@@ -518,6 +612,35 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
             }
           : false,
       });
+
+      // Ensure every track is enabled — some browsers mute them
+      // when the tab was backgrounded during permission prompt.
+      stream.getTracks().forEach((t) => {
+        t.enabled = true;
+      });
+
+      const audioTracks = stream.getAudioTracks();
+      const videoTracks = stream.getVideoTracks();
+      console.log('[Call] Local media acquired', {
+        audio: audioTracks.map((t) => ({
+          enabled: t.enabled,
+          muted: t.muted,
+          readyState: t.readyState,
+        })),
+        video: videoTracks.map((t) => ({
+          enabled: t.enabled,
+          muted: t.muted,
+          readyState: t.readyState,
+        })),
+      });
+
+      if (audioTracks.length === 0) {
+        throw new Error('Microphone not available. Check permissions.');
+      }
+      if (hasVideo && videoTracks.length === 0) {
+        throw new Error('Camera not available. Check permissions.');
+      }
+
       localStreamRef.current = stream;
       return stream;
     },
@@ -562,6 +685,16 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
 
       // ── ontrack — accumulate + fallback audio ───────────
       pc.ontrack = (event: RTCTrackEvent) => {
+        event.track.enabled = true;
+
+        console.log('[Call] Remote track received', {
+          kind: event.track.kind,
+          id: event.track.id,
+          enabled: event.track.enabled,
+          muted: event.track.muted,
+          readyState: event.track.readyState,
+        });
+
         let target = remoteStreamRef.current;
         if (!target) {
           target = new MediaStream();
@@ -604,6 +737,9 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
         console.log('[Call] PC state:', s);
 
         if (s === 'connected') {
+          if (callStartedAtRef.current == null) {
+            callStartedAtRef.current = Date.now();
+          }
           clearWatchdog();
           setCallState((prev) =>
             prev === 'connecting' || prev === 'outgoing' ? 'active' : prev,
@@ -612,7 +748,6 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
           console.warn('[Call] Peer connection:', s);
           teardown({ playTone: true });
         }
-        // 'disconnected' is transient — do NOT tear down here.
       };
 
       pc.oniceconnectionstatechange = () => {
@@ -682,8 +817,6 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
       return;
     }
 
-    // Scoped reset — do NOT call full teardown() here because it
-    // would momentarily set callState to 'idle' and drop signals.
     clearWatchdog();
     iceCandidateQueueRef.current = [];
     remoteDescriptionSetRef.current = false;
@@ -1026,6 +1159,7 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
       incomingCall,
       peerId,
       callState,
+      duration,
       initiateCall,
       acceptCall,
       rejectCall,
@@ -1045,6 +1179,7 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
       incomingCall,
       peerId,
       callState,
+      duration,
       initiateCall,
       acceptCall,
       rejectCall,

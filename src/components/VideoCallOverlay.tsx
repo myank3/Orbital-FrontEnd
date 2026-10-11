@@ -72,6 +72,7 @@ function VideoCallOverlay(): React.JSX.Element | null {
     isVideoOff,
     isMinimized,
     callState,
+    duration,
     peerId: contextPeerId,
     toggleMute,
     toggleVideo,
@@ -88,7 +89,6 @@ function VideoCallOverlay(): React.JSX.Element | null {
   const remoteAudioRef = useRef<HTMLAudioElement | null>(null);
   const cameraTrackRef = useRef<MediaStreamTrack | null>(null);
 
-  const [callDuration, setCallDuration] = useState<number>(0);
   const [isSpeakerOn, setIsSpeakerOn] = useState<boolean>(true);
   const [isScreenSharing, setIsScreenSharing] = useState<boolean>(false);
   const [screenBusy, setScreenBusy] = useState<boolean>(false);
@@ -182,25 +182,13 @@ function VideoCallOverlay(): React.JSX.Element | null {
     }
   }, [remoteStream, isSpeakerOn]);
 
-  /* ── Duration timer ──────────────────────────────────── */
-
-  useEffect(() => {
-    if (!session || callState !== 'active') {
-      setCallDuration(0);
-      return;
-    }
-    const id = window.setInterval(
-      () => setCallDuration((p) => p + 1),
-      1000,
-    );
-    return () => window.clearInterval(id);
-  }, [session, callState]);
+  /* ── Formatted timer from shared duration ────────────── */
 
   const formattedTimer = useMemo(() => {
-    const m = Math.floor(callDuration / 60);
-    const s = callDuration % 60;
+    const m = Math.floor(duration / 60);
+    const s = duration % 60;
     return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
-  }, [callDuration]);
+  }, [duration]);
 
   /* ── Screen share ────────────────────────────────────── */
 
@@ -308,10 +296,8 @@ function VideoCallOverlay(): React.JSX.Element | null {
   if (isVideoCall) {
     return (
       <div className="fixed inset-0 z-[100] bg-[#0B141A] flex flex-col select-none">
-        {/* Hidden audio element — always attached for safety */}
         <audio ref={remoteAudioRef} style={{ display: 'none' }} />
 
-        {/* Remote fullscreen video */}
         <video
           ref={remoteVideoRef}
           autoPlay
@@ -321,7 +307,6 @@ function VideoCallOverlay(): React.JSX.Element | null {
           }`}
         />
 
-        {/* Avatar fallback */}
         {!hasRemoteVideo && (
           <div className="absolute inset-0 flex flex-col items-center justify-center gap-6 text-center px-8">
             <div className="relative">
@@ -460,7 +445,6 @@ function VideoCallOverlay(): React.JSX.Element | null {
 
   return (
     <div className="fixed inset-0 z-[100] bg-gradient-to-b from-[#0B141A] via-[#0F1A21] to-[#0B141A] flex flex-col select-none">
-      {/* Hidden audio element — always attached for safety */}
       <audio ref={remoteAudioRef} style={{ display: 'none' }} />
 
       {/* Top bar */}
