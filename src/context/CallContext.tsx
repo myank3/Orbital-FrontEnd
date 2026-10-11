@@ -70,7 +70,7 @@ const DISCONNECT_WATCHDOG_MS = 30000;
 const API_TIMEOUT_MS = 5000;
 
 /* ─────────────────────────────────────────────────────────
-   Ringtone — Web Audio, pattern-based
+   Ringtone — Web Audio, soft & phone-like
    ───────────────────────────────────────────────────────── */
 
 interface ToneStep {
@@ -130,10 +130,14 @@ function useRingtone(
           const gain = ctx.createGain();
           osc.type = wave;
           osc.frequency.value = step.freq;
-          gain.gain.setValueAtTime(0, t);
-          gain.gain.linearRampToValueAtTime(volume, t + 0.02);
-          gain.gain.setValueAtTime(volume, t + dur - 0.03);
-          gain.gain.linearRampToValueAtTime(0, t + dur);
+
+          // Soft attack / release — no clicks, no hard edges.
+          // Use exponential ramps so the tone feels natural.
+          gain.gain.setValueAtTime(0.0001, t);
+          gain.gain.exponentialRampToValueAtTime(volume, t + 0.08);
+          gain.gain.setValueAtTime(volume, t + Math.max(0.09, dur - 0.08));
+          gain.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+
           osc.connect(gain);
           gain.connect(ctx.destination);
           osc.start(t);
@@ -165,21 +169,29 @@ function useRingtone(
   }, []);
 }
 
-/* ── Ringtone presets — calm, chime-like ────────────────── */
+/* ── Ringtone presets ────────────────────────────────────
+   Frequencies chosen to match real phone tones:
+     - Ringback: 350 Hz + 440 Hz is the classic US ringback pair.
+       We use a single soft 350 Hz so it feels calm rather than urgent.
+     - Incoming: C5 → E5 (523 → 659 Hz) is a major third, the
+       most consonant interval — reads as "pleasant chime."
+     - End: A4 (440 Hz) — neutral, closing.
+   ──────────────────────────────────────────────────────── */
 
+/** Caller — soft "brrrr" pulse, one every ~3 seconds. */
 const RINGBACK_PATTERN: ToneStep[] = [
-  { freq: 294, durationMs: 700, gapAfterMs: 200 },
-  { freq: 392, durationMs: 700, gapAfterMs: 0 },
+  { freq: 350, durationMs: 900, gapAfterMs: 0 },
 ];
 
+/** Callee — gentle two-note rise: C5 → E5. */
 const INCOMING_SOFT_PATTERN: ToneStep[] = [
-  { freq: 440, durationMs: 900, gapAfterMs: 100 },
-  { freq: 523, durationMs: 900, gapAfterMs: 0 },
+  { freq: 523.25, durationMs: 280, gapAfterMs: 80 },  // C5
+  { freq: 659.25, durationMs: 420, gapAfterMs: 0 },   // E5
 ];
 
+/** End of call — single soft note, fades quickly. */
 const END_PATTERN: ToneStep[] = [
-  { freq: 392, durationMs: 250, gapAfterMs: 60 },
-  { freq: 294, durationMs: 400, gapAfterMs: 0 },
+  { freq: 440, durationMs: 300, gapAfterMs: 0 },      // A4
 ];
 
 /* ── Timeout helper ──────────────────────────────────────── */
@@ -228,6 +240,7 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
   const pendingRemoteOfferRef = useRef<RTCSessionDescriptionInit | null>(null);
   const activePeerIdRef = useRef<string | null>(null);
   const remoteStreamRef = useRef<MediaStream | null>(null);
+  const localStreamRef = useRef<MediaStream | null>(null);
   const fallbackAudioRefs = useRef<HTMLAudioElement[]>([]);
   const fallbackAudioByTrackId = useRef<Map<string, HTMLAudioElement>>(new Map());
   const watchdogRef = useRef<number | null>(null);
@@ -244,15 +257,15 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
 
   useRingtone(isOutgoingRinging, {
     pattern: RINGBACK_PATTERN,
-    silenceMs: 2400,
-    volume: 0.07,
+    silenceMs: 2100,  // ~3s total cycle
+    volume: 0.08,
     wave: 'sine',
   });
 
   useRingtone(isIncomingRinging, {
     pattern: INCOMING_SOFT_PATTERN,
-    silenceMs: 2200,
-    volume: 0.10,
+    silenceMs: 2000,  // ~2.8s total cycle
+    volume: 0.12,
     wave: 'sine',
   });
 
@@ -265,7 +278,7 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
 
   const playEndTone = useCallback(() => {
     setEndToneActive(true);
-    window.setTimeout(() => setEndToneActive(false), 600);
+    window.setTimeout(() => setEndToneActive(false), 500);
   }, []);
 
   /* ── Peer ID resolver ────────────────────────────────── */
@@ -296,7 +309,6 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
   /* ── Fallback audio (Chrome 140 workaround) ──────────── */
 
   const attachFallbackAudio = useCallback((track: MediaStreamTrack) => {
-    // Deduplicate by track id — prevents doubled audio on renegotiation.
     if (fallbackAudioByTrackId.current.has(track.id)) return;
     try {
       const el = new Audio();
@@ -366,19 +378,20 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
   /* ── ICE config ──────────────────────────────────────── */
 
   const getRtcConfiguration = useCallback(async (): Promise<RTCConfiguration> => {
+    const publicTurn: RTCIceServer = {
+      urls: [
+        'turn:openrelay.metered.ca:80',
+        'turn:openrelay.metered.ca:443',
+        'turn:openrelay.metered.ca:443?transport=tcp',
+      ],
+      username: 'openrelayproject',
+      credential: 'openrelayproject',
+    };
+
     const fallbackServers: RTCIceServer[] = [
       { urls: 'stun:stun.l.google.com:19302' },
       { urls: 'stun:stun1.l.google.com:19302' },
-      // Public test TURN — swap for your own in production.
-      {
-        urls: [
-          'turn:openrelay.metered.ca:80',
-          'turn:openrelay.metered.ca:443',
-          'turn:openrelay.metered.ca:443?transport=tcp',
-        ],
-        username: 'openrelayproject',
-        credential: 'openrelayproject',
-      },
+      publicTurn,
     ];
 
     try {
@@ -388,20 +401,21 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
         'getIceServers',
       );
       if (serverConfigs && serverConfigs.length > 0) {
-        const mapped = serverConfigs.map((c) => ({
+        const mapped: RTCIceServer[] = serverConfigs.map((c) => ({
           urls: c.urls,
           username: c.username,
           credential: c.credential,
         }));
-        // If the backend didn't include a TURN server, layer in the
-        // public fallback so calls still work through symmetric NAT.
+
+        // Safe check whether backend already provided a TURN server
         const hasTurn = mapped.some((s) => {
-          const u = Array.isArray(s.urls) ? s.urls.join(',') : s.urls;
-          return u.startsWith('turn:') || u.startsWith('turns:');
+          const urls = Array.isArray(s.urls) ? s.urls : [s.urls];
+          return urls.some(
+            (u) => typeof u === 'string' && (u.startsWith('turn:') || u.startsWith('turns:')),
+          );
         });
-        if (!hasTurn) {
-          mapped.push(fallbackServers[2]);
-        }
+
+        if (!hasTurn) mapped.push(publicTurn);
         return { iceServers: mapped };
       }
     } catch {
@@ -417,6 +431,7 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
     (opts: { playTone?: boolean } = {}) => {
       clearWatchdog();
 
+      // Close peer connection first — detaches ontrack listeners
       if (peerConnectionRef.current) {
         try {
           peerConnectionRef.current.onicecandidate = null;
@@ -430,6 +445,18 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
         peerConnectionRef.current = null;
       }
 
+      // Stop tracks via refs (before clearing them)
+      localStreamRef.current?.getTracks().forEach((t) => {
+        try { t.stop(); } catch { /* ignore */ }
+      });
+      localStreamRef.current = null;
+
+      remoteStreamRef.current?.getTracks().forEach((t) => {
+        try { t.stop(); } catch { /* ignore */ }
+      });
+      remoteStreamRef.current = null;
+
+      // Clear queued state
       iceCandidateQueueRef.current = [];
       remoteDescriptionSetRef.current = false;
       pendingRemoteOfferRef.current = null;
@@ -437,28 +464,9 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
 
       detachAllFallbackAudio();
 
-      setLocalStream((prev) => {
-        prev?.getTracks().forEach((t) => {
-          try {
-            t.stop();
-          } catch {
-            /* ignore */
-          }
-        });
-        return null;
-      });
-      setRemoteStream((prev) => {
-        prev?.getTracks().forEach((t) => {
-          try {
-            t.stop();
-          } catch {
-            /* ignore */
-          }
-        });
-        return null;
-      });
-      remoteStreamRef.current = null;
-
+      // Reset React state (idempotent)
+      setLocalStream(null);
+      setRemoteStream(null);
       setSession(null);
       setIncomingCall(null);
       setPeerId(null);
@@ -496,7 +504,7 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
   const acquireMediaStream = useCallback(
     async (callType: number): Promise<MediaStream> => {
       const hasVideo = callType === CallType.Video;
-      return navigator.mediaDevices.getUserMedia({
+      const stream = await navigator.mediaDevices.getUserMedia({
         audio: {
           echoCancellation: true,
           noiseSuppression: true,
@@ -510,6 +518,8 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
             }
           : false,
       });
+      localStreamRef.current = stream;
+      return stream;
     },
     [],
   );
@@ -571,7 +581,6 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
           });
         }
 
-        // Fallback audio for Chrome 140 silent-audio bug
         if (event.track.kind === 'audio') {
           attachFallbackAudio(event.track);
         }
@@ -603,7 +612,7 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
           console.warn('[Call] Peer connection:', s);
           teardown({ playTone: true });
         }
-        // 'disconnected' is transient — do not tear down here.
+        // 'disconnected' is transient — do NOT tear down here.
       };
 
       pc.oniceconnectionstatechange = () => {
@@ -666,9 +675,6 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
     const incoming = incomingCall;
     if (!incoming) return;
 
-    // Clear stale state before starting a new call.
-    teardown();
-
     const resolvedPeer = resolvePeerId(null, incoming);
     if (!resolvedPeer) {
       console.error('[Call] Cannot resolve peer ID from incoming call');
@@ -676,9 +682,15 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
       return;
     }
 
+    // Scoped reset — do NOT call full teardown() here because it
+    // would momentarily set callState to 'idle' and drop signals.
+    clearWatchdog();
+    iceCandidateQueueRef.current = [];
+    remoteDescriptionSetRef.current = false;
+    activePeerIdRef.current = resolvedPeer;
+
     setCallState('connecting');
     setPeerId(resolvedPeer);
-    activePeerIdRef.current = resolvedPeer;
 
     const stream = await acquireMediaStream(incoming.callType);
     setLocalStream(stream);
@@ -728,6 +740,7 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
     acquireMediaStream,
     createPeerConnection,
     drainIceCandidateQueue,
+    clearWatchdog,
   ]);
 
   /* ── Reject ──────────────────────────────────────────── */
@@ -884,6 +897,7 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
       if (!messageData?.type) return;
 
       const pc = peerConnectionRef.current;
+      const replyToPeer = activePeerIdRef.current ?? payload.senderId;
 
       if (messageData.type === 'offer' && messageData.sdp) {
         const description: RTCSessionDescriptionInit = {
@@ -897,7 +911,7 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
           await pc.setLocalDescription(answer);
           await signalRService.sendCallSignal(
             payload.sessionId,
-            payload.senderId,
+            replyToPeer,
             { type: 'answer', sdp: answer.sdp },
           );
         } else {
