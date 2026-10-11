@@ -1,0 +1,6 @@
+{
+  "name": "Orbital Web Client",
+  "description": "Warm editorial web client for Orbital chat, real-time messaging, and direct calls.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

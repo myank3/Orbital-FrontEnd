@@ -1,0 +1,77 @@
+/* Tailwind directives */
+@import "tailwindcss";
+
+/* ──────────────────────────────────────────────────────────
+   Focus ring strategy
+   - Mouse click: no outline anywhere (kills stray amber rectangles)
+   - Keyboard tab: amber ring for accessibility
+   ────────────────────────────────────────────────────────── */
+
+*:focus {
+  outline: none;
+}
+
+*:focus-visible {
+  outline: 2px solid rgba(217, 119, 6, 0.6);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
+/* Firefox: remove inner dotted line */
+*::-moz-focus-inner {
+  border: 0;
+}
+
+/* ──────────────────────────────────────────────────────────
+   Base styles
+   ────────────────────────────────────────────────────────── */
+
+html,
+body,
+#root {
+  height: 100%;
+  background-color: #0B0A08;
+  color: #EDE5D4;
+}
+
+body {
+  margin: 0;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto',
+    'Helvetica Neue', Arial, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Selection color — matches the amber accent */
+::selection {
+  background-color: rgba(217, 119, 6, 0.35);
+  color: #EDE5D4;
+}
+
+/* Custom scrollbars, dark theme */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background-color: rgba(255, 255, 255, 0.06);
+  border-radius: 8px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background-color: rgba(255, 255, 255, 0.12);
+  background-clip: content-box;
+}
+
+/* Firefox scrollbars */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.10) transparent;
+}
