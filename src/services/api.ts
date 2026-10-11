@@ -48,6 +48,67 @@ export function setAccessToken(token: string | null): void {
   else localStorage.removeItem(TOKEN_KEY);
 }
 
+/* ────────────────────────────────────────────────────────── */
+/* Refresh helper — used by signalr.ts to avoid 401s on       */
+/* SignalR reconnect when the access token has expired.       */
+/* ────────────────────────────────────────────────────────── */
+
+/**
+ * Returns a fresh access token, refreshing if the current one is
+ * near expiry. Falls back to the current token if refresh isn't
+ * possible (no backend refresh endpoint, network failure, etc.).
+ */
+export async function refreshAuthToken(): Promise<string | null> {
+  const current = getAccessToken();
+  if (!current) return null;
+
+  // If the token has more than 60s left, just use it.
+  try {
+    const payload = JSON.parse(atob(current.split('.')[1])) as { exp?: number };
+    const nowSec = Math.floor(Date.now() / 1000);
+    const expiresInSec = (payload.exp ?? 0) - nowSec;
+    if (expiresInSec > 60) return current;
+  } catch {
+    /* non-JWT or malformed — use as-is */
+  }
+
+  // Near expiry — try the backend refresh endpoint.
+  try {
+    const res = await fetch(
+      `${API_BASE_URL.replace(/\/+$/, '')}/api/Auth/refresh`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({
+          refreshToken:
+            typeof window !== 'undefined'
+              ? localStorage.getItem('orbital.refreshToken')
+              : null,
+        }),
+      },
+    );
+
+    if (!res.ok) return current;
+
+    const data = (await res.json()) as {
+      token?: string;
+      accessToken?: string;
+      refreshToken?: string;
+    };
+    const newToken = data.token ?? data.accessToken ?? null;
+    if (newToken) {
+      setAccessToken(newToken);
+    }
+    if (data.refreshToken && typeof window !== 'undefined') {
+      localStorage.setItem('orbital.refreshToken', data.refreshToken);
+    }
+    return newToken ?? current;
+  } catch {
+    return current;
+  }
+}
+
 export function extractErrorMessage(
   error: unknown,
   fallback = 'A network or server error occurred',

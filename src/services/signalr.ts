@@ -155,12 +155,15 @@ class SignalRService {
 
       const baseHubUrl = `${API_BASE_URL.replace(/\/+$/, '')}/hubs/chat`;
 
+      // accessTokenFactory must return string | Promise<string>.
+      // Wrapping in an async IIFE guarantees a Promise<string> for
+      // both @microsoft/signalr v6 and v7+ type definitions.
       const builder = new HubConnectionBuilder()
         .withUrl(baseHubUrl, {
-          // WebSocket keeps a persistent channel; Long Polling
-          // reconnects every ~60s and drops ICE candidates.
-          // Let SignalR negotiate (WebSockets → ServerSentEvents → LongPolling).
-          accessTokenFactory: () => getFreshToken(),
+          accessTokenFactory: async () => {
+            const token = await getFreshToken();
+            return token;
+          },
         })
         .withAutomaticReconnect([0, 2000, 5000, 10000, 30000])
         .configureLogging(LogLevel.Warning);
@@ -480,10 +483,36 @@ class SignalRService {
   }
 
   private async ensureConnected(): Promise<HubConnection> {
-    if (!this.connection || this.connection.state !== HubConnectionState.Connected) {
+    if (!this.connection) {
       return this.start();
     }
-    return this.connection;
+
+    if (this.connection.state === HubConnectionState.Connected) {
+      return this.connection;
+    }
+
+    // In-flight connection: wait for it to settle instead of
+    // tearing it down. Prevents mid-call ICE drops when SignalR
+    // is reconnecting.
+    if (
+      this.connection.state === HubConnectionState.Connecting ||
+      this.connection.state === HubConnectionState.Reconnecting
+    ) {
+      const deadline = Date.now() + 10_000;
+      while (Date.now() < deadline) {
+        const state = this.connection.state;
+        if (state === HubConnectionState.Connected) {
+          return this.connection;
+        }
+        if (state === HubConnectionState.Disconnected) {
+          break; // dead — fall through to restart
+        }
+        await new Promise((r) => setTimeout(r, 100));
+      }
+    }
+
+    // Disconnected → restart
+    return this.start();
   }
 }
 
