@@ -161,6 +161,13 @@ class SignalRService {
   private directTypingListeners = new Set<DirectTypingListener>();
   private groupTypingListeners = new Set<GroupTypingListener>();
 
+  /**
+   * Sessions for which we've synthesized an IncomingCall from a
+   * ReceiveCallOffer. Prevents duplicate IncomingCall events if the
+   * backend ever starts sending its own.
+   */
+  private synthesizedSessions = new Set<string>();
+
   public getConnection(): HubConnection | null {
     return this.connection;
   }
@@ -229,6 +236,7 @@ class SignalRService {
       await this.connection.stop();
       this.connection = null;
     }
+    this.synthesizedSessions.clear();
     presenceStore.reset();
   }
 
@@ -293,11 +301,18 @@ class SignalRService {
       });
     });
 
-    /* ── Incoming call ───────────────────────────────── */
+    /* ── Incoming call (if the backend ever sends one) ─ */
+    // Kept for forward compatibility. Your backend currently does not
+    // emit `IncomingCall`; the callee-side event is synthesized below
+    // inside the `ReceiveCallOffer` handler.
     conn.on('IncomingCall', (raw: unknown) => {
-      console.log('[SignalR] ← IncomingCall raw:', raw);
+      const sessionId = normalizeGuid(field<string>(raw, 'sessionId', 'SessionId'));
+      if (!sessionId) return;
+      if (this.synthesizedSessions.has(sessionId)) return; // already fired
+      this.synthesizedSessions.add(sessionId);
+
       const call: CallSessionDto = {
-        sessionId: normalizeGuid(field<string>(raw, 'sessionId', 'SessionId')),
+        sessionId,
         callType: Number(field<number>(raw, 'callType', 'CallType') ?? 0),
         status: Number(field<number>(raw, 'status', 'Status') ?? 0),
         initiatorId: field<string>(raw, 'initiatorId', 'InitiatorId'),
@@ -306,7 +321,7 @@ class SignalRService {
         startedAt: field<string>(raw, 'startedAt', 'StartedAt'),
         endedAt: field<string>(raw, 'endedAt', 'EndedAt'),
       };
-      console.log('[SignalR] ← IncomingCall normalized:', call);
+
       this.incomingCallListeners.forEach((l) => {
         try { l(call); } catch (e) { console.error(e); }
       });
@@ -329,6 +344,7 @@ class SignalRService {
         return;
       }
 
+      // ── 1. Deliver the SDP offer to the WebRTC layer ──
       const payload: CallSignalPayload = {
         sessionId,
         senderId: callerId,
@@ -336,6 +352,34 @@ class SignalRService {
       };
       this.callSignalListeners.forEach((l) => {
         try { l(payload); } catch (e) { console.error(e); }
+      });
+
+      // ── 2. Synthesize the "IncomingCall" event ────────
+      // The backend's ChatHub only sends `ReceiveCallOffer`; it does
+      // NOT send a separate `IncomingCall`. Without this, the callee
+      // never sees the incoming-call banner.
+      if (this.synthesizedSessions.has(sessionId)) return;
+      this.synthesizedSessions.add(sessionId);
+
+      // Infer call type from the SDP: a video call's SDP contains an
+      // `m=video` media line. An audio call's does not.
+      const callType = /\bm=video\b/.test(sdp) ? 1 : 0;
+
+      const syntheticCall: CallSessionDto = {
+        sessionId,
+        callType,
+        status: 0, // Ringing
+        initiatorId: callerId,
+        peerId: null,
+        groupId: null,
+        startedAt: new Date().toISOString(),
+        endedAt: null,
+      };
+
+      console.log('[SignalR] ← ReceiveCallOffer (synthesized IncomingCall):', syntheticCall);
+
+      this.incomingCallListeners.forEach((l) => {
+        try { l(syntheticCall); } catch (e) { console.error(e); }
       });
     });
 
@@ -396,6 +440,11 @@ class SignalRService {
         console.warn(`[SignalR] ${source} — missing sessionId:`, raw);
         return;
       }
+
+      // Clean up the synthesis guard so a new call with the same ID
+      // (rare, but possible after a full teardown) still notifies.
+      this.synthesizedSessions.delete(sessionId);
+
       const payload: CallEndedPayload = {
         sessionId,
         endedBy: field<string>(raw, 'endedBy', 'EndedBy', 'terminatedBy', 'TerminatedBy'),
@@ -489,14 +538,6 @@ class SignalRService {
     await conn.invoke('SendGroupMessage', dto);
   }
 
-  /**
-   * Send a WebRTC signal to the peer.
-   *
-   * Fallback strategy: try the hub with a normalized GUID. If it fails
-   * (because the backend expects a bare string, or a specific casing),
-   * retry once with the raw string. If that also fails, log the exact
-   * error so it can be diagnosed without further guessing.
-   */
   public async sendCallSignal(
     sessionId: string,
     targetUserId: string,
@@ -537,10 +578,9 @@ class SignalRService {
         } else if (type === 'candidate') {
           await conn.invoke('SendIceCandidate', targetUserId, parsed.candidate, attempt.sid);
         }
-        return; // success
+        return;
       } catch (err) {
         lastError = err;
-        // Only retry if the failure looks like a sessionId binding issue.
         const msg = err instanceof Error ? err.message : String(err);
         const isBindingError =
           msg.includes('Guid') ||
