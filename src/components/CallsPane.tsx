@@ -12,48 +12,12 @@ import {
   Loader2,
   PhoneCall,
   UserPlus,
-  PhoneIncoming,
-  PhoneOutgoing,
-  PhoneMissed,
 } from 'lucide-react';
 import { Avatar } from './Avatar';
 import { apiService, extractErrorMessage } from '../services/api';
 import { FriendDto } from '../types/api';
 import { presenceStore } from '../services/presenceStore';
 import { useCall } from '../context/CallContext';
-import { CallLogEntry, getCallLog, deleteCallLogEntry } from '../services/callLog';
-
-/* ────────────────────────────────────────────────────────── */
-/* Helpers                                                    */
-/* ────────────────────────────────────────────────────────── */
-
-function formatDuration(seconds: number): string {
-  if (seconds <= 0) return '';
-  const m = Math.floor(seconds / 60);
-  const s = seconds % 60;
-  if (m === 0) return `${s}s`;
-  if (m < 60) return `${m}m ${s.toString().padStart(2, '0')}s`;
-  const h = Math.floor(m / 60);
-  return `${h}h ${(m % 60).toString().padStart(2, '0')}m`;
-}
-
-function formatWhen(iso: string): string {
-  try {
-    const d = new Date(iso);
-    const now = new Date();
-    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-    const that = new Date(d.getFullYear(), d.getMonth(), d.getDate());
-    const diffDays = Math.round((today.getTime() - that.getTime()) / 86_400_000);
-
-    const time = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-    if (diffDays === 0) return time;
-    if (diffDays === 1) return `Yesterday · ${time}`;
-    if (diffDays < 7) return `${d.toLocaleDateString([], { weekday: 'short' })} · ${time}`;
-    return d.toLocaleDateString([], { month: 'short', day: 'numeric' }) + ` · ${time}`;
-  } catch {
-    return '';
-  }
-}
 
 /* ────────────────────────────────────────────────────────── */
 /* Calls pane                                                 */
@@ -68,12 +32,6 @@ function CallsPane(): React.JSX.Element {
   const [query, setQuery] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [busyPeerId, setBusyPeerId] = useState<string | null>(null);
-
-  /* Silent call log — read from local storage. Never surfaced as "history". */
-  const [log, setLog] = useState<CallLogEntry[]>(() => getCallLog());
-  const [profileCache, setProfileCache] = useState<
-    Record<string, { name: string; avatar: string | null }>
-  >({});
 
   // Live presence
   const [, setPresenceTick] = useState(0);
@@ -102,45 +60,6 @@ function CallsPane(): React.JSX.Element {
     };
   }, []);
 
-  // Reload log on updates
-  useEffect(() => {
-    const reload = () => setLog(getCallLog());
-    window.addEventListener('callLog:updated', reload);
-    window.addEventListener('storage', reload);
-    return () => {
-      window.removeEventListener('callLog:updated', reload);
-      window.removeEventListener('storage', reload);
-    };
-  }, []);
-
-  // Resolve placeholder peer names for log entries
-  useEffect(() => {
-    if (log.length === 0) return;
-    const missing = log.filter(
-      (e) => e.peerName === 'Peer' && e.peerId && !profileCache[e.peerId],
-    );
-    if (missing.length === 0) return;
-    let cancelled = false;
-    missing.forEach((entry) => {
-      apiService
-        .getUserProfile(entry.peerId)
-        .then((p) => {
-          if (cancelled) return;
-          setProfileCache((prev) => ({
-            ...prev,
-            [entry.peerId]: {
-              name: p.displayName || p.userHandle || 'Peer',
-              avatar: p.avatarUrl,
-            },
-          }));
-        })
-        .catch(() => {});
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [log, profileCache]);
-
   const callBusy = Boolean(activeSession) || Boolean(incomingCall);
 
   const filteredFriends = useMemo(() => {
@@ -152,8 +71,6 @@ function CallsPane(): React.JSX.Element {
         f.handle.toLowerCase().includes(q),
     );
   }, [friends, query]);
-
-  const recentCalls = useMemo(() => log.slice(0, 6), [log]);
 
   const handleCall = async (peerId: string, callType: number) => {
     if (callBusy) {
@@ -170,11 +87,6 @@ function CallsPane(): React.JSX.Element {
       setBusyPeerId(null);
     }
   };
-
-  const resolveName = (entry: CallLogEntry) =>
-    profileCache[entry.peerId]?.name ?? entry.peerName;
-  const resolveAvatar = (entry: CallLogEntry) =>
-    profileCache[entry.peerId]?.avatar ?? entry.peerAvatarUrl ?? undefined;
 
   return (
     <div className="h-full flex flex-col bg-[#0B0A08] text-[#EDE5D4] overflow-hidden">
@@ -218,90 +130,6 @@ function CallsPane(): React.JSX.Element {
 
       {/* Body */}
       <div className="flex-1 overflow-y-auto px-4 sm:px-6 py-4">
-        {/* Silent recent strip — no label, no explainer, only if there's data */}
-        {recentCalls.length > 0 && (
-          <div className="mb-6">
-            <div className="space-y-0.5">
-              {recentCalls.map((entry) => {
-                const name = resolveName(entry);
-                const avatar = resolveAvatar(entry);
-                const isMissed =
-                  entry.outcome === 'missed' || entry.outcome === 'declined';
-                const isOutgoing = entry.direction === 'outgoing';
-                const isVideo = entry.callType === 1;
-                const DirectionIcon = isMissed
-                  ? PhoneMissed
-                  : isOutgoing
-                  ? PhoneOutgoing
-                  : PhoneIncoming;
-                const iconColor = isMissed ? 'text-[#F87171]' : 'text-[#6B6259]';
-
-                return (
-                  <div
-                    key={entry.id}
-                    className="group flex items-center gap-3 px-3 py-2 rounded-xl hover:bg-white/[0.035] transition-colors"
-                  >
-                    <button
-                      onClick={() => navigate(`/app/dm/${entry.peerId}`)}
-                      className="flex items-center gap-3 min-w-0 flex-1 text-left"
-                    >
-                      <Avatar name={name} src={avatar} size="sm" />
-                      <div className="min-w-0 flex-1">
-                        <div className="flex items-center gap-2">
-                          <DirectionIcon className={`w-3 h-3 shrink-0 ${iconColor}`} />
-                          <p
-                            className={`text-[12.5px] font-medium truncate ${
-                              isMissed ? 'text-[#F87171]' : 'text-[#EDE5D4]'
-                            }`}
-                          >
-                            {name}
-                          </p>
-                        </div>
-                        <p className="text-[10.5px] text-[#6B6259] truncate mt-0.5">
-                          {formatWhen(entry.startedAt)}
-                          {entry.durationSeconds > 0
-                            ? ` · ${formatDuration(entry.durationSeconds)}`
-                            : ''}
-                          {isVideo ? ' · Video' : ''}
-                        </p>
-                      </div>
-                    </button>
-
-                    <div className="flex items-center gap-1 md:opacity-0 md:group-hover:opacity-100 transition-opacity">
-                      <button
-                        onClick={() => void handleCall(entry.peerId, 0)}
-                        disabled={callBusy}
-                        className="p-1.5 rounded-md text-[#6B6259] hover:text-[#D97706] hover:bg-[#D97706]/[0.10] disabled:opacity-40 disabled:hover:bg-transparent transition-colors"
-                        title="Call again"
-                      >
-                        <Phone className="w-3 h-3" />
-                      </button>
-                      <button
-                        onClick={() => void handleCall(entry.peerId, 1)}
-                        disabled={callBusy}
-                        className="p-1.5 rounded-md text-[#6B6259] hover:text-[#D97706] hover:bg-[#D97706]/[0.10] disabled:opacity-40 disabled:hover:bg-transparent transition-colors"
-                        title="Video call again"
-                      >
-                        <VideoIcon className="w-3 h-3" />
-                      </button>
-                      <button
-                        onClick={() => deleteCallLogEntry(entry.id)}
-                        className="p-1.5 rounded-md text-[#6B6259] hover:text-[#F87171] hover:bg-[#B91C1C]/[0.10] transition-colors"
-                        title="Remove"
-                      >
-                        <span className="text-[12px] leading-none">×</span>
-                      </button>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-
-            <div className="mt-4 mb-5 h-px bg-white/[0.04]" />
-          </div>
-        )}
-
-        {/* Friends list */}
         {loading ? (
           <div className="h-40 flex items-center justify-center text-[12.5px] text-[#6B6259]">
             <Loader2 className="w-4 h-4 animate-spin mr-2 text-[#D97706]" />
