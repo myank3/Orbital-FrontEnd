@@ -313,6 +313,7 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
   const watchdogRef = useRef<number | null>(null);
   const callStateRef = useRef<CallState>('idle');
   const callStartedAtRef = useRef<number | null>(null);
+  const muteCheckTimersRef = useRef<number[]>([]);
 
   /**
    * Persistent hidden <video> used ONLY for remote audio playback.
@@ -513,6 +514,10 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
     (opts: { playTone?: boolean } = {}) => {
       clearWatchdog();
 
+      // Clear any pending mute-check timers
+      muteCheckTimersRef.current.forEach((id) => window.clearTimeout(id));
+      muteCheckTimersRef.current = [];
+
       if (peerConnectionRef.current) {
         try {
           peerConnectionRef.current.onicecandidate = null;
@@ -659,6 +664,42 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
         (window as unknown as { __pc?: RTCPeerConnection }).__pc = pc;
       }
 
+      /* ── Chrome 140 unmute workaround ───────────────────
+         If a remote audio track stays muted for >3s after the
+         PC connects, trigger an ICE restart. This forces the
+         browser to renegotiate the media path, which unblocks
+         the stuck SRTP flow. */
+      const scheduleMuteCheck = (track: MediaStreamTrack) => {
+        if (track.kind !== 'audio') return;
+        let checks = 0;
+        const check = () => {
+          checks++;
+          if (!track.muted) return;
+          if (checks >= 6) {
+            console.warn('[Call] Audio track stuck muted — forcing ICE restart');
+            try {
+              pc.createOffer({ iceRestart: true })
+                .then((offer) => pc.setLocalDescription(offer).then(() => offer))
+                .then((offer) => {
+                  void signalRService.sendCallSignal(
+                    targetSessionId,
+                    targetPeerId,
+                    { type: 'offer', sdp: offer.sdp },
+                  );
+                })
+                .catch(() => {});
+            } catch {
+              /* ignore */
+            }
+            return;
+          }
+          const id = window.setTimeout(check, 500);
+          muteCheckTimersRef.current.push(id);
+        };
+        const id = window.setTimeout(check, 500);
+        muteCheckTimersRef.current.push(id);
+      };
+
       const audioTrack = stream.getAudioTracks()[0];
       if (audioTrack) {
         pc.addTransceiver(audioTrack, {
@@ -689,6 +730,9 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
           muted: event.track.muted,
           readyState: event.track.readyState,
         });
+
+        // Chrome 140: try to unmute a stuck audio track
+        scheduleMuteCheck(event.track);
 
         /* ── AUDIO: attach directly to the persistent sink ── */
         if (event.track.kind === 'audio') {
@@ -1177,9 +1221,10 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
   ]);
 
   /* ── Watchdog arm/disarm ─────────────────────────────── */
-
+  // Only arm while we're still negotiating. Once 'active',
+  // the PC's own state-change handlers cover failures.
   useEffect(() => {
-    if (callState === 'active') {
+    if (callState === 'connecting' || callState === 'outgoing') {
       armWatchdog();
     } else {
       clearWatchdog();
