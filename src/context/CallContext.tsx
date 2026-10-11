@@ -229,6 +229,7 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
   const activePeerIdRef = useRef<string | null>(null);
   const remoteStreamRef = useRef<MediaStream | null>(null);
   const fallbackAudioRefs = useRef<HTMLAudioElement[]>([]);
+  const fallbackAudioByTrackId = useRef<Map<string, HTMLAudioElement>>(new Map());
   const watchdogRef = useRef<number | null>(null);
   const callStateRef = useRef<CallState>('idle');
 
@@ -295,8 +296,10 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
   /* ── Fallback audio (Chrome 140 workaround) ──────────── */
 
   const attachFallbackAudio = useCallback((track: MediaStreamTrack) => {
+    // Deduplicate by track id — prevents doubled audio on renegotiation.
+    if (fallbackAudioByTrackId.current.has(track.id)) return;
     try {
-      const el = document.createElement('audio');
+      const el = new Audio();
       el.srcObject = new MediaStream([track]);
       el.autoplay = true;
       el.volume = 1;
@@ -319,6 +322,7 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
         window.addEventListener('touchstart', resume, { once: true });
       });
       fallbackAudioRefs.current.push(el);
+      fallbackAudioByTrackId.current.set(track.id, el);
     } catch (err) {
       console.warn('[Call] Could not create fallback audio element:', err);
     }
@@ -335,6 +339,7 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
       }
     });
     fallbackAudioRefs.current = [];
+    fallbackAudioByTrackId.current.clear();
   }, []);
 
   /* ── Watchdog ────────────────────────────────────────── */
@@ -364,6 +369,16 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
     const fallbackServers: RTCIceServer[] = [
       { urls: 'stun:stun.l.google.com:19302' },
       { urls: 'stun:stun1.l.google.com:19302' },
+      // Public test TURN — swap for your own in production.
+      {
+        urls: [
+          'turn:openrelay.metered.ca:80',
+          'turn:openrelay.metered.ca:443',
+          'turn:openrelay.metered.ca:443?transport=tcp',
+        ],
+        username: 'openrelayproject',
+        credential: 'openrelayproject',
+      },
     ];
 
     try {
@@ -373,13 +388,21 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
         'getIceServers',
       );
       if (serverConfigs && serverConfigs.length > 0) {
-        return {
-          iceServers: serverConfigs.map((c) => ({
-            urls: c.urls,
-            username: c.username,
-            credential: c.credential,
-          })),
-        };
+        const mapped = serverConfigs.map((c) => ({
+          urls: c.urls,
+          username: c.username,
+          credential: c.credential,
+        }));
+        // If the backend didn't include a TURN server, layer in the
+        // public fallback so calls still work through symmetric NAT.
+        const hasTurn = mapped.some((s) => {
+          const u = Array.isArray(s.urls) ? s.urls.join(',') : s.urls;
+          return u.startsWith('turn:') || u.startsWith('turns:');
+        });
+        if (!hasTurn) {
+          mapped.push(fallbackServers[2]);
+        }
+        return { iceServers: mapped };
       }
     } catch {
       /* fall through */
@@ -553,7 +576,6 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
           attachFallbackAudio(event.track);
         }
 
-        // Advance to active as soon as we have any remote track
         setCallState((prev) =>
           prev === 'connecting' || prev === 'outgoing' ? 'active' : prev,
         );
@@ -568,9 +590,6 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
         }
       };
 
-      // ── THE KEY FIX: connectionstatechange drives 'active' ──
-      // Both caller and callee will hit this at the same moment
-      // (roughly), so both sides transition to 'active' reliably.
       pc.onconnectionstatechange = () => {
         const s = pc.connectionState;
         console.log('[Call] PC state:', s);
@@ -584,7 +603,7 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
           console.warn('[Call] Peer connection:', s);
           teardown({ playTone: true });
         }
-        // NOTE: do NOT tear down on 'disconnected' — it's transient.
+        // 'disconnected' is transient — do not tear down here.
       };
 
       pc.oniceconnectionstatechange = () => {
@@ -646,6 +665,9 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
   const acceptCall = useCallback(async (): Promise<void> => {
     const incoming = incomingCall;
     if (!incoming) return;
+
+    // Clear stale state before starting a new call.
+    teardown();
 
     const resolvedPeer = resolvePeerId(null, incoming);
     if (!resolvedPeer) {
@@ -890,8 +912,6 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
             }),
           );
           await drainIceCandidateQueue(pc);
-          // Do NOT flip to 'active' here — onconnectionstatechange will.
-          // Just move out of 'outgoing' so ringing stops.
           setCallState((prev) =>
             prev === 'outgoing' ? 'connecting' : prev,
           );

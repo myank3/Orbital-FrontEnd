@@ -7,7 +7,6 @@ import {
   HubConnection,
   HubConnectionBuilder,
   HubConnectionState,
-  HttpTransportType,
   LogLevel,
 } from '@microsoft/signalr';
 import {
@@ -20,7 +19,7 @@ import {
   SendGroupMessageDto,
   UserPresencePayload,
 } from '../types/api';
-import { API_BASE_URL, getAccessToken } from './api';
+import { API_BASE_URL, getAccessToken, refreshAuthToken } from './api';
 import { presenceStore } from './presenceStore';
 
 /* ────────────────────────────────────────────────────────── */
@@ -77,6 +76,35 @@ function extractIsOnlineFromPayload(payload: unknown): boolean {
   return false;
 }
 
+/* ────────────────────────────────────────────────────────── */
+/* Token helper — refresh before reconnect                    */
+/* ────────────────────────────────────────────────────────── */
+
+async function getFreshToken(): Promise<string> {
+  const token = getAccessToken();
+  if (!token) return '';
+  try {
+    const payload = JSON.parse(atob(token.split('.')[1])) as { exp?: number };
+    const nowSec = Math.floor(Date.now() / 1000);
+    const expiresInSec = (payload.exp ?? 0) - nowSec;
+    if (expiresInSec < 60) {
+      try {
+        const fresh = await refreshAuthToken();
+        return fresh ?? token;
+      } catch {
+        return token;
+      }
+    }
+  } catch {
+    /* non-JWT or malformed — use as-is */
+  }
+  return token;
+}
+
+/* ────────────────────────────────────────────────────────── */
+/* Service                                                    */
+/* ────────────────────────────────────────────────────────── */
+
 class SignalRService {
   private connection: HubConnection | null = null;
   private isStarting = false;
@@ -129,14 +157,27 @@ class SignalRService {
 
       const builder = new HubConnectionBuilder()
         .withUrl(baseHubUrl, {
-          accessTokenFactory: () => getAccessToken() ?? '',
-          transport: HttpTransportType.LongPolling,
+          // WebSocket keeps a persistent channel; Long Polling
+          // reconnects every ~60s and drops ICE candidates.
+          // Let SignalR negotiate (WebSockets → ServerSentEvents → LongPolling).
+          accessTokenFactory: () => getFreshToken(),
         })
         .withAutomaticReconnect([0, 2000, 5000, 10000, 30000])
         .configureLogging(LogLevel.Warning);
 
       this.connection = builder.build();
       this.bindInternalEvents(this.connection);
+
+      // Surface reconnect events so we can see when drops happen.
+      this.connection.onreconnecting((err) => {
+        console.warn('[SignalR] Reconnecting:', err);
+      });
+      this.connection.onreconnected((id) => {
+        console.log('[SignalR] Reconnected:', id);
+      });
+      this.connection.onclose((err) => {
+        console.warn('[SignalR] Closed:', err);
+      });
 
       await this.connection.start();
       return this.connection;
@@ -154,6 +195,7 @@ class SignalRService {
   }
 
   private bindInternalEvents(conn: HubConnection): void {
+    /* ── Direct messages ─────────────────────────────── */
     conn.on('ReceiveDirectMessage', (message: DirectMessageDto) => {
       this.directMessageListeners.forEach((listener) => {
         try { listener(message); } catch (err) {
@@ -162,6 +204,7 @@ class SignalRService {
       });
     });
 
+    /* ── Group messages ──────────────────────────────── */
     conn.on('ReceiveGroupMessage', (message: GroupMessageDto) => {
       this.groupMessageListeners.forEach((listener) => {
         try { listener(message); } catch (err) {
@@ -170,7 +213,7 @@ class SignalRService {
       });
     });
 
-    // ── Presence ────────────────────────────────────────────
+    /* ── Presence ────────────────────────────────────── */
     const handlePresence = (payload: UserPresencePayload, source: string) => {
       const uid = extractUserIdFromPayload(payload);
       if (uid) {
@@ -178,7 +221,6 @@ class SignalRService {
         if (online) presenceStore.setOnline(uid);
         else presenceStore.setOffline(uid);
       }
-
       this.presenceListeners.forEach((listener) => {
         try { listener(payload); } catch (err) {
           console.error(`Error in ${source} listener:`, err);
@@ -190,7 +232,7 @@ class SignalRService {
     conn.on('userstatuschanged', (p: UserPresencePayload) => handlePresence(p, 'userstatuschanged'));
     conn.on('UserPresenceChanged', (p: UserPresencePayload) => handlePresence(p, 'UserPresenceChanged'));
 
-    // ── Initial presence snapshot ───────────────────────────
+    /* ── Initial presence snapshot ───────────────────── */
     const handleInitialPresence = (onlineUserIds: unknown, source: string) => {
       const list = Array.isArray(onlineUserIds) ? onlineUserIds : [];
       const ids: string[] = [];
@@ -199,7 +241,6 @@ class SignalRService {
         if (id) ids.push(id);
       }
       presenceStore.setAll(ids);
-
       this.initialPresenceListeners.forEach((listener) => {
         try { listener(list); } catch (err) {
           console.error(`Error in ${source} listener:`, err);
@@ -210,7 +251,7 @@ class SignalRService {
     conn.on('InitialPresenceList', (ids: unknown) => handleInitialPresence(ids, 'InitialPresenceList'));
     conn.on('initialpresencelist', (ids: unknown) => handleInitialPresence(ids, 'initialpresencelist'));
 
-    // ── Direct typing indicators ────────────────────────────
+    /* ── Typing indicators ───────────────────────────── */
     conn.on('DirectTypingStatus', (data: DirectTypingPayload) => {
       this.directTypingListeners.forEach((listener) => {
         try { listener(data); } catch (err) {
@@ -219,7 +260,6 @@ class SignalRService {
       });
     });
 
-    // ── Group typing indicators ─────────────────────────────
     conn.on('GroupTypingStatus', (data: GroupTypingPayload) => {
       this.groupTypingListeners.forEach((listener) => {
         try { listener(data); } catch (err) {
@@ -228,7 +268,7 @@ class SignalRService {
       });
     });
 
-    // ── Incoming call ──────────────────────────────────────
+    /* ── Incoming call (canonical — backend sends callType) ── */
     conn.on('IncomingCall', (call: CallSessionDto) => {
       this.incomingCallListeners.forEach((listener) => {
         try { listener(call); } catch (err) {
@@ -237,7 +277,12 @@ class SignalRService {
       });
     });
 
-    // ── WebRTC call signaling ──────────────────────────────
+    /* ── WebRTC signaling ────────────────────────────── */
+
+    // Offer is delivered by the backend as a discrete event.
+    // Note: DO NOT synthesise a second "IncomingCall" here — the
+    // backend already sends one. Duplicating causes the callee to
+    // see two calls and the second one wins with possibly-wrong data.
     conn.on(
       'ReceiveCallOffer',
       (data: { callerId: string; callerHandle?: string; sdp: unknown; sessionId: string }) => {
@@ -248,28 +293,7 @@ class SignalRService {
         };
         this.callSignalListeners.forEach((listener) => {
           try { listener(signalPayload); } catch (err) {
-            console.error('Error in ReceiveCallOffer (signal) listener:', err);
-          }
-        });
-
-        const sdpStr = typeof data.sdp === 'string' ? data.sdp : JSON.stringify(data.sdp ?? '');
-        const hasVideo = /m=video/.test(sdpStr);
-        const callType = hasVideo ? 1 : 0;
-
-        const syntheticSession: CallSessionDto = {
-          sessionId: data.sessionId,
-          callType,
-          status: 0,
-          initiatorId: data.callerId,
-          peerId: null,
-          groupId: null,
-          startedAt: new Date().toISOString(),
-          endedAt: null,
-        };
-
-        this.incomingCallListeners.forEach((listener) => {
-          try { listener(syntheticSession); } catch (err) {
-            console.error('Error in ReceiveCallOffer (incoming) listener:', err);
+            console.error('Error in ReceiveCallOffer listener:', err);
           }
         });
       },
@@ -307,7 +331,7 @@ class SignalRService {
       },
     );
 
-    // ── Call terminated ────────────────────────────────────
+    /* ── Call terminated ─────────────────────────────── */
     const handleCallTerminated = (payload: CallEndedPayload, source: string) => {
       this.callEndedListeners.forEach((listener) => {
         try { listener(payload); } catch (err) {
@@ -332,49 +356,41 @@ class SignalRService {
   /* Subscriptions                                          */
   /* ────────────────────────────────────────────────────── */
 
-  public onReceiveDirectMessage(callback: DirectMessageListener): () => void {
-    this.directMessageListeners.add(callback);
-    return () => { this.directMessageListeners.delete(callback); };
+  public onReceiveDirectMessage(cb: DirectMessageListener): () => void {
+    this.directMessageListeners.add(cb);
+    return () => { this.directMessageListeners.delete(cb); };
   }
-
-  public onReceiveGroupMessage(callback: GroupMessageListener): () => void {
-    this.groupMessageListeners.add(callback);
-    return () => { this.groupMessageListeners.delete(callback); };
+  public onReceiveGroupMessage(cb: GroupMessageListener): () => void {
+    this.groupMessageListeners.add(cb);
+    return () => { this.groupMessageListeners.delete(cb); };
   }
-
-  public onUserPresenceChanged(callback: UserPresenceListener): () => void {
-    this.presenceListeners.add(callback);
-    return () => { this.presenceListeners.delete(callback); };
+  public onUserPresenceChanged(cb: UserPresenceListener): () => void {
+    this.presenceListeners.add(cb);
+    return () => { this.presenceListeners.delete(cb); };
   }
-
-  public onInitialPresenceList(callback: InitialPresenceListListener): () => void {
-    this.initialPresenceListeners.add(callback);
-    return () => { this.initialPresenceListeners.delete(callback); };
+  public onInitialPresenceList(cb: InitialPresenceListListener): () => void {
+    this.initialPresenceListeners.add(cb);
+    return () => { this.initialPresenceListeners.delete(cb); };
   }
-
-  public onIncomingCall(callback: IncomingCallListener): () => void {
-    this.incomingCallListeners.add(callback);
-    return () => { this.incomingCallListeners.delete(callback); };
+  public onIncomingCall(cb: IncomingCallListener): () => void {
+    this.incomingCallListeners.add(cb);
+    return () => { this.incomingCallListeners.delete(cb); };
   }
-
-  public onCallSignal(callback: CallSignalListener): () => void {
-    this.callSignalListeners.add(callback);
-    return () => { this.callSignalListeners.delete(callback); };
+  public onCallSignal(cb: CallSignalListener): () => void {
+    this.callSignalListeners.add(cb);
+    return () => { this.callSignalListeners.delete(cb); };
   }
-
-  public onCallEnded(callback: CallEndedListener): () => void {
-    this.callEndedListeners.add(callback);
-    return () => { this.callEndedListeners.delete(callback); };
+  public onCallEnded(cb: CallEndedListener): () => void {
+    this.callEndedListeners.add(cb);
+    return () => { this.callEndedListeners.delete(cb); };
   }
-
-  public onDirectTyping(callback: DirectTypingListener): () => void {
-    this.directTypingListeners.add(callback);
-    return () => { this.directTypingListeners.delete(callback); };
+  public onDirectTyping(cb: DirectTypingListener): () => void {
+    this.directTypingListeners.add(cb);
+    return () => { this.directTypingListeners.delete(cb); };
   }
-
-  public onGroupTyping(callback: GroupTypingListener): () => void {
-    this.groupTypingListeners.add(callback);
-    return () => { this.groupTypingListeners.delete(callback); };
+  public onGroupTyping(cb: GroupTypingListener): () => void {
+    this.groupTypingListeners.add(cb);
+    return () => { this.groupTypingListeners.delete(cb); };
   }
 
   /* ────────────────────────────────────────────────────── */
@@ -386,14 +402,12 @@ class SignalRService {
     await conn.invoke('SendDirectMessage', dto);
   }
 
-  /** Fire-and-forget typing indicator. Ignores errors so a transient
-   *  connection issue never blocks the user's typing experience. */
   public async sendDirectTyping(recipientId: string, isTyping: boolean): Promise<void> {
     try {
       const conn = await this.ensureConnected();
       await conn.invoke('SendDirectTyping', recipientId, isTyping);
     } catch {
-      // silent — typing indicators are best-effort
+      /* best-effort */
     }
   }
 
@@ -402,7 +416,7 @@ class SignalRService {
       const conn = await this.ensureConnected();
       await conn.invoke('SendGroupTyping', groupId, isTyping);
     } catch {
-      // silent
+      /* best-effort */
     }
   }
 
