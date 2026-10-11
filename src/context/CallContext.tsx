@@ -316,17 +316,15 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
 
   /**
    * Persistent hidden <video> used ONLY for remote audio playback.
-   * Created once at mount, never touched by React state, never
-   * re-rendered. Audio tracks are attached DIRECTLY to this element
-   * inside `pc.ontrack` — bypassing the React re-render race that
-   * was losing the audio track.
+   * Audio tracks are attached DIRECTLY in `pc.ontrack`. This
+   * bypasses the React re-render race that was losing the audio
+   * track on the receiving side.
    */
   const audioSinkRef = useRef<HTMLVideoElement | null>(null);
 
-  // Install audio unlock on mount
   useEffect(() => installAudioUnlock(), []);
 
-  // Create the persistent audio sink element once
+  // Create the persistent audio sink once
   useEffect(() => {
     if (typeof window === 'undefined') return;
     if (audioSinkRef.current) return;
@@ -488,10 +486,10 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
           );
         });
         if (hasTurn) {
-          console.log('[Call] ICE config: backend TURN + Metered TURN (relay only)');
+          console.log('[Call] ICE config: backend TURN + Metered TURN (policy: all)');
           return {
             iceServers: [...mapped, ...METERED_ICE_SERVERS],
-            iceTransportPolicy: 'relay',
+            iceTransportPolicy: 'all',
           };
         }
       }
@@ -499,13 +497,13 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
       /* fall through */
     }
 
-    console.log('[Call] ICE config: STUN + Metered TURN (relay only)', {
+    console.log('[Call] ICE config: STUN + Metered TURN (policy: all)', {
       turnServers: METERED_ICE_SERVERS.length,
     });
 
     return {
       iceServers: [...stunOnly, ...METERED_ICE_SERVERS],
-      iceTransportPolicy: 'relay',
+      iceTransportPolicy: 'all',
     };
   }, []);
 
@@ -538,7 +536,6 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
       });
       remoteStreamRef.current = null;
 
-      // Clear the persistent audio sink's stream but keep the element alive.
       if (audioSinkRef.current) {
         try {
           audioSinkRef.current.pause();
@@ -693,9 +690,7 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
           readyState: event.track.readyState,
         });
 
-        /* ── AUDIO: attach directly to the persistent sink ───
-           This bypasses React entirely. No state update, no
-           re-render, no srcObject race. */
+        /* ── AUDIO: attach directly to the persistent sink ── */
         if (event.track.kind === 'audio') {
           const sink = audioSinkRef.current;
           if (!sink) {
@@ -745,9 +740,7 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
           attemptPlay();
         }
 
-        /* ── VIDEO: still accumulate into remoteStream so the
-           overlay can render it. Audio will be muted on that
-           element in the overlay — audio comes from the sink. */
+        /* ── VIDEO: accumulate into remoteStream for the overlay ── */
         if (event.track.kind === 'video') {
           let target = remoteStreamRef.current;
           if (!target) {
