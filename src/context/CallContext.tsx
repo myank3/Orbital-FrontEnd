@@ -71,6 +71,39 @@ const DISCONNECT_WATCHDOG_MS = 30000;
 const API_TIMEOUT_MS = 5000;
 
 /* ─────────────────────────────────────────────────────────
+   Metered TURN servers — static credentials
+   Workspace: orbitalhq
+   Credentials created 2026-10-11, never expire.
+   ───────────────────────────────────────────────────────── */
+
+const METERED_USERNAME = '314b509605be09e502e550bd';
+const METERED_CREDENTIAL = 'x53QpqdPM1wUJnAa';
+
+const METERED_ICE_SERVERS: RTCIceServer[] = [
+  { urls: 'stun:stun.relay.metered.ca:80' },
+  {
+    urls: 'turn:global.relay.metered.ca:80',
+    username: METERED_USERNAME,
+    credential: METERED_CREDENTIAL,
+  },
+  {
+    urls: 'turn:global.relay.metered.ca:80?transport=tcp',
+    username: METERED_USERNAME,
+    credential: METERED_CREDENTIAL,
+  },
+  {
+    urls: 'turn:global.relay.metered.ca:443',
+    username: METERED_USERNAME,
+    credential: METERED_CREDENTIAL,
+  },
+  {
+    urls: 'turns:global.relay.metered.ca:443?transport=tcp',
+    username: METERED_USERNAME,
+    credential: METERED_CREDENTIAL,
+  },
+];
+
+/* ─────────────────────────────────────────────────────────
    Ringtone — Web Audio, soft & phone-like
    ───────────────────────────────────────────────────────── */
 
@@ -322,13 +355,16 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
   /* ── Duration ticker ─────────────────────────────────── */
 
   useEffect(() => {
-    if (callState !== 'active' || callStartedAtRef.current == null) {
+    if (callState !== 'active') {
       setDuration(0);
       return;
     }
     const tick = () => {
       const start = callStartedAtRef.current;
-      if (start == null) return;
+      if (start == null) {
+        setDuration(0);
+        return;
+      }
       setDuration(Math.max(0, Math.floor((Date.now() - start) / 1000)));
     };
     tick();
@@ -385,22 +421,12 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
   /* ── ICE config ──────────────────────────────────────── */
 
   const getRtcConfiguration = useCallback(async (): Promise<RTCConfiguration> => {
-    const publicTurn: RTCIceServer = {
-      urls: [
-        'turn:openrelay.metered.ca:80',
-        'turn:openrelay.metered.ca:443',
-        'turn:openrelay.metered.ca:443?transport=tcp',
-      ],
-      username: 'openrelayproject',
-      credential: 'openrelayproject',
-    };
-
-    const fallbackServers: RTCIceServer[] = [
+    const stunOnly: RTCIceServer[] = [
       { urls: 'stun:stun.l.google.com:19302' },
       { urls: 'stun:stun1.l.google.com:19302' },
-      publicTurn,
     ];
 
+    // Try backend-provided servers. If they include TURN, prefer them.
     try {
       const serverConfigs: IceServerConfigDto[] = await withTimeout(
         apiService.getIceServers(),
@@ -413,22 +439,31 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
           username: c.username,
           credential: c.credential,
         }));
-
         const hasTurn = mapped.some((s) => {
           const urls = Array.isArray(s.urls) ? s.urls : [s.urls];
           return urls.some(
-            (u) => typeof u === 'string' && (u.startsWith('turn:') || u.startsWith('turns:')),
+            (u) =>
+              typeof u === 'string' &&
+              (u.startsWith('turn:') || u.startsWith('turns:')),
           );
         });
-
-        if (!hasTurn) mapped.push(publicTurn);
-        return { iceServers: mapped };
+        if (hasTurn) {
+          console.log('[Call] ICE config: backend TURN + Metered TURN');
+          return { iceServers: [...mapped, ...METERED_ICE_SERVERS] };
+        }
       }
     } catch {
       /* fall through */
     }
 
-    return { iceServers: fallbackServers };
+    console.log('[Call] ICE config: STUN + Metered TURN', {
+      turnServers: METERED_ICE_SERVERS.length,
+    });
+
+    return {
+      iceServers: [...stunOnly, ...METERED_ICE_SERVERS],
+      iceTransportPolicy: 'all',
+    };
   }, []);
 
   /* ── Teardown ────────────────────────────────────────── */
@@ -567,6 +602,11 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
       peerConnectionRef.current = pc;
       remoteDescriptionSetRef.current = false;
       activePeerIdRef.current = targetPeerId;
+
+      // DEBUG — expose for chrome://webrtc-internals-style scripts
+      if (typeof window !== 'undefined') {
+        (window as unknown as { __pc?: RTCPeerConnection }).__pc = pc;
+      }
 
       const audioTrack = stream.getAudioTracks()[0];
       if (audioTrack) {
