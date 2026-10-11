@@ -15,7 +15,6 @@ import React, {
 import { apiService, API_BASE_URL, getAccessToken } from '../services/api';
 import { signalRService } from '../services/signalr';
 import { useAuth } from './AuthContext';
-import { useRemoteAudio } from '../hooks/useRemoteAudio';
 import {
   CallEndedPayload,
   CallSessionDto,
@@ -67,8 +66,8 @@ export interface CallProviderProps {
 }
 
 const ACTIVE_CALL_STORAGE_KEY = 'orbital.activeCallSessionId';
-const DISCONNECT_WATCHDOG_MS = 8000;
-const API_TIMEOUT_MS = 4000;
+const DISCONNECT_WATCHDOG_MS = 30000;
+const API_TIMEOUT_MS = 5000;
 
 /* ─────────────────────────────────────────────────────────
    Ringtone — Web Audio, pattern-based
@@ -166,47 +165,24 @@ function useRingtone(
   }, []);
 }
 
-/* ─────────────────────────────────────────────────────────
-   Ringtone presets — calm, minimal, chime-like
-   ───────────────────────────────────────────────────────── */
+/* ── Ringtone presets ────────────────────────────────────── */
 
-/**
- * Caller: gentle two-note "breathing" tone.
- * Low pitch, long gap. Sounds like a soft pulse, not an alarm.
- */
 const RINGBACK_PATTERN: ToneStep[] = [
-  { freq: 294, durationMs: 700, gapAfterMs: 200 }, // D4
-  { freq: 392, durationMs: 700, gapAfterMs: 0 },   // G4
+  { freq: 294, durationMs: 700, gapAfterMs: 200 },
+  { freq: 392, durationMs: 700, gapAfterMs: 0 },
 ];
 
-/**
- * Callee: soft two-note bell — one gentle chime.
- * Sweet, non-urgent, warm.
- */
 const INCOMING_SOFT_PATTERN: ToneStep[] = [
-  { freq: 440, durationMs: 900, gapAfterMs: 100 }, // A4
-  { freq: 523, durationMs: 900, gapAfterMs: 0 },   // C5
+  { freq: 440, durationMs: 900, gapAfterMs: 100 },
+  { freq: 523, durationMs: 900, gapAfterMs: 0 },
 ];
 
-/**
- * Even softer alternative — three slow falling notes.
- * Swap in if you want variety.
- */
-const INCOMING_BELL_PATTERN: ToneStep[] = [
-  { freq: 659.25, durationMs: 600, gapAfterMs: 200 }, // E5
-  { freq: 523.25, durationMs: 600, gapAfterMs: 200 }, // C5
-  { freq: 392.0,  durationMs: 900, gapAfterMs: 0 },   // G4
-];
-
-/** End tone — a soft, quiet close. */
 const END_PATTERN: ToneStep[] = [
-  { freq: 392, durationMs: 250, gapAfterMs: 60 }, // G4
-  { freq: 294, durationMs: 400, gapAfterMs: 0 },  // D4
+  { freq: 392, durationMs: 250, gapAfterMs: 60 },
+  { freq: 294, durationMs: 400, gapAfterMs: 0 },
 ];
 
-/* ─────────────────────────────────────────────────────────
-   Timeout helper
-   ───────────────────────────────────────────────────────── */
+/* ── Timeout helper ──────────────────────────────────────── */
 
 async function withTimeout<T>(
   promise: Promise<T>,
@@ -252,20 +228,15 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
   const pendingRemoteOfferRef = useRef<RTCSessionDescriptionInit | null>(null);
   const activePeerIdRef = useRef<string | null>(null);
   const remoteStreamRef = useRef<MediaStream | null>(null);
+  const fallbackAudioRefs = useRef<HTMLAudioElement[]>([]);
   const watchdogRef = useRef<number | null>(null);
   const callStateRef = useRef<CallState>('idle');
 
-  // Keep the ref in sync so callbacks always see the latest state
   useEffect(() => {
     callStateRef.current = callState;
   }, [callState]);
 
-  /* ── Remote audio fallback ───────────────────────────── */
-  // Guarantees audio plays even if the <video> element is muted
-  // or if Chrome 140 silently drops audio from a MediaStream.
-  useRemoteAudio(remoteStream);
-
-  /* ── Ringtone wiring ─────────────────────────────────── */
+  /* ── Ringtone ────────────────────────────────────────── */
 
   const isOutgoingRinging = callState === 'outgoing' && !isMinimized;
   const isIncomingRinging = callState === 'incoming';
@@ -321,6 +292,37 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
     [myUserId],
   );
 
+  /* ── Fallback audio elements ─────────────────────────── */
+
+  const attachFallbackAudio = useCallback((track: MediaStreamTrack) => {
+    try {
+      const el = new Audio();
+      el.srcObject = new MediaStream([track]);
+      el.autoplay = true;
+      el.volume = 1;
+      // @ts-expect-error — not in all TS lib defs
+      el.playsInline = true;
+      el.play().catch((err) => {
+        console.warn('[Call] Fallback audio autoplay blocked:', err);
+      });
+      fallbackAudioRefs.current.push(el);
+    } catch (err) {
+      console.warn('[Call] Could not create fallback audio element:', err);
+    }
+  }, []);
+
+  const detachAllFallbackAudio = useCallback(() => {
+    fallbackAudioRefs.current.forEach((el) => {
+      try {
+        el.pause();
+        el.srcObject = null;
+      } catch {
+        /* ignore */
+      }
+    });
+    fallbackAudioRefs.current = [];
+  }, []);
+
   /* ── Watchdog ────────────────────────────────────────── */
 
   const clearWatchdog = useCallback(() => {
@@ -372,7 +374,7 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
     return { iceServers: fallbackServers };
   }, []);
 
-  /* ── Teardown — the only function that resets state ─── */
+  /* ── Teardown ────────────────────────────────────────── */
 
   const teardown = useCallback(
     (opts: { playTone?: boolean } = {}) => {
@@ -395,6 +397,8 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
       remoteDescriptionSetRef.current = false;
       pendingRemoteOfferRef.current = null;
       activePeerIdRef.current = null;
+
+      detachAllFallbackAudio();
 
       setLocalStream((prev) => {
         prev?.getTracks().forEach((t) => {
@@ -432,10 +436,10 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
 
       if (opts.playTone) playEndTone();
     },
-    [clearWatchdog, playEndTone],
+    [clearWatchdog, detachAllFallbackAudio, playEndTone],
   );
 
-  /* ── ICE queue draining ──────────────────────────────── */
+  /* ── ICE queue ───────────────────────────────────────── */
 
   const drainIceCandidateQueue = useCallback(async (pc: RTCPeerConnection) => {
     remoteDescriptionSetRef.current = true;
@@ -450,7 +454,7 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
     }
   }, []);
 
-  /* ── Media acquisition ───────────────────────────────── */
+  /* ── Media ───────────────────────────────────────────── */
 
   const acquireMediaStream = useCallback(
     async (callType: number): Promise<MediaStream> => {
@@ -473,7 +477,7 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
     [],
   );
 
-  /* ── Peer connection creation ────────────────────────── */
+  /* ── Peer connection ─────────────────────────────────── */
 
   const createPeerConnection = useCallback(
     async (
@@ -488,7 +492,7 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
       remoteDescriptionSetRef.current = false;
       activePeerIdRef.current = targetPeerId;
 
-      // Explicit transceivers — reliable audio negotiation
+      // ── Explicit transceivers ───────────────────────────
       const audioTrack = stream.getAudioTracks()[0];
       if (audioTrack) {
         pc.addTransceiver(audioTrack, {
@@ -509,6 +513,7 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
         pc.addTransceiver('video', { direction: 'recvonly' });
       }
 
+      // ── ontrack — no writes to read-only properties ─────
       pc.ontrack = (event: RTCTrackEvent) => {
         let target = remoteStreamRef.current;
         if (!target) {
@@ -529,11 +534,14 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
           });
         }
 
-        event.track.enabled = true;
-        event.track.muted = false;
+        // NOTE: do NOT write to event.track.muted — it's a getter.
 
-        // Flip from connecting → active as soon as any remote
-        // track arrives, so the ringtone stops immediately.
+        // Fallback audio for Chrome 140 silent-audio bug
+        if (event.track.kind === 'audio') {
+          attachFallbackAudio(event.track);
+        }
+
+        // Only advance to 'active' if we're still in a connecting state.
         setCallState((prev) =>
           prev === 'connecting' || prev === 'outgoing' ? 'active' : prev,
         );
@@ -558,7 +566,7 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
 
       return pc;
     },
-    [getRtcConfiguration, teardown],
+    [getRtcConfiguration, attachFallbackAudio, teardown],
   );
 
   /* ── Initiate (caller) ───────────────────────────────── */
@@ -664,7 +672,7 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
     drainIceCandidateQueue,
   ]);
 
-  /* ── Reject (callee) ─────────────────────────────────── */
+  /* ── Reject ──────────────────────────────────────────── */
 
   const rejectCall = useCallback(async (): Promise<void> => {
     const incoming = incomingCall;
@@ -694,7 +702,7 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
     }
   }, [incomingCall, resolvePeerId, teardown]);
 
-  /* ── End (either side) ───────────────────────────────── */
+  /* ── End ─────────────────────────────────────────────── */
 
   const endCall = useCallback(async (): Promise<void> => {
     const currentSession = session;
@@ -707,7 +715,6 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
     const hadActiveCall = callStateRef.current !== 'idle';
     setCallState('ending');
 
-    // Tear down local state immediately — never block on the API.
     teardown({ playTone: hadActiveCall });
 
     if (currentSessionId) {
@@ -734,7 +741,7 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
     }
   }, [session, incomingCall, resolvePeerId, teardown]);
 
-  /* ── Session storage recovery ────────────────────────── */
+  /* ── Session storage ─────────────────────────────────── */
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -779,7 +786,7 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
     void apiService.endCall(stale).catch(() => {});
   }, []);
 
-  /* ── Mute / video toggles ────────────────────────────── */
+  /* ── Toggles ─────────────────────────────────────────── */
 
   const toggleMute = useCallback(() => {
     if (!localStream) return;
@@ -875,14 +882,12 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
       (call: CallSessionDto) => {
         if (call.groupId) return;
 
-        // Ignore self-calls (same user in two tabs)
         const peer = resolvePeerId(null, call);
         if (!peer || peer === myUserId) {
           console.warn('[Call] Ignoring self/invalid incoming call');
           return;
         }
 
-        // Auto-reject if we're already in a call
         if (callStateRef.current !== 'idle') {
           signalRService
             .notifyCallEnded(call.sessionId, peer)
@@ -925,10 +930,10 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
     handleSignalMessage,
   ]);
 
-  /* ── Auto-arm/disarm the watchdog ────────────────────── */
+  /* ── Watchdog arm/disarm ─────────────────────────────── */
 
   useEffect(() => {
-    if (callState === 'active' || callState === 'connecting') {
+    if (callState === 'active') {
       armWatchdog();
     } else {
       clearWatchdog();
