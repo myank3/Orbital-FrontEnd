@@ -1,0 +1,17 @@
+﻿{
+  "name": "Orbital",
+  "short_name": "Orbital",
+  "description": "Private messaging, group chats, and HD calls.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0F0D0A",
+  "theme_color": "#0F0D0A",
+  "icons": [
+    {
+      "src": "/favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ]
+}
