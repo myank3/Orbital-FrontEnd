@@ -165,7 +165,7 @@ function useRingtone(
   }, []);
 }
 
-/* ── Ringtone presets ────────────────────────────────────── */
+/* ── Ringtone presets — calm, chime-like ────────────────── */
 
 const RINGBACK_PATTERN: ToneStep[] = [
   { freq: 294, durationMs: 700, gapAfterMs: 200 },
@@ -292,18 +292,31 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
     [myUserId],
   );
 
-  /* ── Fallback audio elements ─────────────────────────── */
+  /* ── Fallback audio (Chrome 140 workaround) ──────────── */
 
   const attachFallbackAudio = useCallback((track: MediaStreamTrack) => {
     try {
-      const el = new Audio();
+      const el = document.createElement('audio');
       el.srcObject = new MediaStream([track]);
       el.autoplay = true;
       el.volume = 1;
-      // @ts-expect-error — not in all TS lib defs
+      el.muted = false;
+      // @ts-expect-error — not in all TS DOM libs
       el.playsInline = true;
+      el.setAttribute('data-call-audio', 'true');
+      el.style.display = 'none';
+      document.body.appendChild(el);
       el.play().catch((err) => {
         console.warn('[Call] Fallback audio autoplay blocked:', err);
+        const resume = () => {
+          el.play().catch(() => {});
+          window.removeEventListener('click', resume);
+          window.removeEventListener('keydown', resume);
+          window.removeEventListener('touchstart', resume);
+        };
+        window.addEventListener('click', resume, { once: true });
+        window.addEventListener('keydown', resume, { once: true });
+        window.addEventListener('touchstart', resume, { once: true });
       });
       fallbackAudioRefs.current.push(el);
     } catch (err) {
@@ -316,6 +329,7 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
       try {
         el.pause();
         el.srcObject = null;
+        el.remove();
       } catch {
         /* ignore */
       }
@@ -492,7 +506,7 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
       remoteDescriptionSetRef.current = false;
       activePeerIdRef.current = targetPeerId;
 
-      // ── Explicit transceivers ───────────────────────────
+      // ── Explicit transceivers (audio FIRST) ─────────────
       const audioTrack = stream.getAudioTracks()[0];
       if (audioTrack) {
         pc.addTransceiver(audioTrack, {
@@ -513,7 +527,7 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
         pc.addTransceiver('video', { direction: 'recvonly' });
       }
 
-      // ── ontrack — no writes to read-only properties ─────
+      // ── ontrack — accumulate + fallback audio ───────────
       pc.ontrack = (event: RTCTrackEvent) => {
         let target = remoteStreamRef.current;
         if (!target) {
@@ -534,14 +548,12 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
           });
         }
 
-        // NOTE: do NOT write to event.track.muted — it's a getter.
-
         // Fallback audio for Chrome 140 silent-audio bug
         if (event.track.kind === 'audio') {
           attachFallbackAudio(event.track);
         }
 
-        // Only advance to 'active' if we're still in a connecting state.
+        // Advance to active as soon as we have any remote track
         setCallState((prev) =>
           prev === 'connecting' || prev === 'outgoing' ? 'active' : prev,
         );
@@ -556,17 +568,36 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
         }
       };
 
+      // ── THE KEY FIX: connectionstatechange drives 'active' ──
+      // Both caller and callee will hit this at the same moment
+      // (roughly), so both sides transition to 'active' reliably.
       pc.onconnectionstatechange = () => {
         const s = pc.connectionState;
-        if (s === 'failed' || s === 'closed') {
-          console.warn('[Call] Peer connection state:', s);
+        console.log('[Call] PC state:', s);
+
+        if (s === 'connected') {
+          clearWatchdog();
+          setCallState((prev) =>
+            prev === 'connecting' || prev === 'outgoing' ? 'active' : prev,
+          );
+        } else if (s === 'failed' || s === 'closed') {
+          console.warn('[Call] Peer connection:', s);
+          teardown({ playTone: true });
+        }
+        // NOTE: do NOT tear down on 'disconnected' — it's transient.
+      };
+
+      pc.oniceconnectionstatechange = () => {
+        const s = pc.iceConnectionState;
+        console.log('[Call] ICE state:', s);
+        if (s === 'failed') {
           teardown({ playTone: true });
         }
       };
 
       return pc;
     },
-    [getRtcConfiguration, attachFallbackAudio, teardown],
+    [getRtcConfiguration, attachFallbackAudio, teardown, clearWatchdog],
   );
 
   /* ── Initiate (caller) ───────────────────────────────── */
@@ -634,7 +665,10 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
 
     try {
       await withTimeout(
-        apiService.updateCallStatus(incoming.sessionId, CallSessionStatus.Active),
+        apiService.updateCallStatus(
+          incoming.sessionId,
+          CallSessionStatus.Active,
+        ),
         API_TIMEOUT_MS,
         'updateCallStatus',
       );
@@ -662,6 +696,8 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
         sdp: answer.sdp,
       });
       pendingRemoteOfferRef.current = null;
+    } else {
+      console.warn('[Call] No pending offer at accept time');
     }
   }, [
     incomingCall,
@@ -854,6 +890,8 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
             }),
           );
           await drainIceCandidateQueue(pc);
+          // Do NOT flip to 'active' here — onconnectionstatechange will.
+          // Just move out of 'outgoing' so ringing stops.
           setCallState((prev) =>
             prev === 'outgoing' ? 'connecting' : prev,
           );
