@@ -1,20 +1,33 @@
-<div align="center">
-<img width="1200" height="475" alt="GHBanner" src="https://ai.google.dev/static/site-assets/images/share-ais-513315318.png" />
-</div>
+# Orbital — Frontend
 
-# Run and deploy your AI Studio app
+Private messaging, group chats, and encrypted calls.
+Real-time, end-to-end encrypted, no ads, no tracking.
 
-This contains everything you need to run your app locally.
+> **Status:** Public beta
 
-View your app in AI Studio: https://ai.studio/apps/f47520ac-8d14-4a08-91de-1b0378527b29
+---
 
-## Run Locally
+## Tech stack
 
-**Prerequisites:**  Node.js
+- **React 19** + **TypeScript**
+- **Vite** — build & dev server
+- **React Router v7** — routing
+- **Motion** (`motion/react`) — animations
+- **Tailwind CSS** — styling
+- **Lucide** — icons
 
+---
 
-1. Install dependencies:
-   `npm install`
-2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
-3. Run the app:
-   `npm run dev`
+## Getting started
+
+### Prerequisites
+
+- Node.js **20+**
+- npm **10+** (or pnpm / yarn)
+
+### Install
+
+```bash
+git clone https://github.com/myank3/Orbital-FrontEnd.git
+cd Orbital-FrontEnd
+npm install
