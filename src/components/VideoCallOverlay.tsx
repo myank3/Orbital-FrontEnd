@@ -4,11 +4,11 @@
  */
 
 import React, {
+  useCallback,
   useEffect,
+  useMemo,
   useRef,
   useState,
-  useMemo,
-  useCallback,
 } from 'react';
 import { useCall } from '../context/CallContext';
 import { useAuth } from '../context/AuthContext';
@@ -30,6 +30,41 @@ import {
 } from 'lucide-react';
 
 /* ────────────────────────────────────────────────────────── */
+/* Peer resolution helper                                     */
+/* ────────────────────────────────────────────────────────── */
+
+/**
+ * Resolve the OTHER user's ID from a session.
+ * Never returns our own ID.
+ */
+function resolvePeerId(
+  session: {
+    peerId?: string;
+    peerUserId?: string;
+    initiatorId?: string;
+    callerId?: string;
+    receiverId?: string;
+    calleeId?: string;
+  } | null,
+  myUserId: string | null,
+): string {
+  if (!session || !myUserId) return '';
+
+  const candidates = [
+    session.peerId,
+    session.peerUserId,
+    session.initiatorId,
+    session.callerId,
+    session.receiverId,
+    session.calleeId,
+  ].filter(Boolean) as string[];
+
+  // Prefer anything that isn't us
+  const other = candidates.find((id) => id !== myUserId);
+  return other ?? '';
+}
+
+/* ────────────────────────────────────────────────────────── */
 /* Overlay                                                    */
 /* ────────────────────────────────────────────────────────── */
 
@@ -41,44 +76,37 @@ function VideoCallOverlay(): React.JSX.Element | null {
     isMuted,
     isVideoOff,
     isMinimized,
+    callState,
+    peerId: contextPeerId,
     toggleMute,
     toggleVideo,
     minimize,
+    expand,
     endCall,
   } = useCall();
 
   const { user } = useAuth();
+  const myUserId = user?.userId ?? user?.id ?? null;
 
   const localVideoRef = useRef<HTMLVideoElement | null>(null);
   const remoteVideoRef = useRef<HTMLVideoElement | null>(null);
+  const cameraTrackRef = useRef<MediaStreamTrack | null>(null);
 
   const [callDuration, setCallDuration] = useState<number>(0);
   const [isSpeakerOn, setIsSpeakerOn] = useState<boolean>(true);
   const [isScreenSharing, setIsScreenSharing] = useState<boolean>(false);
   const [screenBusy, setScreenBusy] = useState<boolean>(false);
-
-  /* ── peer profile lookup ─────────────────────────────── */
   const [peerProfile, setPeerProfile] = useState<UserProfileDto | null>(null);
 
+  /* ── Resolve peer ID ─────────────────────────────────── */
+
   const peerId = useMemo(() => {
-    if (!session || !user) return '';
-    const s = session as unknown as {
-      peerId?: string;
-      peerUserId?: string;
-      initiatorId?: string;
-      callerId?: string;
-      receiverId?: string;
-      calleeId?: string;
-    };
-    // Prefer explicit peer fields
-    if (s.peerId) return s.peerId;
-    if (s.peerUserId) return s.peerUserId;
-    // Otherwise pick whichever side isn't me
-    const a = s.initiatorId ?? s.callerId;
-    const b = s.receiverId ?? s.calleeId;
-    if (a && b) return a === user.id ? b : a;
-    return a ?? b ?? '';
-  }, [session, user]);
+    // Prefer the context's resolved peer (already validated)
+    if (contextPeerId) return contextPeerId;
+    return resolvePeerId(session, myUserId);
+  }, [contextPeerId, session, myUserId]);
+
+  /* ── Fetch peer profile ──────────────────────────────── */
 
   useEffect(() => {
     if (!peerId) {
@@ -108,41 +136,49 @@ function VideoCallOverlay(): React.JSX.Element | null {
 
   const peerAvatar = peerProfile?.avatarUrl ?? null;
 
-  /* ── attach local stream ─────────────────────────────── */
+  /* ── Attach local stream ─────────────────────────────── */
+
   useEffect(() => {
     const el = localVideoRef.current;
     if (!el) return;
     if (localStream) {
       el.srcObject = localStream;
-      const p = el.play();
-      if (p && typeof p.catch === 'function') p.catch(() => {});
+      el.play().catch(() => {});
     } else {
       el.srcObject = null;
     }
   }, [localStream]);
 
-  /* ── attach remote stream ────────────────────────────── */
+  /* ── Attach remote stream (UNMUTED) ──────────────────── */
+
   useEffect(() => {
     const el = remoteVideoRef.current;
     if (!el) return;
     if (remoteStream) {
       el.srcObject = remoteStream;
-      const p = el.play();
-      if (p && typeof p.catch === 'function') p.catch(() => {});
+      el.muted = false;
+      el.volume = isSpeakerOn ? 1 : 0.25;
+      el.play().catch((err) => {
+        console.warn('[Overlay] Remote video play failed:', err);
+      });
     } else {
       el.srcObject = null;
     }
-  }, [remoteStream]);
+  }, [remoteStream, isSpeakerOn]);
 
-  /* ── duration timer ──────────────────────────────────── */
+  /* ── Duration timer ──────────────────────────────────── */
+
   useEffect(() => {
-    if (!session) {
+    if (!session || callState !== 'active') {
       setCallDuration(0);
       return;
     }
-    const id = setInterval(() => setCallDuration((p) => p + 1), 1000);
-    return () => clearInterval(id);
-  }, [session]);
+    const id = window.setInterval(
+      () => setCallDuration((p) => p + 1),
+      1000,
+    );
+    return () => window.clearInterval(id);
+  }, [session, callState]);
 
   const formattedTimer = useMemo(() => {
     const m = Math.floor(callDuration / 60);
@@ -150,39 +186,54 @@ function VideoCallOverlay(): React.JSX.Element | null {
     return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
   }, [callDuration]);
 
-  /* ── screen share toggle ─────────────────────────────── */
+  /* ── Screen share toggle (fixed) ─────────────────────── */
+
   const handleToggleScreenShare = useCallback(async () => {
     if (!localStream) return;
     setScreenBusy(true);
     try {
       if (isScreenSharing) {
+        // Stop all screen tracks
         localStream.getVideoTracks().forEach((t) => {
-          if ((t as MediaStreamTrack & { _isScreen?: boolean })._isScreen) {
-            t.stop();
-            localStream.removeTrack(t);
-          }
+          t.stop();
+          localStream.removeTrack(t);
         });
+        // Re-attach camera track if we stored one
+        if (cameraTrackRef.current) {
+          localStream.addTrack(cameraTrackRef.current);
+          cameraTrackRef.current = null;
+        }
         setIsScreenSharing(false);
       } else {
+        // Remember the current camera track
+        const existingCam = localStream.getVideoTracks()[0] ?? null;
+        if (existingCam) {
+          cameraTrackRef.current = existingCam;
+          existingCam.stop();
+          localStream.removeTrack(existingCam);
+        }
+
         const display = await navigator.mediaDevices.getDisplayMedia({
           video: true,
           audio: false,
         });
         const screenTrack = display.getVideoTracks()[0];
         if (!screenTrack) {
-          setIsScreenSharing(false);
+          // Restore camera if we removed it
+          if (cameraTrackRef.current) {
+            localStream.addTrack(cameraTrackRef.current);
+            cameraTrackRef.current = null;
+          }
           return;
         }
-        (screenTrack as MediaStreamTrack & { _isScreen?: boolean })._isScreen = true;
 
-        localStream.getVideoTracks().forEach((t) => {
-          t.stop();
-          localStream.removeTrack(t);
-        });
         localStream.addTrack(screenTrack);
-
         screenTrack.onended = () => {
           localStream.removeTrack(screenTrack);
+          if (cameraTrackRef.current) {
+            localStream.addTrack(cameraTrackRef.current);
+            cameraTrackRef.current = null;
+          }
           setIsScreenSharing(false);
         };
 
@@ -196,8 +247,32 @@ function VideoCallOverlay(): React.JSX.Element | null {
     }
   }, [isScreenSharing, localStream]);
 
+  /* ── Guard: nothing to render ────────────────────────── */
+
   if (!session) return null;
-  if (isMinimized) return null;
+
+  /* ── Minimized state ─────────────────────────────────── */
+
+  if (isMinimized) {
+    return (
+      <button
+        onClick={expand}
+        className="fixed bottom-4 right-4 z-[100] h-14 pl-3 pr-4 rounded-full bg-[#131A20]/95 backdrop-blur-md border border-white/10 shadow-2xl flex items-center gap-3 hover:bg-[#1A2228] transition-colors"
+        title="Return to call"
+      >
+        <Avatar name={peerName} src={peerAvatar} size="sm" isOnline />
+        <div className="text-left">
+          <div className="text-[12px] font-medium text-white truncate max-w-[120px]">
+            {peerName}
+          </div>
+          <div className="text-[10px] text-white/60 font-mono tracking-wider">
+            {callState === 'active' ? formattedTimer : 'Connecting…'}
+          </div>
+        </div>
+        <Volume2 className="w-4 h-4 text-white/60" />
+      </button>
+    );
+  }
 
   const isVideoCall = session.callType === 1;
   const remoteVideoTracks = remoteStream?.getVideoTracks() ?? [];
@@ -208,15 +283,16 @@ function VideoCallOverlay(): React.JSX.Element | null {
   const hasLocalVideo =
     !isVideoOff &&
     localVideoTracks.some((t) => t.enabled && t.readyState === 'live');
-  const isConnected = Boolean(remoteStream);
+  const isConnected = callState === 'active';
 
   /* ────────────────────────────────────────────────────── */
   /* VIDEO CALL                                             */
   /* ────────────────────────────────────────────────────── */
+
   if (isVideoCall) {
     return (
       <div className="fixed inset-0 z-[100] bg-[#0B141A] flex flex-col select-none">
-        {/* Remote fullscreen video */}
+        {/* Remote fullscreen video — NOT muted */}
         <video
           ref={remoteVideoRef}
           autoPlay
@@ -243,13 +319,17 @@ function VideoCallOverlay(): React.JSX.Element | null {
                 {peerName}
               </p>
               <p className="text-sm text-white/60 font-mono tracking-wider">
-                {isConnected ? `Connected · ${formattedTimer}` : 'Connecting…'}
+                {isConnected
+                  ? `Connected · ${formattedTimer}`
+                  : callState === 'outgoing'
+                    ? 'Ringing…'
+                    : 'Connecting…'}
               </p>
             </div>
           </div>
         )}
 
-        {/* Self-view PiP */}
+        {/* Self-view PiP — muted to avoid echo */}
         <div className="absolute top-20 right-4 sm:top-24 sm:right-6 w-28 sm:w-40 aspect-[3/4] rounded-2xl overflow-hidden bg-[#131A20] border border-white/10 shadow-2xl z-20">
           <video
             ref={localVideoRef}
@@ -304,7 +384,11 @@ function VideoCallOverlay(): React.JSX.Element | null {
                 {peerName}
               </p>
               <p className="text-[11px] text-white/60 font-mono tracking-wider">
-                {isConnected ? formattedTimer : 'Connecting…'}
+                {isConnected
+                  ? formattedTimer
+                  : callState === 'outgoing'
+                    ? 'Ringing…'
+                    : 'Connecting…'}
               </p>
             </div>
           </div>
@@ -344,7 +428,7 @@ function VideoCallOverlay(): React.JSX.Element | null {
               icon={isSpeakerOn ? Volume2 : VolumeX}
               active={!isSpeakerOn}
               onClick={() => setIsSpeakerOn((v) => !v)}
-              label="Speaker"
+              label={isSpeakerOn ? 'Speaker on' : 'Speaker off'}
             />
             <button
               onClick={() => void endCall()}
@@ -362,8 +446,22 @@ function VideoCallOverlay(): React.JSX.Element | null {
   /* ────────────────────────────────────────────────────── */
   /* AUDIO CALL                                             */
   /* ────────────────────────────────────────────────────── */
+
   return (
     <div className="fixed inset-0 z-[100] bg-gradient-to-b from-[#0B141A] via-[#0F1A21] to-[#0B141A] flex flex-col select-none">
+      {/* Audio element (safety net — the CallContext also has one) */}
+      <audio
+        autoPlay
+        ref={(el) => {
+          if (!el || !remoteStream) return;
+          el.srcObject = remoteStream;
+          el.muted = false;
+          el.volume = isSpeakerOn ? 1 : 0.25;
+          el.play().catch(() => {});
+        }}
+        style={{ display: 'none' }}
+      />
+
       {/* Top bar */}
       <div className="flex items-center justify-between px-4 sm:px-6 py-4">
         <div className="text-xs font-mono uppercase tracking-[0.22em] text-white/50">
@@ -395,7 +493,11 @@ function VideoCallOverlay(): React.JSX.Element | null {
             {peerName}
           </p>
           <p className="text-sm text-white/60 font-mono tracking-wider">
-            {isConnected ? formattedTimer : 'Calling…'}
+            {isConnected
+              ? formattedTimer
+              : callState === 'outgoing'
+                ? 'Ringing…'
+                : 'Calling…'}
           </p>
         </div>
       </div>
@@ -410,25 +512,10 @@ function VideoCallOverlay(): React.JSX.Element | null {
             label={isMuted ? 'Unmute' : 'Mute'}
           />
           <ControlButton
-            icon={isScreenSharing ? MonitorOff : MonitorUp}
-            active={isScreenSharing}
-            onClick={() => void handleToggleScreenShare()}
-            label={isScreenSharing ? 'Stop sharing' : 'Share screen'}
-            busy={screenBusy}
-          />
-          <ControlButton
             icon={isSpeakerOn ? Volume2 : VolumeX}
             active={!isSpeakerOn}
             onClick={() => setIsSpeakerOn((v) => !v)}
-            label="Speaker"
-          />
-          <ControlButton
-            icon={VideoIcon}
-            active={false}
-            onClick={() => {
-              void toggleVideo();
-            }}
-            label="Turn on video"
+            label={isSpeakerOn ? 'Speaker on' : 'Speaker off'}
           />
           <button
             onClick={() => void endCall()}

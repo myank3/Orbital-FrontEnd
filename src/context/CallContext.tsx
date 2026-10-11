@@ -15,6 +15,7 @@ import React, {
 import { apiService, API_BASE_URL, getAccessToken } from '../services/api';
 import { signalRService } from '../services/signalr';
 import { useAuth } from './AuthContext';
+import { useRemoteAudio } from '../hooks/useRemoteAudio';
 import {
   CallEndedPayload,
   CallSessionDto,
@@ -31,6 +32,14 @@ export interface CallSignalMessage {
   [key: string]: unknown;
 }
 
+export type CallState =
+  | 'idle'
+  | 'outgoing'
+  | 'incoming'
+  | 'connecting'
+  | 'active'
+  | 'ending';
+
 export interface CallContextType {
   session: CallSessionDto | null;
   localStream: MediaStream | null;
@@ -39,9 +48,7 @@ export interface CallContextType {
   isVideoOff: boolean;
   isMinimized: boolean;
   incomingCall: CallSessionDto | null;
-  /** Which peer ID this call is with (always the *other* user). */
   peerId: string | null;
-  /** High-level state, useful for ring logic in UI. */
   callState: CallState;
   initiateCall: (peerId: string, callType: number) => Promise<void>;
   acceptCall: () => Promise<void>;
@@ -52,14 +59,6 @@ export interface CallContextType {
   minimize: () => void;
   expand: () => void;
 }
-
-export type CallState =
-  | 'idle'         // no call
-  | 'outgoing'     // we initiated, waiting for answer
-  | 'incoming'     // incoming, waiting for us to accept
-  | 'connecting'   // accepted, negotiating SDP/ICE
-  | 'active'       // media flowing
-  | 'ending';      // teardown in flight
 
 export const CallContext = createContext<CallContextType | undefined>(undefined);
 
@@ -167,26 +166,46 @@ function useRingtone(
   }, []);
 }
 
-/* ── Ringtone presets ─────────────────────────────────── */
+/* ─────────────────────────────────────────────────────────
+   Ringtone presets — calm, minimal, chime-like
+   ───────────────────────────────────────────────────────── */
 
+/**
+ * Caller: gentle two-note "breathing" tone.
+ * Low pitch, long gap. Sounds like a soft pulse, not an alarm.
+ */
 const RINGBACK_PATTERN: ToneStep[] = [
-  { freq: 440, durationMs: 500, gapAfterMs: 0 },
-  { freq: 480, durationMs: 500, gapAfterMs: 0 },
+  { freq: 294, durationMs: 700, gapAfterMs: 200 }, // D4
+  { freq: 392, durationMs: 700, gapAfterMs: 0 },   // G4
 ];
 
+/**
+ * Callee: soft two-note bell — one gentle chime.
+ * Sweet, non-urgent, warm.
+ */
 const INCOMING_SOFT_PATTERN: ToneStep[] = [
-  { freq: 523.25, durationMs: 220, gapAfterMs: 40 },
-  { freq: 659.25, durationMs: 220, gapAfterMs: 40 },
-  { freq: 783.99, durationMs: 320, gapAfterMs: 0 },
+  { freq: 440, durationMs: 900, gapAfterMs: 100 }, // A4
+  { freq: 523, durationMs: 900, gapAfterMs: 0 },   // C5
 ];
 
+/**
+ * Even softer alternative — three slow falling notes.
+ * Swap in if you want variety.
+ */
+const INCOMING_BELL_PATTERN: ToneStep[] = [
+  { freq: 659.25, durationMs: 600, gapAfterMs: 200 }, // E5
+  { freq: 523.25, durationMs: 600, gapAfterMs: 200 }, // C5
+  { freq: 392.0,  durationMs: 900, gapAfterMs: 0 },   // G4
+];
+
+/** End tone — a soft, quiet close. */
 const END_PATTERN: ToneStep[] = [
-  { freq: 480, durationMs: 150, gapAfterMs: 40 },
-  { freq: 350, durationMs: 250, gapAfterMs: 0 },
+  { freq: 392, durationMs: 250, gapAfterMs: 60 }, // G4
+  { freq: 294, durationMs: 400, gapAfterMs: 0 },  // D4
 ];
 
 /* ─────────────────────────────────────────────────────────
-   Timeout helper — never hang forever on a fetch
+   Timeout helper
    ───────────────────────────────────────────────────────── */
 
 async function withTimeout<T>(
@@ -233,7 +252,6 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
   const pendingRemoteOfferRef = useRef<RTCSessionDescriptionInit | null>(null);
   const activePeerIdRef = useRef<string | null>(null);
   const remoteStreamRef = useRef<MediaStream | null>(null);
-  const fallbackAudioRefs = useRef<HTMLAudioElement[]>([]);
   const watchdogRef = useRef<number | null>(null);
   const callStateRef = useRef<CallState>('idle');
 
@@ -242,6 +260,11 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
     callStateRef.current = callState;
   }, [callState]);
 
+  /* ── Remote audio fallback ───────────────────────────── */
+  // Guarantees audio plays even if the <video> element is muted
+  // or if Chrome 140 silently drops audio from a MediaStream.
+  useRemoteAudio(remoteStream);
+
   /* ── Ringtone wiring ─────────────────────────────────── */
 
   const isOutgoingRinging = callState === 'outgoing' && !isMinimized;
@@ -249,15 +272,15 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
 
   useRingtone(isOutgoingRinging, {
     pattern: RINGBACK_PATTERN,
-    silenceMs: 2000,
-    volume: 0.10,
+    silenceMs: 2400,
+    volume: 0.07,
     wave: 'sine',
   });
 
   useRingtone(isIncomingRinging, {
     pattern: INCOMING_SOFT_PATTERN,
-    silenceMs: 900,
-    volume: 0.16,
+    silenceMs: 2200,
+    volume: 0.10,
     wave: 'sine',
   });
 
@@ -275,19 +298,17 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
 
   /* ── Peer ID resolver ────────────────────────────────── */
 
-  /**
-   * Returns the ID of the *other* user in the call.
-   * Prefers stored peer, then derives from session, then incoming.
-   * Never returns our own ID.
-   */
   const resolvePeerId = useCallback(
-    (session?: CallSessionDto | null, incoming?: CallSessionDto | null): string | null => {
+    (
+      s?: CallSessionDto | null,
+      incoming?: CallSessionDto | null,
+    ): string | null => {
       const stored = activePeerIdRef.current;
       if (stored && stored !== myUserId) return stored;
 
       const candidates: Array<string | undefined> = [
-        session?.peerId,
-        session?.initiatorId,
+        s?.peerId,
+        s?.initiatorId,
         incoming?.initiatorId,
         incoming?.peerId,
       ];
@@ -299,37 +320,6 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
     },
     [myUserId],
   );
-
-  /* ── Fallback audio elements ─────────────────────────── */
-
-  const attachFallbackAudio = useCallback((track: MediaStreamTrack) => {
-    try {
-      const el = new Audio();
-      el.srcObject = new MediaStream([track]);
-      el.autoplay = true;
-      // @ts-expect-error — playsInline isn't in all TS lib defs for HTMLAudioElement
-      el.playsInline = true;
-      el.volume = 1;
-      el.play().catch((err) => {
-        console.warn('[Call] Fallback audio autoplay blocked:', err);
-      });
-      fallbackAudioRefs.current.push(el);
-    } catch (err) {
-      console.warn('[Call] Could not create fallback audio element:', err);
-    }
-  }, []);
-
-  const detachAllFallbackAudio = useCallback(() => {
-    fallbackAudioRefs.current.forEach((el) => {
-      try {
-        el.pause();
-        el.srcObject = null;
-      } catch {
-        /* ignore */
-      }
-    });
-    fallbackAudioRefs.current = [];
-  }, []);
 
   /* ── Watchdog ────────────────────────────────────────── */
 
@@ -406,17 +396,23 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
       pendingRemoteOfferRef.current = null;
       activePeerIdRef.current = null;
 
-      detachAllFallbackAudio();
-
       setLocalStream((prev) => {
         prev?.getTracks().forEach((t) => {
-          try { t.stop(); } catch { /* ignore */ }
+          try {
+            t.stop();
+          } catch {
+            /* ignore */
+          }
         });
         return null;
       });
       setRemoteStream((prev) => {
         prev?.getTracks().forEach((t) => {
-          try { t.stop(); } catch { /* ignore */ }
+          try {
+            t.stop();
+          } catch {
+            /* ignore */
+          }
         });
         return null;
       });
@@ -436,7 +432,7 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
 
       if (opts.playTone) playEndTone();
     },
-    [clearWatchdog, detachAllFallbackAudio, playEndTone],
+    [clearWatchdog, playEndTone],
   );
 
   /* ── ICE queue draining ──────────────────────────────── */
@@ -492,7 +488,7 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
       remoteDescriptionSetRef.current = false;
       activePeerIdRef.current = targetPeerId;
 
-      // Explicit transceivers — critical for audio reliability
+      // Explicit transceivers — reliable audio negotiation
       const audioTrack = stream.getAudioTracks()[0];
       if (audioTrack) {
         pc.addTransceiver(audioTrack, {
@@ -513,7 +509,6 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
         pc.addTransceiver('video', { direction: 'recvonly' });
       }
 
-      // Accumulate remote tracks into one stream + fallback audio
       pc.ontrack = (event: RTCTrackEvent) => {
         let target = remoteStreamRef.current;
         if (!target) {
@@ -537,15 +532,8 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
         event.track.enabled = true;
         event.track.muted = false;
 
-        // FALLBACK: attach audio to a dedicated <audio> element.
-        // This works around the Chrome/Edge 140 regression where
-        // audio from a MediaStream on a <video> element is silent.
-        if (event.track.kind === 'audio') {
-          attachFallbackAudio(event.track);
-        }
-
-        // Once we have any remote track, negotiation is done.
-        // Flip out of 'connecting' → 'active' so the ring stops.
+        // Flip from connecting → active as soon as any remote
+        // track arrives, so the ringtone stops immediately.
         setCallState((prev) =>
           prev === 'connecting' || prev === 'outgoing' ? 'active' : prev,
         );
@@ -560,27 +548,26 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
         }
       };
 
-      // If the peer connection dies unexpectedly, tear down.
       pc.onconnectionstatechange = () => {
         const s = pc.connectionState;
-        if (s === 'failed' || s === 'closed' || s === 'disconnected') {
+        if (s === 'failed' || s === 'closed') {
           console.warn('[Call] Peer connection state:', s);
-          if (s === 'failed' || s === 'closed') {
-            teardown({ playTone: true });
-          }
+          teardown({ playTone: true });
         }
       };
 
       return pc;
     },
-    [getRtcConfiguration, attachFallbackAudio, teardown],
+    [getRtcConfiguration, teardown],
   );
 
   /* ── Initiate (caller) ───────────────────────────────── */
 
   const initiateCall = useCallback(
     async (targetPeerId: string, callType: number): Promise<void> => {
-      if (!targetPeerId) throw new Error('Peer ID is required to initiate a call.');
+      if (!targetPeerId) {
+        throw new Error('Peer ID is required to initiate a call.');
+      }
 
       teardown();
       setCallState('outgoing');
@@ -668,7 +655,14 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
       });
       pendingRemoteOfferRef.current = null;
     }
-  }, [incomingCall, resolvePeerId, teardown, acquireMediaStream, createPeerConnection, drainIceCandidateQueue]);
+  }, [
+    incomingCall,
+    resolvePeerId,
+    teardown,
+    acquireMediaStream,
+    createPeerConnection,
+    drainIceCandidateQueue,
+  ]);
 
   /* ── Reject (callee) ─────────────────────────────────── */
 
@@ -681,7 +675,10 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
 
     try {
       await withTimeout(
-        apiService.updateCallStatus(incoming.sessionId, CallSessionStatus.Rejected),
+        apiService.updateCallStatus(
+          incoming.sessionId,
+          CallSessionStatus.Rejected,
+        ),
         API_TIMEOUT_MS,
         'reject',
       );
@@ -710,11 +707,10 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
     const hadActiveCall = callStateRef.current !== 'idle';
     setCallState('ending');
 
-    // Tear down local state immediately — never wait on the API.
+    // Tear down local state immediately — never block on the API.
     teardown({ playTone: hadActiveCall });
 
     if (currentSessionId) {
-      // Fire-and-forget — we don't block the UI on these.
       try {
         await withTimeout(
           apiService.endCall(currentSessionId),
@@ -756,7 +752,10 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
       if (!activeId) return;
       const token = getAccessToken();
       if (!token) return;
-      const url = `${API_BASE_URL.replace(/\/+$/, '')}/api/Call/${encodeURIComponent(activeId)}/end`;
+      const url = `${API_BASE_URL.replace(
+        /\/+$/,
+        '',
+      )}/api/Call/${encodeURIComponent(activeId)}/end`;
       try {
         fetch(url, {
           method: 'POST',
@@ -768,7 +767,8 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
       }
     };
     window.addEventListener('beforeunload', handleBeforeUnload);
-    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+    return () =>
+      window.removeEventListener('beforeunload', handleBeforeUnload);
   }, []);
 
   useEffect(() => {
@@ -784,14 +784,18 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
   const toggleMute = useCallback(() => {
     if (!localStream) return;
     const next = !isMuted;
-    localStream.getAudioTracks().forEach((t) => { t.enabled = !next; });
+    localStream.getAudioTracks().forEach((t) => {
+      t.enabled = !next;
+    });
     setIsMuted(next);
   }, [localStream, isMuted]);
 
   const toggleVideo = useCallback(() => {
     if (!localStream) return;
     const next = !isVideoOff;
-    localStream.getVideoTracks().forEach((t) => { t.enabled = !next; });
+    localStream.getVideoTracks().forEach((t) => {
+      t.enabled = !next;
+    });
     setIsVideoOff(next);
   }, [localStream, isVideoOff]);
 
@@ -826,27 +830,35 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
           await drainIceCandidateQueue(pc);
           const answer = await pc.createAnswer();
           await pc.setLocalDescription(answer);
-          await signalRService.sendCallSignal(payload.sessionId, payload.senderId, {
-            type: 'answer',
-            sdp: answer.sdp,
-          });
+          await signalRService.sendCallSignal(
+            payload.sessionId,
+            payload.senderId,
+            { type: 'answer', sdp: answer.sdp },
+          );
         } else {
           pendingRemoteOfferRef.current = description;
         }
       } else if (messageData.type === 'answer' && messageData.sdp) {
         if (pc) {
           await pc.setRemoteDescription(
-            new RTCSessionDescription({ type: 'answer', sdp: messageData.sdp }),
+            new RTCSessionDescription({
+              type: 'answer',
+              sdp: messageData.sdp,
+            }),
           );
           await drainIceCandidateQueue(pc);
-          setCallState((prev) => (prev === 'outgoing' ? 'connecting' : prev));
+          setCallState((prev) =>
+            prev === 'outgoing' ? 'connecting' : prev,
+          );
         }
       } else if (messageData.type === 'candidate' && messageData.candidate) {
         if (!pc || !remoteDescriptionSetRef.current || !pc.remoteDescription) {
           iceCandidateQueueRef.current.push(messageData.candidate);
         } else {
           try {
-            await pc.addIceCandidate(new RTCIceCandidate(messageData.candidate));
+            await pc.addIceCandidate(
+              new RTCIceCandidate(messageData.candidate),
+            );
           } catch {
             /* ignore */
           }
@@ -859,43 +871,59 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
   /* ── SignalR subscriptions ───────────────────────────── */
 
   useEffect(() => {
-    const unsubIncoming = signalRService.onIncomingCall((call: CallSessionDto) => {
-      if (call.groupId) return;
-      // Ignore self-calls (same user logged in two tabs)
-      const peer = resolvePeerId(null, call);
-      if (!peer || peer === myUserId) {
-        console.warn('[Call] Ignoring self/invalid incoming call');
-        return;
-      }
-      // If already in a call, auto-reject the new one
-      if (callStateRef.current !== 'idle') {
-        signalRService
-          .notifyCallEnded(call.sessionId, peer)
-          .catch(() => {});
-        return;
-      }
-      setIncomingCall(call);
-      setCallState('incoming');
-    });
+    const unsubIncoming = signalRService.onIncomingCall(
+      (call: CallSessionDto) => {
+        if (call.groupId) return;
 
-    const unsubSignal = signalRService.onCallSignal((payload: CallSignalPayload) => {
-      void handleSignalMessage(payload);
-    });
+        // Ignore self-calls (same user in two tabs)
+        const peer = resolvePeerId(null, call);
+        if (!peer || peer === myUserId) {
+          console.warn('[Call] Ignoring self/invalid incoming call');
+          return;
+        }
 
-    const unsubEnded = signalRService.onCallEnded((payload: CallEndedPayload) => {
-      const matchesSession = session?.sessionId === payload.sessionId;
-      const matchesIncoming = incomingCall?.sessionId === payload.sessionId;
-      if (matchesSession || matchesIncoming) {
-        teardown({ playTone: matchesSession });
-      }
-    });
+        // Auto-reject if we're already in a call
+        if (callStateRef.current !== 'idle') {
+          signalRService
+            .notifyCallEnded(call.sessionId, peer)
+            .catch(() => {});
+          return;
+        }
+
+        setIncomingCall(call);
+        setCallState('incoming');
+      },
+    );
+
+    const unsubSignal = signalRService.onCallSignal(
+      (payload: CallSignalPayload) => {
+        void handleSignalMessage(payload);
+      },
+    );
+
+    const unsubEnded = signalRService.onCallEnded(
+      (payload: CallEndedPayload) => {
+        const matchesSession = session?.sessionId === payload.sessionId;
+        const matchesIncoming = incomingCall?.sessionId === payload.sessionId;
+        if (matchesSession || matchesIncoming) {
+          teardown({ playTone: matchesSession });
+        }
+      },
+    );
 
     return () => {
       unsubIncoming();
       unsubSignal();
       unsubEnded();
     };
-  }, [session, incomingCall, resolvePeerId, myUserId, teardown, handleSignalMessage]);
+  }, [
+    session,
+    incomingCall,
+    resolvePeerId,
+    myUserId,
+    teardown,
+    handleSignalMessage,
+  ]);
 
   /* ── Auto-arm/disarm the watchdog ────────────────────── */
 
@@ -931,15 +959,30 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
       expand,
     }),
     [
-      session, localStream, remoteStream, isMuted, isVideoOff, isMinimized,
-      incomingCall, peerId, callState,
-      initiateCall, acceptCall, rejectCall, endCall,
-      toggleMute, toggleVideo, minimize, expand,
+      session,
+      localStream,
+      remoteStream,
+      isMuted,
+      isVideoOff,
+      isMinimized,
+      incomingCall,
+      peerId,
+      callState,
+      initiateCall,
+      acceptCall,
+      rejectCall,
+      endCall,
+      toggleMute,
+      toggleVideo,
+      minimize,
+      expand,
     ],
   );
 
   return (
-    <CallContext.Provider value={contextValue}>{children}</CallContext.Provider>
+    <CallContext.Provider value={contextValue}>
+      {children}
+    </CallContext.Provider>
   );
 }
 
