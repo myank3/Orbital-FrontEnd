@@ -50,12 +50,12 @@ export interface GroupTypingPayload {
 export type GroupTypingListener = (payload: GroupTypingPayload) => void;
 
 /* ────────────────────────────────────────────────────────── */
-/* Case-tolerant field reader                                 */
+/* Helpers                                                    */
 /* ────────────────────────────────────────────────────────── */
 
 /**
- * Read a field from a SignalR payload regardless of whether the
- * backend sends camelCase, PascalCase, or SCREAMING_CASE keys.
+ * Read a field from a SignalR payload regardless of casing.
+ * Checks exact names first, then falls back to lowercase match.
  */
 function field<T = unknown>(obj: unknown, ...names: string[]): T | undefined {
   if (!obj || typeof obj !== 'object') return undefined;
@@ -63,11 +63,8 @@ function field<T = unknown>(obj: unknown, ...names: string[]): T | undefined {
   for (const name of names) {
     if (name in rec && rec[name] !== undefined) return rec[name] as T;
   }
-  // Case-insensitive fallback
   const lower = new Map<string, unknown>();
-  for (const [k, v] of Object.entries(rec)) {
-    lower.set(k.toLowerCase(), v);
-  }
+  for (const [k, v] of Object.entries(rec)) lower.set(k.toLowerCase(), v);
   for (const name of names) {
     const v = lower.get(name.toLowerCase());
     if (v !== undefined) return v as T;
@@ -75,9 +72,32 @@ function field<T = unknown>(obj: unknown, ...names: string[]): T | undefined {
   return undefined;
 }
 
-/* ────────────────────────────────────────────────────────── */
-/* Payload normalisation                                      */
-/* ────────────────────────────────────────────────────────── */
+/**
+ * Normalize a sessionId to a canonical lowercase GUID with dashes.
+ * If the input isn't a GUID, return it unchanged.
+ */
+function normalizeGuid(value: unknown): string {
+  const trimmed = String(value ?? '').trim();
+  if (!trimmed) return '';
+  if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(trimmed)) {
+    return trimmed.toLowerCase();
+  }
+  const bare = trimmed.replace(/-/g, '');
+  if (/^[0-9a-f]{32}$/i.test(bare)) {
+    return (
+      bare.slice(0, 8) +
+      '-' +
+      bare.slice(8, 12) +
+      '-' +
+      bare.slice(12, 16) +
+      '-' +
+      bare.slice(16, 20) +
+      '-' +
+      bare.slice(20)
+    ).toLowerCase();
+  }
+  return trimmed;
+}
 
 function extractUserIdFromPayload(item: unknown): string | null {
   if (typeof item === 'string' && item.length > 0) return item;
@@ -102,10 +122,6 @@ function extractIsOnlineFromPayload(payload: unknown): boolean {
   return false;
 }
 
-/* ────────────────────────────────────────────────────────── */
-/* Token helper                                               */
-/* ────────────────────────────────────────────────────────── */
-
 async function getFreshToken(): Promise<string> {
   const token = getAccessToken();
   if (!token) return '';
@@ -122,7 +138,7 @@ async function getFreshToken(): Promise<string> {
       }
     }
   } catch {
-    /* non-JWT — use as-is */
+    /* non-JWT */
   }
   return token;
 }
@@ -135,15 +151,15 @@ class SignalRService {
   private connection: HubConnection | null = null;
   private isStarting = false;
 
-  private directMessageListeners: Set<DirectMessageListener> = new Set();
-  private groupMessageListeners: Set<GroupMessageListener> = new Set();
-  private presenceListeners: Set<UserPresenceListener> = new Set();
-  private initialPresenceListeners: Set<InitialPresenceListListener> = new Set();
-  private incomingCallListeners: Set<IncomingCallListener> = new Set();
-  private callSignalListeners: Set<CallSignalListener> = new Set();
-  private callEndedListeners: Set<CallEndedListener> = new Set();
-  private directTypingListeners: Set<DirectTypingListener> = new Set();
-  private groupTypingListeners: Set<GroupTypingListener> = new Set();
+  private directMessageListeners = new Set<DirectMessageListener>();
+  private groupMessageListeners = new Set<GroupMessageListener>();
+  private presenceListeners = new Set<UserPresenceListener>();
+  private initialPresenceListeners = new Set<InitialPresenceListListener>();
+  private incomingCallListeners = new Set<IncomingCallListener>();
+  private callSignalListeners = new Set<CallSignalListener>();
+  private callEndedListeners = new Set<CallEndedListener>();
+  private directTypingListeners = new Set<DirectTypingListener>();
+  private groupTypingListeners = new Set<GroupTypingListener>();
 
   public getConnection(): HubConnection | null {
     return this.connection;
@@ -279,8 +295,9 @@ class SignalRService {
 
     /* ── Incoming call ───────────────────────────────── */
     conn.on('IncomingCall', (raw: unknown) => {
+      console.log('[SignalR] ← IncomingCall raw:', raw);
       const call: CallSessionDto = {
-        sessionId: String(field<string>(raw, 'sessionId', 'SessionId') ?? ''),
+        sessionId: normalizeGuid(field<string>(raw, 'sessionId', 'SessionId')),
         callType: Number(field<number>(raw, 'callType', 'CallType') ?? 0),
         status: Number(field<number>(raw, 'status', 'Status') ?? 0),
         initiatorId: field<string>(raw, 'initiatorId', 'InitiatorId'),
@@ -289,6 +306,7 @@ class SignalRService {
         startedAt: field<string>(raw, 'startedAt', 'StartedAt'),
         endedAt: field<string>(raw, 'endedAt', 'EndedAt'),
       };
+      console.log('[SignalR] ← IncomingCall normalized:', call);
       this.incomingCallListeners.forEach((l) => {
         try { l(call); } catch (e) { console.error(e); }
       });
@@ -299,7 +317,7 @@ class SignalRService {
     conn.on('ReceiveCallOffer', (raw: unknown) => {
       const callerId = field<string>(raw, 'callerId', 'CallerId');
       const sdp = field<string>(raw, 'sdp', 'Sdp', 'sdpOffer', 'SdpOffer');
-      const sessionId = field<string>(raw, 'sessionId', 'SessionId');
+      const sessionId = normalizeGuid(field<string>(raw, 'sessionId', 'SessionId'));
 
       if (!callerId || !sdp || !sessionId) {
         console.warn('[SignalR] ReceiveCallOffer — missing fields:', {
@@ -312,7 +330,7 @@ class SignalRService {
       }
 
       const payload: CallSignalPayload = {
-        sessionId: String(sessionId),
+        sessionId,
         senderId: callerId,
         signalData: { type: 'offer', sdp },
       };
@@ -324,7 +342,7 @@ class SignalRService {
     conn.on('ReceiveCallAnswer', (raw: unknown) => {
       const responderId = field<string>(raw, 'responderId', 'ResponderId', 'senderId', 'SenderId');
       const sdp = field<string>(raw, 'sdp', 'Sdp', 'sdpAnswer', 'SdpAnswer');
-      const sessionId = field<string>(raw, 'sessionId', 'SessionId');
+      const sessionId = normalizeGuid(field<string>(raw, 'sessionId', 'SessionId'));
 
       if (!responderId || !sdp || !sessionId) {
         console.warn('[SignalR] ReceiveCallAnswer — missing fields:', {
@@ -337,7 +355,7 @@ class SignalRService {
       }
 
       const payload: CallSignalPayload = {
-        sessionId: String(sessionId),
+        sessionId,
         senderId: responderId,
         signalData: { type: 'answer', sdp },
       };
@@ -349,7 +367,7 @@ class SignalRService {
     conn.on('ReceiveIceCandidate', (raw: unknown) => {
       const senderId = field<string>(raw, 'senderId', 'SenderId');
       const candidate = field<unknown>(raw, 'candidate', 'Candidate');
-      const sessionId = field<string>(raw, 'sessionId', 'SessionId');
+      const sessionId = normalizeGuid(field<string>(raw, 'sessionId', 'SessionId'));
 
       if (!senderId || !candidate || !sessionId) {
         console.warn('[SignalR] ReceiveIceCandidate — missing fields:', {
@@ -362,7 +380,7 @@ class SignalRService {
       }
 
       const payload: CallSignalPayload = {
-        sessionId: String(sessionId),
+        sessionId,
         senderId,
         signalData: { type: 'candidate', candidate: candidate as RTCIceCandidateInit },
       };
@@ -373,13 +391,13 @@ class SignalRService {
 
     /* ── Call terminated ─────────────────────────────── */
     const handleCallTerminated = (raw: unknown, source: string) => {
-      const sessionId = field<string>(raw, 'sessionId', 'SessionId');
+      const sessionId = normalizeGuid(field<string>(raw, 'sessionId', 'SessionId'));
       if (!sessionId) {
         console.warn(`[SignalR] ${source} — missing sessionId:`, raw);
         return;
       }
       const payload: CallEndedPayload = {
-        sessionId: String(sessionId),
+        sessionId,
         endedBy: field<string>(raw, 'endedBy', 'EndedBy', 'terminatedBy', 'TerminatedBy'),
         reason: field<string>(raw, 'reason', 'Reason'),
       };
@@ -472,8 +490,12 @@ class SignalRService {
   }
 
   /**
-   * Send a WebRTC signal (offer / answer / candidate) to the peer.
-   * The backend's `RejectOrEndCall` accepts `(targetUserId, sessionId, reason)`.
+   * Send a WebRTC signal to the peer.
+   *
+   * Fallback strategy: try the hub with a normalized GUID. If it fails
+   * (because the backend expects a bare string, or a specific casing),
+   * retry once with the raw string. If that also fails, log the exact
+   * error so it can be diagnosed without further guessing.
    */
   public async sendCallSignal(
     sessionId: string,
@@ -489,21 +511,85 @@ class SignalRService {
     }
 
     const type = parsed.type as string | undefined;
-    const conn = await this.ensureConnected();
-
-    if (type === 'offer') {
-      await conn.invoke('SendCallOffer', targetUserId, parsed.sdp, sessionId);
-    } else if (type === 'answer') {
-      await conn.invoke('SendCallAnswer', targetUserId, parsed.sdp, sessionId);
-    } else if (type === 'candidate') {
-      await conn.invoke('SendIceCandidate', targetUserId, parsed.candidate, sessionId);
+    if (!type) {
+      console.warn('[SignalR] sendCallSignal: missing type', signalData);
+      return;
     }
+
+    const conn = await this.ensureConnected();
+    const sidGuid = normalizeGuid(sessionId);
+    const sidRaw = String(sessionId);
+
+    const attempts: Array<{ label: string; sid: string }> = [
+      { label: 'guid', sid: sidGuid },
+    ];
+    if (sidRaw !== sidGuid) {
+      attempts.push({ label: 'raw', sid: sidRaw });
+    }
+
+    let lastError: unknown = null;
+    for (const attempt of attempts) {
+      try {
+        if (type === 'offer') {
+          await conn.invoke('SendCallOffer', targetUserId, parsed.sdp, attempt.sid);
+        } else if (type === 'answer') {
+          await conn.invoke('SendCallAnswer', targetUserId, parsed.sdp, attempt.sid);
+        } else if (type === 'candidate') {
+          await conn.invoke('SendIceCandidate', targetUserId, parsed.candidate, attempt.sid);
+        }
+        return; // success
+      } catch (err) {
+        lastError = err;
+        // Only retry if the failure looks like a sessionId binding issue.
+        const msg = err instanceof Error ? err.message : String(err);
+        const isBindingError =
+          msg.includes('Guid') ||
+          msg.includes('sessionId') ||
+          msg.includes('deserialize') ||
+          msg.includes('Failed to invoke');
+        if (!isBindingError) break;
+      }
+    }
+
+    console.error(`[SignalR] sendCallSignal (${type}) failed:`, {
+      targetUserId,
+      sessionId,
+      lastError,
+    });
+    throw lastError ?? new Error('sendCallSignal failed');
   }
 
   public async notifyCallEnded(sessionId: string, targetUserId?: string): Promise<void> {
     if (!targetUserId) return;
     const conn = await this.ensureConnected();
-    await conn.invoke('RejectOrEndCall', targetUserId, sessionId, 'ended');
+    const sidGuid = normalizeGuid(sessionId);
+    const sidRaw = String(sessionId);
+
+    const attempts: Array<string> = [sidGuid];
+    if (sidRaw !== sidGuid) attempts.push(sidRaw);
+
+    let lastError: unknown = null;
+    for (const sid of attempts) {
+      try {
+        await conn.invoke('RejectOrEndCall', targetUserId, sid, 'ended');
+        return;
+      } catch (err) {
+        lastError = err;
+        const msg = err instanceof Error ? err.message : String(err);
+        const isBindingError =
+          msg.includes('Guid') ||
+          msg.includes('sessionId') ||
+          msg.includes('deserialize') ||
+          msg.includes('Failed to invoke');
+        if (!isBindingError) break;
+      }
+    }
+
+    console.error('[SignalR] notifyCallEnded failed:', {
+      targetUserId,
+      sessionId,
+      lastError,
+    });
   }
 
   private async ensureConnected(): Promise<HubConnection> {
