@@ -448,21 +448,24 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
           );
         });
         if (hasTurn) {
-          console.log('[Call] ICE config: backend TURN + Metered TURN');
-          return { iceServers: [...mapped, ...METERED_ICE_SERVERS] };
+          console.log('[Call] ICE config: backend TURN + Metered TURN (relay only)');
+          return {
+            iceServers: [...mapped, ...METERED_ICE_SERVERS],
+            iceTransportPolicy: 'relay',
+          };
         }
       }
     } catch {
       /* fall through */
     }
 
-    console.log('[Call] ICE config: STUN + Metered TURN', {
+    console.log('[Call] ICE config: STUN + Metered TURN (relay only)', {
       turnServers: METERED_ICE_SERVERS.length,
     });
 
     return {
       iceServers: [...stunOnly, ...METERED_ICE_SERVERS],
-      iceTransportPolicy: 'all',
+      iceTransportPolicy: 'relay',
     };
   }, []);
 
@@ -564,6 +567,7 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
       const videoTracks = stream.getVideoTracks();
       console.log('[Call] Local media acquired', {
         audio: audioTracks.map((t) => ({
+          label: t.label,
           enabled: t.enabled,
           muted: t.muted,
           readyState: t.readyState,
