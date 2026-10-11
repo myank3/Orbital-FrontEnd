@@ -49,7 +49,6 @@ export interface CallContextType {
   incomingCall: CallSessionDto | null;
   peerId: string | null;
   callState: CallState;
-  /** Seconds since the call became active (media flowing). 0 when idle. */
   duration: number;
   initiateCall: (peerId: string, callType: number) => Promise<void>;
   acceptCall: () => Promise<void>;
@@ -176,12 +175,12 @@ const RINGBACK_PATTERN: ToneStep[] = [
 ];
 
 const INCOMING_SOFT_PATTERN: ToneStep[] = [
-  { freq: 523.25, durationMs: 280, gapAfterMs: 80 },  // C5
-  { freq: 659.25, durationMs: 420, gapAfterMs: 0 },   // E5
+  { freq: 523.25, durationMs: 280, gapAfterMs: 80 },
+  { freq: 659.25, durationMs: 420, gapAfterMs: 0 },
 ];
 
 const END_PATTERN: ToneStep[] = [
-  { freq: 440, durationMs: 300, gapAfterMs: 0 },      // A4
+  { freq: 440, durationMs: 300, gapAfterMs: 0 },
 ];
 
 /* ── Timeout helper ──────────────────────────────────────── */
@@ -209,11 +208,6 @@ async function withTimeout<T>(
    Audio unlock — silent play on first user gesture
    ───────────────────────────────────────────────────────── */
 
-/**
- * Browsers block autoplay of audio until the user interacts.
- * This plays a tiny silent tone once on the first gesture,
- * unlocking the AudioContext for the rest of the session.
- */
 function installAudioUnlock(): () => void {
   if (typeof window === 'undefined') return () => {};
 
@@ -230,7 +224,6 @@ function installAudioUnlock(): () => void {
           .webkitAudioContext;
       if (Ctx) {
         const ctx = new Ctx();
-        // Play a 1-sample silent buffer
         const buf = ctx.createBuffer(1, 1, 22050);
         const src = ctx.createBufferSource();
         src.buffer = buf;
@@ -285,20 +278,10 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
   const activePeerIdRef = useRef<string | null>(null);
   const remoteStreamRef = useRef<MediaStream | null>(null);
   const localStreamRef = useRef<MediaStream | null>(null);
-  const fallbackAudioRefs = useRef<HTMLAudioElement[]>([]);
-  const fallbackAudioByTrackId = useRef<Map<string, HTMLAudioElement>>(new Map());
   const watchdogRef = useRef<number | null>(null);
   const callStateRef = useRef<CallState>('idle');
-
-  /**
-   * Both sides compute duration from this shared reference point,
-   * set the moment `pc.connectionState === 'connected'`. The two
-   * sides will be within a few hundred ms of each other — visually
-   * indistinguishable on a MM:SS display.
-   */
   const callStartedAtRef = useRef<number | null>(null);
 
-  // Install audio unlock on mount
   useEffect(() => installAudioUnlock(), []);
 
   useEffect(() => {
@@ -377,79 +360,6 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
     },
     [myUserId],
   );
-
-  /* ── Fallback audio (Chrome 140 workaround) ──────────── */
-
-  const attachFallbackAudio = useCallback((track: MediaStreamTrack) => {
-    if (fallbackAudioByTrackId.current.has(track.id)) return;
-    try {
-      const el = new Audio();
-      el.srcObject = new MediaStream([track]);
-      el.autoplay = true;
-      el.volume = 1;
-      el.muted = false;
-      // @ts-expect-error — not in all TS DOM libs
-      el.playsInline = true;
-      el.setAttribute('data-call-audio', 'true');
-      el.style.display = 'none';
-      document.body.appendChild(el);
-
-      const tryPlay = () => {
-        el.play()
-          .then(() => {
-            console.log('[Call] Fallback audio playing', {
-              trackId: track.id,
-              readyState: track.readyState,
-              enabled: track.enabled,
-              muted: track.muted,
-              volume: el.volume,
-              paused: el.paused,
-            });
-          })
-          .catch((err) => {
-            console.warn('[Call] Fallback audio autoplay blocked:', err);
-            const resume = () => {
-              el.play().catch(() => {});
-              window.removeEventListener('click', resume);
-              window.removeEventListener('keydown', resume);
-              window.removeEventListener('touchstart', resume);
-            };
-            window.addEventListener('click', resume, { once: true });
-            window.addEventListener('keydown', resume, { once: true });
-            window.addEventListener('touchstart', resume, { once: true });
-          });
-      };
-
-      // If the track is already live, play immediately.
-      // If not, wait for it to unmute before trying again.
-      tryPlay();
-
-      const onUnmute = () => {
-        if (!el.paused && el.volume > 0) return;
-        tryPlay();
-      };
-      track.addEventListener('unmute', onUnmute);
-
-      fallbackAudioRefs.current.push(el);
-      fallbackAudioByTrackId.current.set(track.id, el);
-    } catch (err) {
-      console.warn('[Call] Could not create fallback audio element:', err);
-    }
-  }, []);
-
-  const detachAllFallbackAudio = useCallback(() => {
-    fallbackAudioRefs.current.forEach((el) => {
-      try {
-        el.pause();
-        el.srcObject = null;
-        el.remove();
-      } catch {
-        /* ignore */
-      }
-    });
-    fallbackAudioRefs.current = [];
-    fallbackAudioByTrackId.current.clear();
-  }, []);
 
   /* ── Watchdog ────────────────────────────────────────── */
 
@@ -554,8 +464,7 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
       pendingRemoteOfferRef.current = null;
       activePeerIdRef.current = null;
       callStartedAtRef.current = null;
-
-      detachAllFallbackAudio();
+      iceCandidateQueueRef.current = [];
 
       setLocalStream(null);
       setRemoteStream(null);
@@ -574,7 +483,7 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
 
       if (opts.playTone) playEndTone();
     },
-    [clearWatchdog, detachAllFallbackAudio, playEndTone],
+    [clearWatchdog, playEndTone],
   );
 
   /* ── ICE queue ───────────────────────────────────────── */
@@ -612,8 +521,6 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
           : false,
       });
 
-      // Ensure every track is enabled — some browsers mute them
-      // when the tab was backgrounded during permission prompt.
       stream.getTracks().forEach((t) => {
         t.enabled = true;
       });
@@ -661,7 +568,6 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
       remoteDescriptionSetRef.current = false;
       activePeerIdRef.current = targetPeerId;
 
-      // ── Explicit transceivers (audio FIRST) ─────────────
       const audioTrack = stream.getAudioTracks()[0];
       if (audioTrack) {
         pc.addTransceiver(audioTrack, {
@@ -682,7 +588,6 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
         pc.addTransceiver('video', { direction: 'recvonly' });
       }
 
-      // ── ontrack — accumulate + fallback audio ───────────
       pc.ontrack = (event: RTCTrackEvent) => {
         event.track.enabled = true;
 
@@ -711,10 +616,6 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
               target!.addTrack(t);
             }
           });
-        }
-
-        if (event.track.kind === 'audio') {
-          attachFallbackAudio(event.track);
         }
 
         setCallState((prev) =>
@@ -759,7 +660,7 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
 
       return pc;
     },
-    [getRtcConfiguration, attachFallbackAudio, teardown, clearWatchdog],
+    [getRtcConfiguration, teardown, clearWatchdog],
   );
 
   /* ── Initiate (caller) ───────────────────────────────── */
@@ -817,7 +718,6 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
     }
 
     clearWatchdog();
-    iceCandidateQueueRef.current = [];
     remoteDescriptionSetRef.current = false;
     activePeerIdRef.current = resolvedPeer;
 
