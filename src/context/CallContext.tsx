@@ -312,43 +312,53 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
   const localStreamRef = useRef<MediaStream | null>(null);
   const watchdogRef = useRef<number | null>(null);
   const callStateRef = useRef<CallState>('idle');
+  const sessionRef = useRef<CallSessionDto | null>(null);
+  const incomingCallRef = useRef<CallSessionDto | null>(null);
   const callStartedAtRef = useRef<number | null>(null);
-  const muteCheckTimersRef = useRef<number[]>([]);
 
   /**
-   * Persistent hidden <video> used ONLY for remote audio playback.
-   * Audio tracks are attached DIRECTLY in `pc.ontrack`. This
-   * bypasses the React re-render race that was losing the audio
-   * track on the receiving side.
+   * Dedicated HTMLAudioElement for remote audio playback.
+   * Attached directly in `pc.ontrack` to avoid the React render
+   * race that was dropping the audio track on the receiving side.
    */
-  const audioSinkRef = useRef<HTMLVideoElement | null>(null);
+  const audioSinkRef = useRef<HTMLAudioElement | null>(null);
 
   useEffect(() => installAudioUnlock(), []);
 
-  // Create the persistent audio sink once
+  // Sync state to refs to prevent stale closures in SignalR callbacks
+  useEffect(() => {
+    callStateRef.current = callState;
+  }, [callState]);
+
+  useEffect(() => {
+    sessionRef.current = session;
+  }, [session]);
+
+  useEffect(() => {
+    incomingCallRef.current = incomingCall;
+  }, [incomingCall]);
+
+  // Create persistent audio element with dedicated MediaStream container
   useEffect(() => {
     if (typeof window === 'undefined') return;
     if (audioSinkRef.current) return;
 
-    const el = document.createElement('video');
-    el.setAttribute('playsinline', '');
-    el.setAttribute('autoplay', '');
+    const el = document.createElement('audio');
+    el.autoplay = true;
     el.muted = false;
     el.volume = 1;
-    el.style.position = 'fixed';
-    el.style.width = '1px';
-    el.style.height = '1px';
-    el.style.opacity = '0';
-    el.style.pointerEvents = 'none';
-    el.style.left = '-9999px';
-    el.style.top = '-9999px';
+    el.setAttribute('playsinline', '');
     el.setAttribute('data-call-audio-sink', 'true');
+    el.style.display = 'none';
+    el.srcObject = new MediaStream();
+
     document.body.appendChild(el);
     audioSinkRef.current = el;
 
     return () => {
       try {
         el.pause();
+        el.srcObject = null;
       } catch {
         /* ignore */
       }
@@ -356,10 +366,6 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
       audioSinkRef.current = null;
     };
   }, []);
-
-  useEffect(() => {
-    callStateRef.current = callState;
-  }, [callState]);
 
   /* ── Ringtone ────────────────────────────────────────── */
 
@@ -383,7 +389,7 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
   useRingtone(endToneActive, {
     pattern: END_PATTERN,
     silenceMs: 0,
-    volume: 0.10,
+    volume: 0.1,
     wave: 'sine',
   });
 
@@ -446,15 +452,20 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
     }
   }, []);
 
+  /* NOTE: teardown is declared after this callback in source order,
+     but armWatchdog only *references* it inside a setTimeout callback,
+     so the TDZ doesn't bite at runtime. We declare armWatchdog via
+     useCallback with teardown in deps (see below). */
+
+  const teardownRef = useRef<((opts?: { playTone?: boolean }) => void) | null>(
+    null,
+  );
+
   const armWatchdog = useCallback(() => {
     clearWatchdog();
     watchdogRef.current = window.setTimeout(() => {
       console.warn('[Call] Watchdog fired — forcing teardown');
-      try {
-        peerConnectionRef.current?.close();
-      } catch {
-        /* ignore */
-      }
+      teardownRef.current?.({ playTone: true });
     }, DISCONNECT_WATCHDOG_MS);
   }, [clearWatchdog]);
 
@@ -487,10 +498,10 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
           );
         });
         if (hasTurn) {
-          console.log('[Call] ICE config: backend TURN + Metered TURN (policy: all)');
+          console.log('[Call] ICE config: backend TURN + Metered TURN (policy: relay)');
           return {
             iceServers: [...mapped, ...METERED_ICE_SERVERS],
-            iceTransportPolicy: 'all',
+            iceTransportPolicy: 'relay',
           };
         }
       }
@@ -498,13 +509,13 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
       /* fall through */
     }
 
-    console.log('[Call] ICE config: STUN + Metered TURN (policy: all)', {
+    console.log('[Call] ICE config: STUN + Metered TURN (policy: relay)', {
       turnServers: METERED_ICE_SERVERS.length,
     });
 
     return {
       iceServers: [...stunOnly, ...METERED_ICE_SERVERS],
-      iceTransportPolicy: 'all',
+      iceTransportPolicy: 'relay',
     };
   }, []);
 
@@ -513,10 +524,6 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
   const teardown = useCallback(
     (opts: { playTone?: boolean } = {}) => {
       clearWatchdog();
-
-      // Clear any pending mute-check timers
-      muteCheckTimersRef.current.forEach((id) => window.clearTimeout(id));
-      muteCheckTimersRef.current = [];
 
       if (peerConnectionRef.current) {
         try {
@@ -532,19 +539,37 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
       }
 
       localStreamRef.current?.getTracks().forEach((t) => {
-        try { t.stop(); } catch { /* ignore */ }
+        try {
+          t.stop();
+        } catch {
+          /* ignore */
+        }
       });
       localStreamRef.current = null;
 
       remoteStreamRef.current?.getTracks().forEach((t) => {
-        try { t.stop(); } catch { /* ignore */ }
+        try {
+          t.stop();
+        } catch {
+          /* ignore */
+        }
       });
       remoteStreamRef.current = null;
 
-      if (audioSinkRef.current) {
+      if (
+        audioSinkRef.current &&
+        audioSinkRef.current.srcObject instanceof MediaStream
+      ) {
+        audioSinkRef.current.srcObject.getTracks().forEach((t) => {
+          try {
+            t.stop();
+          } catch {
+            /* ignore */
+          }
+        });
+        audioSinkRef.current.srcObject = new MediaStream();
         try {
           audioSinkRef.current.pause();
-          audioSinkRef.current.srcObject = null;
         } catch {
           /* ignore */
         }
@@ -575,6 +600,11 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
     },
     [clearWatchdog, playEndTone],
   );
+
+  // Keep teardownRef in sync so armWatchdog can call the latest version
+  useEffect(() => {
+    teardownRef.current = teardown;
+  }, [teardown]);
 
   /* ── ICE queue ───────────────────────────────────────── */
 
@@ -617,6 +647,7 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
 
       const audioTracks = stream.getAudioTracks();
       const videoTracks = stream.getVideoTracks();
+
       console.log('[Call] Local media acquired', {
         audio: audioTracks.map((t) => ({
           label: t.label,
@@ -651,7 +682,7 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
       targetSessionId: string,
       targetPeerId: string,
       stream: MediaStream,
-      callType: number,
+      _callType: number,
     ): Promise<RTCPeerConnection> => {
       const config = await getRtcConfiguration();
       const pc = new RTCPeerConnection(config);
@@ -659,66 +690,14 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
       remoteDescriptionSetRef.current = false;
       activePeerIdRef.current = targetPeerId;
 
-      // DEBUG
       if (typeof window !== 'undefined') {
         (window as unknown as { __pc?: RTCPeerConnection }).__pc = pc;
       }
 
-      /* ── Chrome 140 unmute workaround ───────────────────
-         If a remote audio track stays muted for >3s after the
-         PC connects, trigger an ICE restart. This forces the
-         browser to renegotiate the media path, which unblocks
-         the stuck SRTP flow. */
-      const scheduleMuteCheck = (track: MediaStreamTrack) => {
-        if (track.kind !== 'audio') return;
-        let checks = 0;
-        const check = () => {
-          checks++;
-          if (!track.muted) return;
-          if (checks >= 6) {
-            console.warn('[Call] Audio track stuck muted — forcing ICE restart');
-            try {
-              pc.createOffer({ iceRestart: true })
-                .then((offer) => pc.setLocalDescription(offer).then(() => offer))
-                .then((offer) => {
-                  void signalRService.sendCallSignal(
-                    targetSessionId,
-                    targetPeerId,
-                    { type: 'offer', sdp: offer.sdp },
-                  );
-                })
-                .catch(() => {});
-            } catch {
-              /* ignore */
-            }
-            return;
-          }
-          const id = window.setTimeout(check, 500);
-          muteCheckTimersRef.current.push(id);
-        };
-        const id = window.setTimeout(check, 500);
-        muteCheckTimersRef.current.push(id);
-      };
-
-      const audioTrack = stream.getAudioTracks()[0];
-      if (audioTrack) {
-        pc.addTransceiver(audioTrack, {
-          direction: 'sendrecv',
-          streams: [stream],
-        });
-      } else {
-        pc.addTransceiver('audio', { direction: 'recvonly' });
-      }
-
-      const videoTrack = stream.getVideoTracks()[0];
-      if (videoTrack) {
-        pc.addTransceiver(videoTrack, {
-          direction: 'sendrecv',
-          streams: [stream],
-        });
-      } else if (callType === CallType.Video) {
-        pc.addTransceiver('video', { direction: 'recvonly' });
-      }
+      // Add local media tracks to the connection
+      stream.getTracks().forEach((track) => {
+        pc.addTrack(track, stream);
+      });
 
       pc.ontrack = (event: RTCTrackEvent) => {
         event.track.enabled = true;
@@ -731,60 +710,39 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
           readyState: event.track.readyState,
         });
 
-        // Chrome 140: try to unmute a stuck audio track
-        scheduleMuteCheck(event.track);
+        // Diagnostics only — no ICE restart hacks.
+        event.track.addEventListener('unmute', () =>
+          console.log('[Call] remote track UNMUTED', event.track.kind),
+        );
+        event.track.addEventListener('mute', () =>
+          console.log('[Call] remote track muted', event.track.kind),
+        );
 
-        /* ── AUDIO: attach directly to the persistent sink ── */
+        /* ── Audio playback sink ── */
         if (event.track.kind === 'audio') {
           const sink = audioSinkRef.current;
-          if (!sink) {
-            console.warn('[Call] No audio sink available');
-            return;
+          if (sink && sink.srcObject instanceof MediaStream) {
+            const currentAudioStream = sink.srcObject;
+            if (
+              !currentAudioStream.getTracks().some((t) => t.id === event.track.id)
+            ) {
+              currentAudioStream.addTrack(event.track);
+            }
+
+            sink.play().catch((err) => {
+              console.warn('[Call] Autoplay blocked, awaiting interaction:', err);
+              const resume = () => {
+                sink.play().catch(() => {});
+                document.removeEventListener('click', resume);
+                document.removeEventListener('touchstart', resume);
+              };
+              document.addEventListener('click', resume, { once: true });
+              document.addEventListener('touchstart', resume, { once: true });
+            });
           }
-
-          const existingTracks =
-            sink.srcObject instanceof MediaStream
-              ? sink.srcObject.getAudioTracks()
-              : [];
-          const allAudio: MediaStreamTrack[] = [...existingTracks];
-          if (!allAudio.some((t) => t.id === event.track.id)) {
-            allAudio.push(event.track);
-          }
-
-          sink.srcObject = new MediaStream(allAudio);
-          sink.muted = false;
-          sink.volume = 1;
-
-          const attemptPlay = () => {
-            sink
-              .play()
-              .then(() => {
-                console.log('[Call] ✓ Audio sink playing', {
-                  trackCount: allAudio.length,
-                  paused: sink.paused,
-                  muted: sink.muted,
-                  volume: sink.volume,
-                });
-              })
-              .catch((err) => {
-                console.warn('[Call] Audio sink play blocked:', err);
-                const resume = () => {
-                  sink
-                    .play()
-                    .catch((e) => console.warn('[Call] Resume failed:', e));
-                  document.removeEventListener('click', resume);
-                  document.removeEventListener('keydown', resume);
-                  document.removeEventListener('touchstart', resume);
-                };
-                document.addEventListener('click', resume, { once: true });
-                document.addEventListener('keydown', resume, { once: true });
-                document.addEventListener('touchstart', resume, { once: true });
-              });
-          };
-          attemptPlay();
         }
 
-        /* ── VIDEO: accumulate into remoteStream for the overlay ── */
+        /* ── Video remote stream ── */
         if (event.track.kind === 'video') {
           let target = remoteStreamRef.current;
           if (!target) {
@@ -862,6 +820,9 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
       setPeerId(targetPeerId);
       activePeerIdRef.current = targetPeerId;
 
+      // Prime audio playback early
+      audioSinkRef.current?.play().catch(() => {});
+
       const stream = await acquireMediaStream(callType);
       setLocalStream(stream);
 
@@ -893,8 +854,14 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
   /* ── Accept (callee) ─────────────────────────────────── */
 
   const acceptCall = useCallback(async (): Promise<void> => {
-    const incoming = incomingCall;
+    const incoming = incomingCallRef.current;
     if (!incoming) return;
+
+    // Synchronously prime audio sink inside the click handler to claim the
+    // user gesture (unlocks autoplay for the remote audio element).
+    if (audioSinkRef.current) {
+      audioSinkRef.current.play().catch(() => {});
+    }
 
     const resolvedPeer = resolvePeerId(null, incoming);
     if (!resolvedPeer) {
@@ -949,10 +916,11 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
       });
       pendingRemoteOfferRef.current = null;
     } else {
-      console.warn('[Call] No pending offer at accept time');
+      // The offer hasn't arrived yet. handleSignalMessage will pick it up
+      // when it does and drive the answer from there.
+      console.warn('[Call] No pending offer at accept time — awaiting offer signal');
     }
   }, [
-    incomingCall,
     resolvePeerId,
     teardown,
     acquireMediaStream,
@@ -964,7 +932,7 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
   /* ── Reject ──────────────────────────────────────────── */
 
   const rejectCall = useCallback(async (): Promise<void> => {
-    const incoming = incomingCall;
+    const incoming = incomingCallRef.current;
     if (!incoming) return;
 
     const resolvedPeer = resolvePeerId(null, incoming);
@@ -989,13 +957,13 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
     } catch (err) {
       console.warn('[Call] Reject cleanup error (ignored):', err);
     }
-  }, [incomingCall, resolvePeerId, teardown]);
+  }, [resolvePeerId, teardown]);
 
   /* ── End ─────────────────────────────────────────────── */
 
   const endCall = useCallback(async (): Promise<void> => {
-    const currentSession = session;
-    const currentIncoming = incomingCall;
+    const currentSession = sessionRef.current;
+    const currentIncoming = incomingCallRef.current;
     const currentSessionId =
       currentSession?.sessionId ?? currentIncoming?.sessionId;
     const resolvedPeer =
@@ -1028,7 +996,7 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
         }
       }
     }
-  }, [session, incomingCall, resolvePeerId, teardown]);
+  }, [resolvePeerId, teardown]);
 
   /* ── Session storage ─────────────────────────────────── */
 
@@ -1118,25 +1086,49 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
       const replyToPeer = activePeerIdRef.current ?? payload.senderId;
 
       if (messageData.type === 'offer' && messageData.sdp) {
+        // Glare guard: only accept an offer when we're in the stable state.
+        if (pc && pc.signalingState !== 'stable') {
+          console.warn(
+            '[Call] glare — dropping offer in signaling state:',
+            pc.signalingState,
+          );
+          return;
+        }
+
         const description: RTCSessionDescriptionInit = {
           type: 'offer',
           sdp: messageData.sdp,
         };
+
         if (pc) {
-          await pc.setRemoteDescription(new RTCSessionDescription(description));
-          await drainIceCandidateQueue(pc);
-          const answer = await pc.createAnswer();
-          await pc.setLocalDescription(answer);
-          await signalRService.sendCallSignal(
-            payload.sessionId,
-            replyToPeer,
-            { type: 'answer', sdp: answer.sdp },
-          );
+          try {
+            await pc.setRemoteDescription(
+              new RTCSessionDescription(description),
+            );
+            await drainIceCandidateQueue(pc);
+            const answer = await pc.createAnswer();
+            await pc.setLocalDescription(answer);
+            await signalRService.sendCallSignal(
+              payload.sessionId,
+              replyToPeer,
+              { type: 'answer', sdp: answer.sdp },
+            );
+          } catch (err) {
+            console.error('[Call] Failed to process offer:', err);
+          }
         } else {
           pendingRemoteOfferRef.current = description;
         }
       } else if (messageData.type === 'answer' && messageData.sdp) {
-        if (pc) {
+        // Only accept an answer when we actually sent an offer.
+        if (!pc || pc.signalingState !== 'have-local-offer') {
+          console.warn(
+            '[Call] ignoring answer — signaling state:',
+            pc?.signalingState,
+          );
+          return;
+        }
+        try {
           await pc.setRemoteDescription(
             new RTCSessionDescription({
               type: 'answer',
@@ -1147,6 +1139,8 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
           setCallState((prev) =>
             prev === 'outgoing' ? 'connecting' : prev,
           );
+        } catch (err) {
+          console.error('[Call] Failed to process answer:', err);
         }
       } else if (messageData.type === 'candidate' && messageData.candidate) {
         if (!pc || !remoteDescriptionSetRef.current || !pc.remoteDescription) {
@@ -1198,8 +1192,10 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
 
     const unsubEnded = signalRService.onCallEnded(
       (payload: CallEndedPayload) => {
-        const matchesSession = session?.sessionId === payload.sessionId;
-        const matchesIncoming = incomingCall?.sessionId === payload.sessionId;
+        const matchesSession =
+          sessionRef.current?.sessionId === payload.sessionId;
+        const matchesIncoming =
+          incomingCallRef.current?.sessionId === payload.sessionId;
         if (matchesSession || matchesIncoming) {
           teardown({ playTone: matchesSession });
         }
@@ -1211,18 +1207,13 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
       unsubSignal();
       unsubEnded();
     };
-  }, [
-    session,
-    incomingCall,
-    resolvePeerId,
-    myUserId,
-    teardown,
-    handleSignalMessage,
-  ]);
+    // Subscriptions must be installed exactly once for the provider lifetime.
+    // All live values are read from refs to avoid stale-closure bugs.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   /* ── Watchdog arm/disarm ─────────────────────────────── */
-  // Only arm while we're still negotiating. Once 'active',
-  // the PC's own state-change handlers cover failures.
+
   useEffect(() => {
     if (callState === 'connecting' || callState === 'outgoing') {
       armWatchdog();
