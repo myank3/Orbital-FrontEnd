@@ -325,11 +325,14 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
   const screenStreamRef = useRef<MediaStream | null>(null);
 
   /**
-   * Dedicated HTMLAudioElement for remote audio playback.
-   * Attached directly in `pc.ontrack` to avoid the React render
-   * race that was dropping the audio track on the receiving side.
+   * Persistent audio element for remote playback.
+   * Kept alive for the whole app lifetime, pre-loaded with a silent
+   * track so Chrome considers it "live". This is what makes
+   * autoplay work without any user gesture during the call.
    */
   const audioSinkRef = useRef<HTMLAudioElement | null>(null);
+  const silentAudioCtxRef = useRef<AudioContext | null>(null);
+  const realAudioTrackIdsRef = useRef<Set<string>>(new Set());
 
   useEffect(() => installAudioUnlock(), []);
 
@@ -346,7 +349,13 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
     incomingCallRef.current = incomingCall;
   }, [incomingCall]);
 
-  // Create persistent audio element with dedicated MediaStream container
+  /* ─────────────────────────────────────────────────────
+     Persistent audio sink — created ONCE, never torn down
+     until the provider unmounts. It's pre-filled with a
+     silent oscillator track so Chrome treats it as "live"
+     and allows play() from any context. This is the fix
+     for the "speaker button unlocks audio" bug.
+     ───────────────────────────────────────────────────── */
   useEffect(() => {
     if (typeof window === 'undefined') return;
     if (audioSinkRef.current) return;
@@ -358,10 +367,38 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
     el.setAttribute('playsinline', '');
     el.setAttribute('data-call-audio-sink', 'true');
     el.style.display = 'none';
-    el.srcObject = new MediaStream();
+
+    // Silent audio source. gain = 0 so it's inaudible but keeps
+    // the element "playing media" from Chrome's perspective.
+    try {
+      const Ctx =
+        window.AudioContext ||
+        (window as unknown as { webkitAudioContext: typeof AudioContext })
+          .webkitAudioContext;
+      if (Ctx) {
+        const ctx = new Ctx();
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        gain.gain.value = 0;
+        const dest = ctx.createMediaStreamDestination();
+        osc.connect(gain);
+        gain.connect(dest);
+        osc.start();
+        el.srcObject = dest.stream;
+        silentAudioCtxRef.current = ctx;
+      } else {
+        el.srcObject = new MediaStream();
+      }
+    } catch {
+      el.srcObject = new MediaStream();
+    }
 
     document.body.appendChild(el);
     audioSinkRef.current = el;
+
+    // Try to start immediately. If Chrome blocks it (no gesture yet),
+    // the global gesture listener below will retry.
+    el.play().catch(() => {});
 
     return () => {
       try {
@@ -372,6 +409,41 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
       }
       el.remove();
       audioSinkRef.current = null;
+      try {
+        silentAudioCtxRef.current?.close();
+      } catch {
+        /* ignore */
+      }
+      silentAudioCtxRef.current = null;
+    };
+  }, []);
+
+  /* ─────────────────────────────────────────────────────
+     Global first-gesture unlock.
+     Any click / tap / key anywhere unlocks the sink long
+     before a call ever starts. After this fires once, the
+     sink is free to play for the rest of the page lifetime.
+     ───────────────────────────────────────────────────── */
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+
+    const unlock = () => {
+      const sink = audioSinkRef.current;
+      if (!sink) return;
+      void silentAudioCtxRef.current?.resume().catch(() => {});
+      if (!sink.muted) {
+        sink.play().catch(() => {});
+      }
+    };
+
+    // capture:true so we fire before React click handlers stop propagation.
+    document.addEventListener('click', unlock, true);
+    document.addEventListener('touchstart', unlock, true);
+    document.addEventListener('keydown', unlock, true);
+    return () => {
+      document.removeEventListener('click', unlock, true);
+      document.removeEventListener('touchstart', unlock, true);
+      document.removeEventListener('keydown', unlock, true);
     };
   }, []);
 
@@ -568,23 +640,27 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
       });
       screenStreamRef.current = null;
 
-      if (
-        audioSinkRef.current &&
-        audioSinkRef.current.srcObject instanceof MediaStream
-      ) {
-        audioSinkRef.current.srcObject.getTracks().forEach((t) => {
-          try {
-            t.stop();
-          } catch {
-            /* ignore */
+      /* ── Audio sink: stop ONLY the real remote tracks.
+         Leave the silent track and the element itself untouched. ── */
+      const sink = audioSinkRef.current;
+      if (sink && sink.srcObject instanceof MediaStream) {
+        const stream = sink.srcObject;
+        stream.getTracks().forEach((t) => {
+          if (realAudioTrackIdsRef.current.has(t.id)) {
+            try {
+              t.stop();
+            } catch {
+              /* ignore */
+            }
+            realAudioTrackIdsRef.current.delete(t.id);
           }
         });
-        audioSinkRef.current.srcObject = new MediaStream();
-        try {
-          audioSinkRef.current.pause();
-        } catch {
-          /* ignore */
-        }
+      }
+      // Reset the sink to audible, unmuted, and playing its silent track.
+      if (sink) {
+        sink.muted = false;
+        sink.volume = 1;
+        sink.play().catch(() => {});
       }
 
       remoteDescriptionSetRef.current = false;
@@ -724,7 +800,6 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
           readyState: event.track.readyState,
         });
 
-        // Diagnostics only — no ICE restart hacks.
         event.track.addEventListener('unmute', () =>
           console.log('[Call] remote track UNMUTED', event.track.kind),
         );
@@ -732,26 +807,39 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
           console.log('[Call] remote track muted', event.track.kind),
         );
 
-        /* ── Audio playback sink ── */
+        /* ── Audio playback sink ──
+           The element is already playing the silent track.
+           Adding the real audio track doesn't require another play().
+           ── */
         if (event.track.kind === 'audio') {
           const sink = audioSinkRef.current;
           if (sink && sink.srcObject instanceof MediaStream) {
-            const currentAudioStream = sink.srcObject;
-            if (
-              !currentAudioStream.getTracks().some((t) => t.id === event.track.id)
-            ) {
-              currentAudioStream.addTrack(event.track);
+            const stream = sink.srcObject;
+            if (!stream.getTracks().some((t) => t.id === event.track.id)) {
+              stream.addTrack(event.track);
+              realAudioTrackIdsRef.current.add(event.track.id);
             }
 
+            // Ensure audible + playing. play() is a no-op if already playing.
+            sink.muted = isSpeakerOn ? false : true;
+            sink.volume = isSpeakerOn ? 1 : 0;
             sink.play().catch((err) => {
-              console.warn('[Call] Autoplay blocked, awaiting interaction:', err);
-              const resume = () => {
-                sink.play().catch(() => {});
-                document.removeEventListener('click', resume);
-                document.removeEventListener('touchstart', resume);
+              console.warn('[Call] sink play failed:', err);
+              const retry = () => {
+                const s = audioSinkRef.current;
+                if (!s) return;
+                s.muted = false;
+                s.volume = 1;
+                s.play().catch(() => {});
               };
-              document.addEventListener('click', resume, { once: true });
-              document.addEventListener('touchstart', resume, { once: true });
+              document.addEventListener('click', retry, {
+                once: true,
+                capture: true,
+              });
+              document.addEventListener('touchstart', retry, {
+                once: true,
+                capture: true,
+              });
             });
           }
         }
@@ -818,6 +906,7 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
 
       return pc;
     },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     [getRtcConfiguration, teardown, clearWatchdog],
   );
 
@@ -834,8 +923,8 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
       setPeerId(targetPeerId);
       activePeerIdRef.current = targetPeerId;
 
-      // Prime audio playback early
-      audioSinkRef.current?.play().catch(() => {});
+      // NOTE: no priming play() here — the sink is already playing
+      // its silent track. We never touch it again in the call flow.
 
       const stream = await acquireMediaStream(callType);
       setLocalStream(stream);
@@ -871,11 +960,7 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
     const incoming = incomingCallRef.current;
     if (!incoming) return;
 
-    // Synchronously prime audio sink inside the click handler to claim the
-    // user gesture (unlocks autoplay for the remote audio element).
-    if (audioSinkRef.current) {
-      audioSinkRef.current.play().catch(() => {});
-    }
+    // NOTE: no play() priming here either. The sink is already live.
 
     const resolvedPeer = resolvePeerId(null, incoming);
     if (!resolvedPeer) {
@@ -930,8 +1015,6 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
       });
       pendingRemoteOfferRef.current = null;
     } else {
-      // The offer hasn't arrived yet. handleSignalMessage will pick it up
-      // when it does and drive the answer from there.
       console.warn('[Call] No pending offer at accept time — awaiting offer signal');
     }
   }, [
@@ -1085,7 +1168,6 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
     const cameraTrack = localStreamRef.current?.getVideoTracks()[0];
 
     if (sender && cameraTrack) {
-      // Restore the camera track on the existing sender.
       void sender.replaceTrack(cameraTrack).catch((err) => {
         console.warn('[Call] Failed to restore camera track:', err);
       });
@@ -1125,14 +1207,11 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
         return;
       }
 
-      // Prefer replacing the existing video sender's track (no renegotiation
-      // needed and m-lines stay untouched — the working audio path is safe).
       const sender = pc.getSenders().find((s) => s.track?.kind === 'video');
 
       if (sender) {
         await sender.replaceTrack(displayTrack);
       } else {
-        // No video sender yet (audio-only call). Add the track and renegotiate.
         pc.addTrack(displayTrack, displayStream);
         const offer = await pc.createOffer();
         await pc.setLocalDescription(offer);
@@ -1149,18 +1228,19 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
       screenStreamRef.current = displayStream;
       setIsScreenSharing(true);
 
-      // Auto-stop when the user clicks the browser's "Stop sharing" button.
       displayTrack.addEventListener('ended', () => {
         stopScreenShare();
       });
     } catch (err) {
-      // User cancelled the picker, or the browser refused. Not fatal.
       console.warn('[Call] Screen share cancelled or failed:', err);
     }
   }, [stopScreenShare]);
 
-  /* ── Speaker toggle ──────────────────────────────────── */
-
+  /* ── Speaker toggle ──────────────────────────────────────
+     Pure mute toggle. Never touches srcObject, never calls
+     pause(), never touches the peer connection. Just flips
+     the element's muted flag.
+     ───────────────────────────────────────────────────── */
   const setSpeakerOn = useCallback((on: boolean) => {
     setIsSpeakerOn(on);
     const sink = audioSinkRef.current;
@@ -1193,7 +1273,6 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
       const replyToPeer = activePeerIdRef.current ?? payload.senderId;
 
       if (messageData.type === 'offer' && messageData.sdp) {
-        // Glare guard: only accept an offer when we're in the stable state.
         if (pc && pc.signalingState !== 'stable') {
           console.warn(
             '[Call] glare — dropping offer in signaling state:',
@@ -1227,7 +1306,6 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
           pendingRemoteOfferRef.current = description;
         }
       } else if (messageData.type === 'answer' && messageData.sdp) {
-        // Only accept an answer when we actually sent an offer.
         if (!pc || pc.signalingState !== 'have-local-offer') {
           console.warn(
             '[Call] ignoring answer — signaling state:',
@@ -1314,8 +1392,6 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
       unsubSignal();
       unsubEnded();
     };
-    // Subscriptions must be installed exactly once for the provider lifetime.
-    // All live values are read from refs to avoid stale-closure bugs.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
