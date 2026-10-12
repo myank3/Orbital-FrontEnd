@@ -281,21 +281,18 @@ const MessageRow = React.memo(function MessageRow({
           </AnimatePresence>
         </div>
 
-        {isMe && isLastOfGroup && (
-          <div className="flex items-center gap-1 mt-0.5 px-1 text-[10px] text-[#6B6259]">
-            {message.isRead ? (
-              <>
-                <CheckCheck className="w-3 h-3 text-[#15803D]" />
-                <span>Read</span>
-              </>
-            ) : (
-              <>
-                <Check className="w-3 h-3" />
-                <span>Sent</span>
-              </>
-            )}
-          </div>
-        )}
+       {isMe && isLastOfGroup && (
+  <div
+    className="flex items-center mt-0.5 px-1"
+    aria-label={message.isRead ? 'Read' : 'Delivered'}
+  >
+    <CheckCheck
+      className={`w-3.5 h-3.5 transition-colors ${
+        message.isRead ? 'text-[#4ADE80]' : 'text-[#6B6259]'
+      }`}
+    />
+  </div>
+     )}
       </div>
     </div>
   );
