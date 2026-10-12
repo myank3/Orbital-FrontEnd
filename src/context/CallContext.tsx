@@ -468,12 +468,13 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
   const teardownRef = useRef<((opts?: { playTone?: boolean }) => void) | null>(
     null,
   );
+  const endCallRef = useRef<(() => Promise<void>) | null>(null);
 
   const armWatchdog = useCallback(() => {
     clearWatchdog();
     watchdogRef.current = window.setTimeout(() => {
-      console.warn('[Call] Watchdog fired — forcing teardown');
-      teardownRef.current?.({ playTone: true });
+      console.warn('[Call] Watchdog fired — forcing endCall');
+      void endCallRef.current?.();
     }, DISCONNECT_WATCHDOG_MS);
   }, [clearWatchdog]);
 
@@ -509,9 +510,6 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
           console.log('[Call] ICE config: backend TURN + Metered TURN (policy: all)');
           return {
             iceServers: [...mapped, ...METERED_ICE_SERVERS],
-            // 'relay' forces every packet through TURN which adds latency
-            // and makes audio one-way on some asymmetric relays. Default
-            // ('all') uses direct P2P when possible and falls back to TURN.
             iceTransportPolicy: 'all',
           };
         }
@@ -576,8 +574,6 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
       });
       screenStreamRef.current = null;
 
-      // Reset sink: pause and detach the old stream so the NEXT call
-      // builds a fresh MediaStream containing the new remote track.
       if (audioSinkRef.current) {
         const sink = audioSinkRef.current;
         const current = sink.srcObject;
@@ -595,7 +591,7 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
         } catch {
           /* ignore */
         }
-        sink.srcObject = null; // ← must be null, not new MediaStream()
+        sink.srcObject = null;
       }
 
       remoteDescriptionSetRef.current = false;
@@ -630,6 +626,10 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
   useEffect(() => {
     teardownRef.current = teardown;
   }, [teardown]);
+
+  useEffect(() => {
+    endCallRef.current = endCall;
+  }, [endCall]);
 
   /* ── ICE queue ───────────────────────────────────────── */
 
@@ -719,7 +719,6 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
         (window as unknown as { __pc?: RTCPeerConnection }).__pc = pc;
       }
 
-      // Add local media tracks to the connection
       stream.getTracks().forEach((track) => {
         pc.addTrack(track, stream);
       });
@@ -735,7 +734,6 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
           readyState: event.track.readyState,
         });
 
-        // Diagnostics only — no ICE restart hacks.
         event.track.addEventListener('unmute', () =>
           console.log('[Call] remote track UNMUTED', event.track.kind),
         );
@@ -743,32 +741,20 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
           console.log('[Call] remote track muted', event.track.kind),
         );
 
-        /* ── Audio playback sink ──
-         *
-         * Critical: build a MediaStream that already contains the
-         * track, then assign it. Do NOT addTrack() into a pre-existing
-         * empty MediaStream that is already the element's srcObject —
-         * Chromium will silently output zeros.
-         */
         if (event.track.kind === 'audio') {
           const sink = audioSinkRef.current;
           if (sink) {
             const existing = sink.srcObject;
 
-            // Reuse the current stream if it already carries this track.
             if (
               existing instanceof MediaStream &&
               existing.getTracks().some((t) => t.id === event.track.id)
             ) {
               // already wired up
             } else {
-              // Build a NEW stream containing the remote track and
-              // assign it in one go.
               const fresh = new MediaStream();
               fresh.addTrack(event.track);
 
-              // Also carry any other remote audio tracks that were
-              // already attached to the previous stream (multi-track).
               if (existing instanceof MediaStream) {
                 existing.getAudioTracks().forEach((t) => {
                   if (!fresh.getTracks().some((x) => x.id === t.id)) {
@@ -802,7 +788,6 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
           }
         }
 
-        /* ── Video remote stream ── */
         if (event.track.kind === 'video') {
           let target = remoteStreamRef.current;
           if (!target) {
@@ -869,25 +854,22 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
 
   /* ── Initiate (caller) ───────────────────────────────── */
 
- const initiateCall = useCallback(
-  async (targetPeerId: string, callType: number): Promise<void> => {
-    if (!targetPeerId) {
-      throw new Error('Peer ID is required to initiate a call.');
-    }
+  const initiateCall = useCallback(
+    async (targetPeerId: string, callType: number): Promise<void> => {
+      if (!targetPeerId) {
+        throw new Error('Peer ID is required to initiate a call.');
+      }
 
-    // Prime the sink BEFORE teardown/await so we're still inside the
-    // click handler. This claims the element into the "user-activated"
-    // state and lets the real playback start when the remote track lands.
-    if (audioSinkRef.current) {
-      audioSinkRef.current.play().catch(() => {});
-    }
+      if (audioSinkRef.current) {
+        audioSinkRef.current.play().catch(() => {});
+      }
 
-    teardown();
-    setCallState('outgoing');
-    setPeerId(targetPeerId);
-    activePeerIdRef.current = targetPeerId;
+      teardown();
+      setCallState('outgoing');
+      setPeerId(targetPeerId);
+      activePeerIdRef.current = targetPeerId;
 
-    const stream = await acquireMediaStream(callType);
+      const stream = await acquireMediaStream(callType);
       setLocalStream(stream);
 
       const newSession = await withTimeout(
@@ -921,10 +903,6 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
     const incoming = incomingCallRef.current;
     if (!incoming) return;
 
-    // Prime the sink inside the user gesture. play() on an element with
-    // srcObject === null is a no-op that returns a rejected promise, but
-    // it also claims the element into the "user-activated" state, which
-    // lets the real playback start when the first track lands.
     if (audioSinkRef.current) {
       audioSinkRef.current.play().catch(() => {});
     }
@@ -982,8 +960,6 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
       });
       pendingRemoteOfferRef.current = null;
     } else {
-      // The offer hasn't arrived yet. handleSignalMessage will pick it up
-      // when it does and drive the answer from there.
       console.warn('[Call] No pending offer at accept time — awaiting offer signal');
     }
   }, [
@@ -1137,7 +1113,6 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
     const cameraTrack = localStreamRef.current?.getVideoTracks()[0];
 
     if (sender && cameraTrack) {
-      // Restore the camera track on the existing sender.
       void sender.replaceTrack(cameraTrack).catch((err) => {
         console.warn('[Call] Failed to restore camera track:', err);
       });
@@ -1177,14 +1152,11 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
         return;
       }
 
-      // Prefer replacing the existing video sender's track (no renegotiation
-      // needed and m-lines stay untouched — the working audio path is safe).
       const sender = pc.getSenders().find((s) => s.track?.kind === 'video');
 
       if (sender) {
         await sender.replaceTrack(displayTrack);
       } else {
-        // No video sender yet (audio-only call). Add the track and renegotiate.
         pc.addTrack(displayTrack, displayStream);
         const offer = await pc.createOffer();
         await pc.setLocalDescription(offer);
@@ -1201,12 +1173,10 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
       screenStreamRef.current = displayStream;
       setIsScreenSharing(true);
 
-      // Auto-stop when the user clicks the browser's "Stop sharing" button.
       displayTrack.addEventListener('ended', () => {
         stopScreenShare();
       });
     } catch (err) {
-      // User cancelled the picker, or the browser refused. Not fatal.
       console.warn('[Call] Screen share cancelled or failed:', err);
     }
   }, [stopScreenShare]);
@@ -1245,7 +1215,6 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
       const replyToPeer = activePeerIdRef.current ?? payload.senderId;
 
       if (messageData.type === 'offer' && messageData.sdp) {
-        // Glare guard: only accept an offer when we're in the stable state.
         if (pc && pc.signalingState !== 'stable') {
           console.warn(
             '[Call] glare — dropping offer in signaling state:',
@@ -1279,7 +1248,6 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
           pendingRemoteOfferRef.current = description;
         }
       } else if (messageData.type === 'answer' && messageData.sdp) {
-        // Only accept an answer when we actually sent an offer.
         if (!pc || pc.signalingState !== 'have-local-offer') {
           console.warn(
             '[Call] ignoring answer — signaling state:',
@@ -1366,8 +1334,6 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
       unsubSignal();
       unsubEnded();
     };
-    // Subscriptions must be installed exactly once for the provider lifetime.
-    // All live values are read from refs to avoid stale-closure bugs.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
