@@ -22,11 +22,7 @@ export interface AuthContextType {
   token: string | null;
   loading: boolean;
   isAuthenticated: boolean;
-  login: (
-    identifier: string,
-    password: string,
-    rememberMe?: boolean,
-  ) => Promise<UserProfileDto>;
+  login: (identifier: string, password: string) => Promise<UserProfileDto>;
   register: (dto: RegisterDto) => Promise<string>;
   logout: () => Promise<void>;
   refreshUser: () => Promise<UserProfileDto | null>;
@@ -84,7 +80,6 @@ function AuthProviderComponent({ children }: AuthProviderProps) {
     }
   }, [clearAuthState, startSignalR]);
 
-  // Bootstrap: hydrate from stored token on mount
   useEffect(() => {
     let isMounted = true;
 
@@ -123,11 +118,7 @@ function AuthProviderComponent({ children }: AuthProviderProps) {
   }, [clearAuthState, startSignalR, stopSignalR]);
 
   const login = useCallback(
-    async (
-      identifier: string,
-      password: string,
-      rememberMe: boolean = true,
-    ): Promise<UserProfileDto> => {
+    async (identifier: string, password: string): Promise<UserProfileDto> => {
       const trimmed = identifier.trim();
 
       const loginResponse = await authService.login({
@@ -139,8 +130,7 @@ function AuthProviderComponent({ children }: AuthProviderProps) {
         throw new Error('Authentication succeeded but no token was returned.');
       }
 
-      // ← the only difference between remember-on and remember-off
-      setAccessToken(loginResponse.token, rememberMe ? 'local' : 'session');
+      setAccessToken(loginResponse.token);
       setTokenState(loginResponse.token);
 
       const profile = await apiService.getMyProfile();
@@ -154,8 +144,7 @@ function AuthProviderComponent({ children }: AuthProviderProps) {
 
   const hydrateFromToken = useCallback(
     async (incomingToken: string): Promise<UserProfileDto | null> => {
-      // Google / external sign-ins are always "remember me"
-      setAccessToken(incomingToken, 'local');
+      setAccessToken(incomingToken);
       setTokenState(incomingToken);
       try {
         const profile = await apiService.getMyProfile();

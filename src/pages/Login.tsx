@@ -20,7 +20,6 @@ import {
   AlertCircle,
   AlertTriangle,
   AtSign,
-  Check,
   Clock,
   KeyRound,
   Lock,
@@ -292,7 +291,6 @@ function Login(): React.JSX.Element {
 
   const [identifier, setIdentifier] = useState('');
   const [password, setPassword] = useState('');
-  const [rememberMe, setRememberMe] = useState(true);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<AuthError | null>(null);
   const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
@@ -363,7 +361,7 @@ function Login(): React.JSX.Element {
     setRetryCountdown(null);
 
     try {
-      await login(parsed.normalized, password, rememberMe);
+      await login(parsed.normalized, password);
       navigate('/app');
     } catch (err) {
       const authErr = toAuthError(err, 'Invalid credentials.');
@@ -382,7 +380,7 @@ function Login(): React.JSX.Element {
     } finally {
       setLoading(false);
     }
-  }, [identifier, password, rememberMe, loading, login, navigate, validate, focusFirstError]);
+  }, [identifier, password, loading, login, navigate, validate, focusFirstError]);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -501,31 +499,6 @@ function Login(): React.JSX.Element {
                 Forgot password?
               </Link>
             </div>
-          </motion.div>
-
-          {/* Remember me */}
-          <motion.div {...stagger(0.21)} className="flex items-center gap-2 -mt-1">
-            <button
-              type="button"
-              role="checkbox"
-              aria-checked={rememberMe}
-              onClick={() => setRememberMe((v) => !v)}
-              className={`w-4 h-4 rounded border-[1.5px] shrink-0 grid place-items-center transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-[#B45309]/50 ${
-                rememberMe
-                  ? 'bg-[#B45309] border-[#B45309]'
-                  : 'bg-transparent border-[rgba(237,229,212,0.25)] hover:border-[rgba(237,229,212,0.4)]'
-              }`}
-            >
-              {rememberMe && (
-                <Check className="w-3 h-3 text-white" strokeWidth={3} />
-              )}
-            </button>
-            <label
-              onClick={() => setRememberMe((v) => !v)}
-              className="text-[12px] text-[#A8A29E] cursor-pointer select-none"
-            >
-              Keep me signed in
-            </label>
           </motion.div>
 
           <AnimatePresence initial={false}>

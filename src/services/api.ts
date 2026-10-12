@@ -38,37 +38,18 @@ export const TOKEN_KEY = 'orbital.token';
 export const MAX_FILE_SIZE = 25 * 1024 * 1024; // 25 MB ceiling
 
 /* ────────────────────────────────────────────────────────── */
-/* Dual-storage access token                                  */
-/*   localStorage   → survives browser close (remember me)    */
-/*   sessionStorage → cleared on browser close                */
+/* Access token — stored in localStorage only                  */
 /* ────────────────────────────────────────────────────────── */
 
 export function getAccessToken(): string | null {
   if (typeof window === 'undefined') return null;
-  return (
-    localStorage.getItem(TOKEN_KEY) ?? sessionStorage.getItem(TOKEN_KEY)
-  );
+  return localStorage.getItem(TOKEN_KEY);
 }
 
-export function setAccessToken(
-  token: string | null,
-  persist: 'local' | 'session' = 'local',
-): void {
+export function setAccessToken(token: string | null): void {
   if (typeof window === 'undefined') return;
-
-  if (token === null) {
-    localStorage.removeItem(TOKEN_KEY);
-    sessionStorage.removeItem(TOKEN_KEY);
-    return;
-  }
-
-  if (persist === 'local') {
-    localStorage.setItem(TOKEN_KEY, token);
-    sessionStorage.removeItem(TOKEN_KEY);
-  } else {
-    sessionStorage.setItem(TOKEN_KEY, token);
-    localStorage.removeItem(TOKEN_KEY);
-  }
+  if (token) localStorage.setItem(TOKEN_KEY, token);
+  else localStorage.removeItem(TOKEN_KEY);
 }
 
 /* ────────────────────────────────────────────────────────── */
@@ -95,13 +76,7 @@ export async function refreshAuthToken(): Promise<string | null> {
       {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
-        body: JSON.stringify({
-          refreshToken:
-            typeof window !== 'undefined'
-              ? localStorage.getItem('orbital.refreshToken')
-              : null,
-        }),
+        body: JSON.stringify({}),
       },
     );
 
@@ -110,16 +85,9 @@ export async function refreshAuthToken(): Promise<string | null> {
     const data = (await res.json()) as {
       token?: string;
       accessToken?: string;
-      refreshToken?: string;
     };
     const newToken = data.token ?? data.accessToken ?? null;
-    if (newToken) {
-      const wasLocal = localStorage.getItem(TOKEN_KEY) !== null;
-      setAccessToken(newToken, wasLocal ? 'local' : 'session');
-    }
-    if (data.refreshToken && typeof window !== 'undefined') {
-      localStorage.setItem('orbital.refreshToken', data.refreshToken);
-    }
+    if (newToken) setAccessToken(newToken);
     return newToken ?? current;
   } catch {
     return current;
@@ -198,7 +166,6 @@ async function request<T>(endpoint: string, config: RequestConfig = {}): Promise
   }
 
   const response = await fetch(url, {
-    credentials: 'include',
     headers: requestHeaders,
     ...customOptions,
   });
@@ -252,7 +219,6 @@ const apiService = {
   validateFileSize,
   formatFileSize,
 
-  // 1. Auth: Register returns empty body (200 OK)
   async register(dto: RegisterDto): Promise<void> {
     await request<void>('/api/Auth/register', {
       method: 'POST',
@@ -266,8 +232,6 @@ const apiService = {
     });
   },
 
-  // 2. Auth: Login returns { token }
-  //    Persisting is left to AuthContext so it controls 'local' vs 'session'.
   async login(dto: LoginDto): Promise<LoginResponseDto> {
     return request<LoginResponseDto>('/api/Auth/login', {
       method: 'POST',
@@ -280,15 +244,11 @@ const apiService = {
   },
 
   async refresh(refreshToken?: string): Promise<LoginResponseDto> {
-    const wasLocal =
-      typeof window !== 'undefined' && localStorage.getItem(TOKEN_KEY) !== null;
     const result = await request<LoginResponseDto>('/api/Auth/refresh', {
       method: 'POST',
       body: JSON.stringify({ refreshToken }),
     });
-    if (result?.token) {
-      setAccessToken(result.token, wasLocal ? 'local' : 'session');
-    }
+    if (result?.token) setAccessToken(result.token);
     return result;
   },
 
@@ -339,7 +299,6 @@ const apiService = {
     });
   },
 
-  // 3. User: Profile fetched from /api/User/profile (NOT /api/Auth/me)
   async getMyProfile(): Promise<UserProfileDto> {
     return request<UserProfileDto>('/api/User/profile', { method: 'GET' });
   },
@@ -358,7 +317,6 @@ const apiService = {
     });
   },
 
-  // 4. Friendship Endpoints
   async getFriends(): Promise<FriendDto[]> {
     return request<FriendDto[]>('/api/Friendship/list', { method: 'GET' });
   },
@@ -410,7 +368,6 @@ const apiService = {
     );
   },
 
-  // 5. Direct Message Endpoints
   async getDmHistory(
     targetUserId: string,
     take = 50,
@@ -440,7 +397,7 @@ const apiService = {
         { method: 'POST' },
       );
     } catch {
-      // Read receipt endpoint may not be mounted; ignore silently
+      /* ignore */
     }
   },
 
@@ -458,7 +415,6 @@ const apiService = {
     );
   },
 
-  // 6. Group Endpoints
   async getMyGroups(): Promise<GroupDto[]> {
     return request<GroupDto[]>('/api/Group/my-groups', { method: 'GET' });
   },
@@ -518,7 +474,6 @@ const apiService = {
     await request<void>(`/api/Group/${groupId}`, { method: 'DELETE' });
   },
 
-  // 7. Call Endpoints
   async getIceServers(): Promise<IceServerConfigDto[]> {
     try {
       const result = await request<IceServerConfigDto | IceServerConfigDto[]>(
@@ -530,7 +485,7 @@ const apiService = {
         return [result as IceServerConfigDto];
       }
     } catch {
-      // fall through to STUN fallback
+      /* fall through */
     }
     return [
       {
