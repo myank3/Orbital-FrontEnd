@@ -23,6 +23,7 @@ import {
   FriendDto,
 } from '../types/api';
 import { Avatar } from './Avatar';
+import { UserProfileModal } from './UserProfileModal';
 import { validateFileSize } from '../services/upload';
 import {
   Plus,
@@ -86,12 +87,14 @@ interface GroupMessageItemProps {
   message: GroupMessageDto;
   isMe: boolean;
   grouped: boolean;
+  onRequestProfile: (userId: string) => void;
 }
 
 const GroupMessageItem = React.memo(function GroupMessageItem({
   message,
   isMe,
   grouped,
+  onRequestProfile,
 }: GroupMessageItemProps): React.JSX.Element {
   const hasMedia = Boolean(message.mediaUrl);
 
@@ -103,11 +106,21 @@ const GroupMessageItem = React.memo(function GroupMessageItem({
     >
       <div className="w-9 shrink-0 pt-0.5">
         {!grouped ? (
-          <Avatar
-            name={message.senderDisplayName || 'User'}
-            src={message.senderAvatarUrl}
-            size="sm"
-          />
+          <button
+            type="button"
+            onClick={() => {
+              if (isMe) return;
+              onRequestProfile(message.senderId);
+            }}
+            className="rounded-full focus:outline-none focus-visible:ring-2 focus-visible:ring-[#D97706]/50"
+            aria-label={`View ${message.senderDisplayName}'s profile`}
+          >
+            <Avatar
+              name={message.senderDisplayName || 'User'}
+              src={message.senderAvatarUrl}
+              size="sm"
+            />
+          </button>
         ) : (
           <span className="block w-8 h-8" aria-hidden />
         )}
@@ -199,6 +212,7 @@ interface GroupInfoModalProps {
   onDelete: () => Promise<void>;
   onRemoveMember: (userId: string) => Promise<void>;
   onAddMember: (userId: string) => Promise<void>;
+  onViewProfile: (userId: string) => void;
 }
 
 function GroupInfoModal({
@@ -210,6 +224,7 @@ function GroupInfoModal({
   onDelete,
   onRemoveMember,
   onAddMember,
+  onViewProfile,
 }: GroupInfoModalProps) {
   const [confirmAction, setConfirmAction] = useState<GroupInfoAction>(null);
   const [pendingRemoveId, setPendingRemoveId] = useState<string | null>(null);
@@ -464,7 +479,14 @@ function GroupInfoModal({
                     const isMe = m.id === currentUserId;
                     return (
                       <div key={m.id} className="px-5 py-2.5 flex items-center gap-3">
-                        <Avatar name={m.displayName} src={m.avatarUrl} size="sm" />
+                        <button
+                          type="button"
+                          onClick={() => onViewProfile(m.id)}
+                          className="rounded-full focus:outline-none focus-visible:ring-2 focus-visible:ring-[#D97706]/50 shrink-0"
+                          aria-label={`View ${m.displayName}'s profile`}
+                        >
+                          <Avatar name={m.displayName} src={m.avatarUrl} size="sm" />
+                        </button>
                         <div className="min-w-0 flex-1">
                           <p className="text-[13px] text-[#EDE5D4] truncate">
                             {m.displayName}
@@ -638,12 +660,12 @@ export default function GroupPane(): React.JSX.Element {
   const [isSending, setIsSending] = useState<boolean>(false);
 
   const [infoOpen, setInfoOpen] = useState(false);
+  const [profileModalUserId, setProfileModalUserId] = useState<string | null>(null);
 
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
 
-  /* Typing indicators */
   const { onType: onGroupType, stop: stopGroupTyping } = useGroupTypingEmitter(activeGroupId);
   const typingUsers = useGroupTypingReceiver(activeGroupId, user?.id);
 
@@ -779,10 +801,8 @@ export default function GroupPane(): React.JSX.Element {
         mediaType = validation.mediaType;
       }
 
-      // ── Send via SignalR hub so the message is broadcast to all
-      //    group members in real time (via ReceiveGroupMessage).
-      //    Do NOT add to local state here — the incoming hub event
-      //    will append it (with dedup on message ID).
+      // Send via SignalR hub so every group member receives it in real time
+      // through the `ReceiveGroupMessage` event. The listener above appends it.
       await signalRService.sendGroupMessage({
         groupId: activeGroupId,
         content: inputContent.trim(),
@@ -1069,6 +1089,7 @@ export default function GroupPane(): React.JSX.Element {
                       message={item.message}
                       isMe={item.message.senderId === user?.id}
                       grouped={item.grouped}
+                      onRequestProfile={setProfileModalUserId}
                     />
                   );
                 })
@@ -1078,7 +1099,6 @@ export default function GroupPane(): React.JSX.Element {
 
             {/* Composer */}
             <div className="px-3 sm:px-4 pb-3 sm:pb-4 border-t border-white/[0.05] bg-[#0F0D0A]">
-              {/* Typing indicator */}
               <div className="h-6 flex items-center px-1">
                 <AnimatePresence mode="wait">
                   {typingLabel && (
@@ -1192,10 +1212,15 @@ export default function GroupPane(): React.JSX.Element {
           onDelete={handleDeleteGroup}
           onRemoveMember={handleRemoveMember}
           onAddMember={handleAddMember}
+          onViewProfile={setProfileModalUserId}
         />
       )}
 
-      {/* Create Channel modal */}
+      <UserProfileModal
+        userId={profileModalUserId}
+        onClose={() => setProfileModalUserId(null)}
+      />
+
       <AnimatePresence>
         {createModalOpen && (
           <motion.div

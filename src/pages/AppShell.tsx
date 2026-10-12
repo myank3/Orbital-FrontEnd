@@ -22,6 +22,7 @@ import {
   PhoneOff,
   Menu,
   X,
+  Orbit,
 } from 'lucide-react';
 
 interface NavItem {
@@ -101,6 +102,7 @@ function AppShell(): React.JSX.Element {
 
   /* ─── Nav grouping ───────────────────────────────────── */
   const primaryNav: NavItem[] = [
+    { to: '/app/orbit', label: 'Orbit', icon: Orbit },
     { to: '/app/dm', label: 'Messages', icon: MessageSquare },
     { to: '/app/groups', label: 'Groups', icon: Users },
     { to: '/app/friends', label: 'Friends', icon: UserCheck },

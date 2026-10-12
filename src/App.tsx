@@ -34,6 +34,7 @@ import FriendsPane from './components/FriendsPane';
 import SettingsPane from './components/SettingsPane';
 import CallsPane from './components/CallsPane';
 import NotificationsPane from './components/NotificationsPane';
+import OrbitView from './pages/OrbitView';
 
 function ProtectedRoute({ children }: { children: ReactElement }) {
   const { isAuthenticated, loading } = useAuth();
@@ -103,7 +104,8 @@ export default function App() {
                 </ProtectedRoute>
               }
             >
-              <Route index element={<Navigate to="/app/dm" replace />} />
+              <Route index element={<Navigate to="/app/orbit" replace />} />
+              <Route path="orbit" element={<OrbitView />} />
               <Route path="dm" element={<DirectMessagePane />} />
               <Route path="dm/:userId" element={<DirectMessagePane />} />
               <Route path="groups" element={<GroupPane />} />

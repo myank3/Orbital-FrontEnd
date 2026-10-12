@@ -20,7 +20,7 @@ import { useCall } from '../context/CallContext';
 import {
   useDmTypingEmitter,
   useDmTypingReceiver,
-} from '../hooks/useTypingIndicator'; // Adjust path if needed
+} from '../hooks/useTypingIndicator';
 import {
   CallType,
   DirectMessageDto,
@@ -29,6 +29,7 @@ import {
   UserProfileDto,
 } from '../types/api';
 import { Avatar } from './Avatar';
+import { UserProfileModal } from './UserProfileModal';
 import { validateFileSize, formatFileSize } from '../services/upload';
 import {
   Phone,
@@ -101,6 +102,7 @@ interface MessageRowProps {
   grouped: boolean;
   isLastOfGroup: boolean;
   onRequestDelete: (m: DirectMessageDto) => void;
+  onRequestProfile: (userId: string) => void;
 }
 
 const MessageRow = React.memo(function MessageRow({
@@ -111,6 +113,7 @@ const MessageRow = React.memo(function MessageRow({
   grouped,
   isLastOfGroup,
   onRequestDelete,
+  onRequestProfile,
 }: MessageRowProps) {
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement | null>(null);
@@ -155,7 +158,17 @@ const MessageRow = React.memo(function MessageRow({
     >
       <div className="w-9 shrink-0 pt-0.5">
         {!grouped ? (
-          <Avatar name={senderName} src={senderAvatar} size="sm" />
+          <button
+            type="button"
+            onClick={() => {
+              if (isMe) return;
+              onRequestProfile(message.senderId);
+            }}
+            className="rounded-full focus:outline-none focus-visible:ring-2 focus-visible:ring-[#D97706]/50"
+            aria-label={`View ${senderName}'s profile`}
+          >
+            <Avatar name={senderName} src={senderAvatar} size="sm" />
+          </button>
         ) : (
           <span className="block w-8 h-8" aria-hidden />
         )}
@@ -464,7 +477,6 @@ function DirectMessagePane(): React.JSX.Element {
   const { initiateCall, incomingCall, acceptCall, rejectCall } = useCall();
   const reduceMotion = useReducedMotion();
 
-  // Typing hooks
   const { onType, stop: stopTyping } = useDmTypingEmitter(userId);
   const isPeerTyping = useDmTypingReceiver(userId);
 
@@ -483,8 +495,8 @@ function DirectMessagePane(): React.JSX.Element {
 
   const [pendingDeleteId, setPendingDeleteId] = useState<string | number | null>(null);
   const [infoOpen, setInfoOpen] = useState(false);
+  const [profileModalUserId, setProfileModalUserId] = useState<string | null>(null);
 
-  // Auto-hide composer state
   const [composerVisible, setComposerVisible] = useState(true);
   const [showJumpToLatest, setShowJumpToLatest] = useState(false);
 
@@ -645,7 +657,6 @@ function DirectMessagePane(): React.JSX.Element {
     return () => { unsub(); };
   }, [userId, user?.id]);
 
-  // Keep scroll pinned to bottom if user is close to bottom when peer begins typing
   useEffect(() => {
     if (isPeerTyping && messagesContainerRef.current) {
       const el = messagesContainerRef.current;
@@ -775,7 +786,6 @@ function DirectMessagePane(): React.JSX.Element {
     setMessages([]);
   };
 
-  /* Auto-hide scroll logic */
   const handleMessagesScroll = (e: React.UIEvent<HTMLDivElement>) => {
     const el = e.currentTarget;
     const scrollTop = el.scrollTop;
@@ -807,7 +817,6 @@ function DirectMessagePane(): React.JSX.Element {
     setShowJumpToLatest(false);
   };
 
-  /* Grouping */
   const grouped = useMemo(() => {
     type Item =
       | { type: 'date'; key: string; label: string }
@@ -857,7 +866,7 @@ function DirectMessagePane(): React.JSX.Element {
 
   return (
     <div className="flex h-full w-full bg-[#0B0A08] text-[#EDE5D4] overflow-hidden">
-      {/* ─── LEFT: conversation list ────────────────────── */}
+      {/* LEFT: conversation list */}
       <div
         className={`${
           hasActiveChat ? 'hidden md:flex' : 'flex'
@@ -927,7 +936,7 @@ function DirectMessagePane(): React.JSX.Element {
         </div>
       </div>
 
-      {/* ─── RIGHT: chat ─────────────────────────────────── */}
+      {/* RIGHT: chat */}
       <div
         className={`${
           hasActiveChat ? 'flex' : 'hidden md:flex'
@@ -935,7 +944,6 @@ function DirectMessagePane(): React.JSX.Element {
       >
         {userId && targetUser ? (
           <>
-            {/* Header */}
             <div className="h-16 px-3 sm:px-5 border-b border-white/[0.05] flex items-center justify-between shrink-0 gap-2">
               <div className="flex items-center gap-2 sm:gap-3 min-w-0">
                 <button
@@ -946,12 +954,20 @@ function DirectMessagePane(): React.JSX.Element {
                   <ChevronLeft className="w-[18px] h-[18px]" />
                 </button>
 
-                <Avatar
-                  name={targetUser.displayName}
-                  src={targetUser.avatarUrl}
-                  size="md"
-                  isOnline={isTargetOnline}
-                />
+                <button
+                  type="button"
+                  onClick={() => setProfileModalUserId(targetUser.id)}
+                  className="shrink-0 rounded-full focus:outline-none focus-visible:ring-2 focus-visible:ring-[#D97706]/50"
+                  aria-label={`View ${targetUser.displayName}'s profile`}
+                >
+                  <Avatar
+                    name={targetUser.displayName}
+                    src={targetUser.avatarUrl}
+                    size="md"
+                    isOnline={isTargetOnline}
+                  />
+                </button>
+
                 <div className="min-w-0">
                   <h3 className="text-[14px] sm:text-[14.5px] font-semibold text-[#EDE5D4] truncate tracking-tight">
                     {targetUser.displayName}
@@ -996,7 +1012,6 @@ function DirectMessagePane(): React.JSX.Element {
               </div>
             </div>
 
-            {/* Incoming call banner */}
             {incomingFromThisUser && (
               <motion.div
                 initial={reduceMotion ? false : { opacity: 0, y: -8 }}
@@ -1040,7 +1055,6 @@ function DirectMessagePane(): React.JSX.Element {
               </motion.div>
             )}
 
-            {/* Friendship banner */}
             {!isConfirmedFriend && (
               <div className="shrink-0 px-4 sm:px-5 py-3 bg-[#D97706]/[0.06] border-b border-[#D97706]/20 flex flex-wrap items-center justify-between gap-3 text-[12.5px]">
                 <div className="flex items-center gap-2 text-[#A8A29E] min-w-0">
@@ -1062,7 +1076,6 @@ function DirectMessagePane(): React.JSX.Element {
               </div>
             )}
 
-            {/* Messages */}
             <div
               ref={messagesContainerRef}
               onScroll={handleMessagesScroll}
@@ -1124,12 +1137,12 @@ function DirectMessagePane(): React.JSX.Element {
                       grouped={item.grouped}
                       isLastOfGroup={isLastOfGroup.get(item.key) ?? true}
                       onRequestDelete={handleRequestDelete}
+                      onRequestProfile={setProfileModalUserId}
                     />
                   );
                 })
               )}
 
-              {/* Typing indicator bubble */}
               <AnimatePresence>
                 {isPeerTyping && (
                   <motion.div
@@ -1158,7 +1171,6 @@ function DirectMessagePane(): React.JSX.Element {
               <div ref={messagesEndRef} />
             </div>
 
-            {/* Jump to latest button */}
             <AnimatePresence>
               {showJumpToLatest && (
                 <motion.button
@@ -1177,7 +1189,6 @@ function DirectMessagePane(): React.JSX.Element {
               )}
             </AnimatePresence>
 
-            {/* Composer */}
             <motion.div
               initial={false}
               animate={{
@@ -1324,7 +1335,6 @@ function DirectMessagePane(): React.JSX.Element {
         )}
       </div>
 
-      {/* ─── Delete confirmation modal ──────────────────── */}
       <AnimatePresence>
         {pendingDeleteId != null && (
           <motion.div
@@ -1370,7 +1380,6 @@ function DirectMessagePane(): React.JSX.Element {
         )}
       </AnimatePresence>
 
-      {/* ─── Info modal ─────────────────────────────────── */}
       {targetUser && (
         <InfoModal
           open={infoOpen}
@@ -1381,6 +1390,11 @@ function DirectMessagePane(): React.JSX.Element {
           onClear={handleClearConversation}
         />
       )}
+
+      <UserProfileModal
+        userId={profileModalUserId}
+        onClose={() => setProfileModalUserId(null)}
+      />
     </div>
   );
 }
