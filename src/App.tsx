@@ -49,7 +49,13 @@ function ProtectedRoute({ children }: { children: ReactElement }) {
   }
 
   if (!isAuthenticated) return <Navigate to="/login" replace />;
-  return children;
+
+  return (
+    <>
+      <ConnectionBanner />
+      {children}
+    </>
+  );
 }
 
 /**
@@ -83,7 +89,6 @@ export default function App() {
     <BrowserRouter>
       <AuthProvider>
         <CallProvider>
-          <ConnectionBanner />
           <ScrollToTop />
           <TokenInterceptor />
           <Routes>
