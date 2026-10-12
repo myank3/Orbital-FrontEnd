@@ -76,6 +76,7 @@ export async function refreshAuthToken(): Promise<string | null> {
       {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',        // ← sends refresh cookie cross-domain
         body: JSON.stringify({}),
       },
     );
@@ -167,6 +168,7 @@ async function request<T>(endpoint: string, config: RequestConfig = {}): Promise
 
   const response = await fetch(url, {
     headers: requestHeaders,
+    credentials: 'include',          // ← sends refresh cookie cross-domain
     ...customOptions,
   });
 
@@ -402,20 +404,20 @@ const apiService = {
   },
 
   /** Delete for me — hides the message from your own view only. */
-async deleteDm(messageId: string | number): Promise<void> {
-  await request<void>(
-    `/api/DirectMessage/${encodeURIComponent(String(messageId))}`,
-    { method: 'DELETE' },
-  );
-},
+  async deleteDm(messageId: string | number): Promise<void> {
+    await request<void>(
+      `/api/DirectMessage/${encodeURIComponent(String(messageId))}`,
+      { method: 'DELETE' },
+    );
+  },
 
-/** Delete for everyone — only works on messages you sent. */
-async deleteDmForEveryone(messageId: string | number): Promise<void> {
-  await request<void>(
-    `/api/DirectMessage/${encodeURIComponent(String(messageId))}/everyone`,
-    { method: 'DELETE' },
-  );
-},
+  /** Delete for everyone — only works on messages you sent. */
+  async deleteDmForEveryone(messageId: string | number): Promise<void> {
+    await request<void>(
+      `/api/DirectMessage/${encodeURIComponent(String(messageId))}/everyone`,
+      { method: 'DELETE' },
+    );
+  },
 
   async clearConversation(targetUserId: string): Promise<void> {
     await request<void>(
