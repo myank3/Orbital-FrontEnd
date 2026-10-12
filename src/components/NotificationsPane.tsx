@@ -16,8 +16,13 @@ import {
   Play,
   Inbox,
   ArrowRight,
+  Trash2,
+  CheckSquare,
+  Square,
+  AlertCircle,
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
+import { motion, AnimatePresence } from 'motion/react';
 import { apiService } from '../services/api';
 import { Avatar } from './Avatar';
 import {
@@ -35,7 +40,8 @@ import {
 type MediaKind = 'image' | 'video' | 'audio' | 'file';
 
 interface MediaItem {
-  id: string;
+  id: string;                 // UI key, e.g. `dm-123` or `grp-45`
+  rawId: string | number;     // the underlying message id, for delete calls
   url: string;
   kind: MediaKind;
   mediaType: number;
@@ -78,6 +84,13 @@ function NotificationsPane(): React.JSX.Element {
   const [query, setQuery] = useState('');
   const [preview, setPreview] = useState<MediaItem | null>(null);
 
+  /* Selection state */
+  const [selectionMode, setSelectionMode] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+
   /* ── Load every DM + group, collect media ─────────────── */
   useEffect(() => {
     let cancelled = false;
@@ -112,6 +125,7 @@ function NotificationsPane(): React.JSX.Element {
                   const isMe = m.senderId !== friend.userId;
                   collected.push({
                     id: `dm-${m.id}`,
+                    rawId: m.id,
                     url: m.mediaUrl,
                     kind,
                     mediaType: m.mediaType,
@@ -153,6 +167,7 @@ function NotificationsPane(): React.JSX.Element {
                   if (!kind) continue;
                   collected.push({
                     id: `grp-${m.id}`,
+                    rawId: m.id,
                     url: m.mediaUrl,
                     kind,
                     mediaType: m.mediaType,
@@ -220,6 +235,69 @@ function NotificationsPane(): React.JSX.Element {
     });
   }, [items, tab, query]);
 
+  /* Only DM items are selectable — no group-message delete API */
+  const selectableItems = useMemo(
+    () => filtered.filter((i) => i.contextKind === 'dm'),
+    [filtered],
+  );
+  const unselectableCount = filtered.length - selectableItems.length;
+
+  const allSelectableSelected =
+    selectableItems.length > 0 &&
+    selectableItems.every((i) => selectedIds.has(i.id));
+
+  const toggleSelect = (id: string) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const selectAll = () => setSelectedIds(new Set(selectableItems.map((i) => i.id)));
+  const deselectAll = () => setSelectedIds(new Set());
+
+  const exitSelection = () => {
+    setSelectionMode(false);
+    setSelectedIds(new Set());
+    setDeleteError(null);
+  };
+
+  const handleDelete = async () => {
+    setDeleting(true);
+    setDeleteError(null);
+
+    const targets = items.filter(
+      (i) => selectedIds.has(i.id) && i.contextKind === 'dm',
+    );
+
+    const results = await Promise.allSettled(
+      targets.map((t) => apiService.deleteDm(t.rawId)),
+    );
+
+    const succeededIds = new Set<string>();
+    results.forEach((r, i) => {
+      if (r.status === 'fulfilled') succeededIds.add(targets[i].id);
+    });
+
+    const failures = results.filter((r) => r.status === 'rejected').length;
+
+    setItems((prev) => prev.filter((i) => !succeededIds.has(i.id)));
+    setSelectedIds(new Set());
+    setDeleting(false);
+    setConfirmDeleteOpen(false);
+
+    if (failures > 0) {
+      setDeleteError(
+        `${failures} item${failures === 1 ? '' : 's'} could not be deleted.`,
+      );
+      // Keep selection mode on so user sees what failed
+    } else {
+      setSelectionMode(false);
+    }
+  };
+
   return (
     <div className="h-full flex flex-col bg-[#0B0A08] text-[#EDE5D4] overflow-hidden">
       {/* Header */}
@@ -237,9 +315,20 @@ function NotificationsPane(): React.JSX.Element {
               : `${counts.all} item${counts.all === 1 ? '' : 's'} across your chats`}
           </p>
         </div>
+
+        {!loading && items.length > 0 && !selectionMode && (
+          <button
+            onClick={() => setSelectionMode(true)}
+            className="shrink-0 h-9 px-3 rounded-lg bg-white/[0.04] hover:bg-white/[0.08] border border-white/[0.06] text-[12.5px] text-[#EDE5D4] font-medium inline-flex items-center gap-1.5 transition-colors"
+            title="Select items to delete"
+          >
+            <CheckSquare className="w-3.5 h-3.5" />
+            <span className="hidden sm:inline">Select</span>
+          </button>
+        )}
       </div>
 
-      {/* Tabs + search */}
+      {/* Tabs + search — always visible */}
       <div className="px-4 sm:px-6 py-3 border-b border-white/[0.05] flex flex-col sm:flex-row sm:items-center gap-3 shrink-0">
         <div className="flex items-center gap-1 overflow-x-auto">
           <Tab
@@ -299,6 +388,79 @@ function NotificationsPane(): React.JSX.Element {
         </div>
       </div>
 
+      {/* Selection toolbar */}
+      <AnimatePresence initial={false}>
+        {selectionMode && (
+          <motion.div
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: 'auto', opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={{ duration: 0.2, ease: [0.22, 1, 0.36, 1] }}
+            className="border-b border-white/[0.05] bg-[#0F0D0A] overflow-hidden shrink-0"
+          >
+            <div className="px-4 sm:px-6 py-3 flex items-center gap-2 flex-wrap">
+              <button
+                onClick={allSelectableSelected ? deselectAll : selectAll}
+                disabled={selectableItems.length === 0}
+                className="h-8 px-3 rounded-lg bg-white/[0.04] hover:bg-white/[0.08] disabled:opacity-40 text-[12.5px] text-[#EDE5D4] font-medium inline-flex items-center gap-1.5 transition-colors"
+              >
+                {allSelectableSelected ? (
+                  <Square className="w-3.5 h-3.5" />
+                ) : (
+                  <CheckSquare className="w-3.5 h-3.5" />
+                )}
+                <span>{allSelectableSelected ? 'Deselect all' : 'Select all'}</span>
+              </button>
+
+              <span className="text-[12.5px] text-[#A8A29E] tabular-nums">
+                <span className="text-[#EDE5D4] font-semibold">{selectedIds.size}</span>{' '}
+                selected
+              </span>
+
+              {unselectableCount > 0 && (
+                <span
+                  className="text-[11px] text-[#6B6259] hidden sm:inline"
+                  title="Group messages can't be deleted from this page"
+                >
+                  · {unselectableCount} group item
+                  {unselectableCount === 1 ? '' : 's'} not selectable
+                </span>
+              )}
+
+              <div className="flex-1" />
+
+              <button
+                onClick={exitSelection}
+                disabled={deleting}
+                className="h-8 px-3 rounded-lg text-[12.5px] text-[#A8A29E] hover:text-[#EDE5D4] disabled:opacity-40 transition-colors"
+              >
+                Cancel
+              </button>
+
+              <button
+                onClick={() => setConfirmDeleteOpen(true)}
+                disabled={selectedIds.size === 0 || deleting}
+                className="h-8 px-3 rounded-lg bg-[#B91C1C] hover:bg-[#991B1B] disabled:opacity-40 disabled:cursor-not-allowed text-white text-[12.5px] font-medium inline-flex items-center gap-1.5 transition-colors"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                <span>
+                  Delete{selectedIds.size > 0 ? ` (${selectedIds.size})` : ''}
+                </span>
+              </button>
+            </div>
+
+            {deleteError && (
+              <div className="px-4 sm:px-6 pb-3">
+                <p className="text-[11.5px] text-[#F87171] flex items-center gap-1.5">
+                  <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+                  <span>{deleteError}</span>
+                </p>
+              </div>
+            )}
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       {/* Body */}
       <div className="flex-1 overflow-y-auto px-4 sm:px-6 py-4">
         {error ? (
@@ -341,15 +503,86 @@ function NotificationsPane(): React.JSX.Element {
           </div>
         ) : (
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
-            {filtered.map((item) => (
-              <MediaTile key={item.id} item={item} onOpen={() => setPreview(item)} />
-            ))}
+            {filtered.map((item) => {
+              const selectable = item.contextKind === 'dm';
+              return (
+                <MediaTile
+                  key={item.id}
+                  item={item}
+                  selectionMode={selectionMode}
+                  selected={selectedIds.has(item.id)}
+                  selectable={selectable}
+                  onOpen={() => {
+                    if (selectionMode) {
+                      if (selectable) toggleSelect(item.id);
+                    } else {
+                      setPreview(item);
+                    }
+                  }}
+                  onToggle={() => selectable && toggleSelect(item.id)}
+                />
+              );
+            })}
           </div>
         )}
       </div>
 
       {/* Preview modal */}
       {preview && <PreviewModal item={preview} onClose={() => setPreview(null)} />}
+
+      {/* Delete confirmation */}
+      <AnimatePresence>
+        {confirmDeleteOpen && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.15 }}
+            className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4"
+            onClick={() => !deleting && setConfirmDeleteOpen(false)}
+          >
+            <motion.div
+              initial={{ scale: 0.96, opacity: 0, y: 6 }}
+              animate={{ scale: 1, opacity: 1, y: 0 }}
+              exit={{ scale: 0.96, opacity: 0, y: 6 }}
+              transition={{ type: 'spring', stiffness: 340, damping: 28 }}
+              onClick={(e) => e.stopPropagation()}
+              className="w-full max-w-sm rounded-2xl bg-[#1A1816] border border-white/[0.08] shadow-[0_24px_60px_-12px_rgba(0,0,0,0.95)] overflow-hidden"
+            >
+              <div className="p-5">
+                <div className="w-11 h-11 rounded-xl bg-[#B91C1C]/10 border border-[#B91C1C]/20 flex items-center justify-center mb-3">
+                  <Trash2 className="w-5 h-5 text-[#F87171]" />
+                </div>
+                <h3 className="text-[14.5px] font-semibold text-[#EDE5D4] mb-1.5">
+                  Delete {selectedIds.size} item{selectedIds.size === 1 ? '' : 's'}?
+                </h3>
+                <p className="text-[12.5px] text-[#A8A29E] leading-relaxed">
+                  The message{selectedIds.size === 1 ? '' : 's'} will be removed from
+                  your view. Media shared in group chats is not affected.
+                </p>
+              </div>
+
+              <div className="px-5 py-3 border-t border-white/[0.06] flex items-center justify-end gap-2">
+                <button
+                  onClick={() => setConfirmDeleteOpen(false)}
+                  disabled={deleting}
+                  className="h-9 px-4 rounded-lg bg-white/[0.04] hover:bg-white/[0.08] disabled:opacity-40 text-[12.5px] text-[#EDE5D4] transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={() => void handleDelete()}
+                  disabled={deleting}
+                  className="h-9 px-4 rounded-lg bg-[#B91C1C] hover:bg-[#991B1B] disabled:opacity-50 text-white text-[12.5px] font-medium inline-flex items-center gap-1.5 transition-colors"
+                >
+                  {deleting && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+                  <span>{deleting ? 'Deleting…' : 'Delete'}</span>
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }
@@ -391,7 +624,21 @@ function Tab({
 /* Tile                                                       */
 /* ────────────────────────────────────────────────────────── */
 
-function MediaTile({ item, onOpen }: { item: MediaItem; onOpen: () => void }) {
+function MediaTile({
+  item,
+  onOpen,
+  selectionMode,
+  selected,
+  selectable,
+  onToggle,
+}: {
+  item: MediaItem;
+  onOpen: () => void;
+  selectionMode: boolean;
+  selected: boolean;
+  selectable: boolean;
+  onToggle: () => void;
+}) {
   const KindIcon =
     item.kind === 'image'
       ? ImageIcon
@@ -401,10 +648,17 @@ function MediaTile({ item, onOpen }: { item: MediaItem; onOpen: () => void }) {
       ? Music
       : FileText;
 
+  const dimmed = selectionMode && !selectable;
+
   return (
     <button
       onClick={onOpen}
-      className="group relative aspect-square rounded-xl overflow-hidden bg-[#1A1816] border border-white/[0.06] hover:border-white/[0.14] transition-colors"
+      className={`group relative aspect-square rounded-xl overflow-hidden bg-[#1A1816] border transition-all duration-150 ${
+        selected
+          ? 'border-[#D97706] ring-2 ring-[#D97706]/40'
+          : 'border-white/[0.06] hover:border-white/[0.14]'
+      } ${dimmed ? 'opacity-40 cursor-not-allowed' : ''}`}
+      title={dimmed ? 'Group messages can\'t be deleted from here' : undefined}
     >
       {item.kind === 'image' ? (
         <img
@@ -440,17 +694,60 @@ function MediaTile({ item, onOpen }: { item: MediaItem; onOpen: () => void }) {
         <p className="text-[10px] text-white/60 truncate">{item.context}</p>
       </div>
 
-      <a
-        href={item.url}
-        target="_blank"
-        rel="noreferrer"
-        download
-        onClick={(e) => e.stopPropagation()}
-        className="absolute top-2 right-2 w-7 h-7 rounded-lg bg-black/60 backdrop-blur flex items-center justify-center text-white opacity-0 group-hover:opacity-100 transition-opacity"
-        title="Download"
-      >
-        <Download className="w-3.5 h-3.5" />
-      </a>
+      {/* Selection checkbox */}
+      {selectionMode && selectable && (
+        <div
+          role="checkbox"
+          aria-checked={selected}
+          onClick={(e) => {
+            e.stopPropagation();
+            onToggle();
+          }}
+          className={`absolute top-2 left-2 w-6 h-6 rounded-md border-2 flex items-center justify-center transition-all ${
+            selected
+              ? 'bg-[#D97706] border-[#D97706]'
+              : 'bg-black/50 border-white/70 backdrop-blur'
+          }`}
+        >
+          {selected && (
+            <svg
+              viewBox="0 0 16 16"
+              fill="none"
+              className="w-3.5 h-3.5 text-[#0F0D0A]"
+            >
+              <path
+                d="M3 8L6.5 11.5L13 5"
+                stroke="currentColor"
+                strokeWidth="2.5"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            </svg>
+          )}
+        </div>
+      )}
+
+      {/* Group label when unselectable and selecting */}
+      {selectionMode && !selectable && (
+        <span className="absolute top-2 left-2 px-2 py-0.5 rounded-md bg-black/60 backdrop-blur text-[9.5px] text-white/70 uppercase tracking-wider font-medium">
+          Group
+        </span>
+      )}
+
+      {/* Download (hidden in selection mode) */}
+      {!selectionMode && (
+        <a
+          href={item.url}
+          target="_blank"
+          rel="noreferrer"
+          download
+          onClick={(e) => e.stopPropagation()}
+          className="absolute top-2 right-2 w-7 h-7 rounded-lg bg-black/60 backdrop-blur flex items-center justify-center text-white opacity-0 group-hover:opacity-100 transition-opacity"
+          title="Download"
+        >
+          <Download className="w-3.5 h-3.5" />
+        </a>
+      )}
     </button>
   );
 }
