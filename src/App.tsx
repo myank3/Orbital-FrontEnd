@@ -37,6 +37,31 @@ import CallsPane from './components/CallsPane';
 import NotificationsPane from './components/NotificationsPane';
 import OrbitView from './pages/OrbitView';
 
+/**
+ * Blocks public pages (landing, login, register) when the user is
+ * already authenticated. Sends them to the app instead of showing
+ * a marketing page or an empty login form.
+ *
+ * Note: does NOT block /forgot-password, /reset-password, or the
+ * email confirmation routes — those need to remain reachable even
+ * while logged in (for secondary accounts, resets, etc.).
+ */
+function PublicOnlyRoute({ children }: { children: ReactElement }) {
+  const { isAuthenticated, loading } = useAuth();
+
+  if (loading) {
+    return (
+      <div className="h-screen w-screen flex items-center justify-center bg-[#0B0A08] text-[#6B6259] font-mono text-xs">
+        Loading…
+      </div>
+    );
+  }
+
+  if (isAuthenticated) return <Navigate to="/app" replace />;
+
+  return children;
+}
+
 function ProtectedRoute({ children }: { children: ReactElement }) {
   const { isAuthenticated, loading } = useAuth();
 
@@ -92,10 +117,33 @@ export default function App() {
           <ScrollToTop />
           <TokenInterceptor />
           <Routes>
-            {/* ── Public ───────────────────────────────── */}
-            <Route path="/" element={<Landing />} />
-            <Route path="/login" element={<Login />} />
-            <Route path="/register" element={<Register />} />
+            {/* ── Public (redirects to /app if logged in) ── */}
+            <Route
+              path="/"
+              element={
+                <PublicOnlyRoute>
+                  <Landing />
+                </PublicOnlyRoute>
+              }
+            />
+            <Route
+              path="/login"
+              element={
+                <PublicOnlyRoute>
+                  <Login />
+                </PublicOnlyRoute>
+              }
+            />
+            <Route
+              path="/register"
+              element={
+                <PublicOnlyRoute>
+                  <Register />
+                </PublicOnlyRoute>
+              }
+            />
+
+            {/* ── Public (always accessible) ───────────── */}
             <Route path="/forgot-password" element={<ForgotPassword />} />
             <Route path="/reset-password" element={<ResetPassword />} />
             <Route path="/confirm-email" element={<ConfirmEmail />} />
