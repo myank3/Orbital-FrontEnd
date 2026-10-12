@@ -50,6 +50,7 @@ import {
   ChevronLeft,
   ChevronDown,
   Trash2,
+  EyeOff,
   Info,
   UserMinus,
   Eraser,
@@ -70,9 +71,7 @@ function formatDayDivider(dateStr: string): string {
 
     if (diffDays === 0) return 'Today';
     if (diffDays === 1) return 'Yesterday';
-    if (diffDays < 7) {
-      return d.toLocaleDateString([], { weekday: 'long' });
-    }
+    if (diffDays < 7) return d.toLocaleDateString([], { weekday: 'long' });
     return d.toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' });
   } catch {
     return '';
@@ -101,7 +100,8 @@ interface MessageRowProps {
   senderAvatar?: string | null;
   grouped: boolean;
   isLastOfGroup: boolean;
-  onRequestDelete: (m: DirectMessageDto) => void;
+  onDeleteForMe: (m: DirectMessageDto) => void;
+  onDeleteForEveryone: (m: DirectMessageDto) => void;
   onRequestProfile: (userId: string) => void;
 }
 
@@ -112,7 +112,8 @@ const MessageRow = React.memo(function MessageRow({
   senderAvatar,
   grouped,
   isLastOfGroup,
-  onRequestDelete,
+  onDeleteForMe,
+  onDeleteForEveryone,
   onRequestProfile,
 }: MessageRowProps) {
   const [menuOpen, setMenuOpen] = useState(false);
@@ -131,7 +132,6 @@ const MessageRow = React.memo(function MessageRow({
   }, [menuOpen]);
 
   const onTouchStart = () => {
-    if (!isMe) return;
     longPressRef.current = window.setTimeout(() => setMenuOpen(true), 500);
   };
   const onTouchEnd = () => {
@@ -151,7 +151,6 @@ const MessageRow = React.memo(function MessageRow({
       onTouchStart={onTouchStart}
       onTouchEnd={onTouchEnd}
       onContextMenu={(e) => {
-        if (!isMe) return;
         e.preventDefault();
         setMenuOpen(true);
       }}
@@ -243,7 +242,7 @@ const MessageRow = React.memo(function MessageRow({
           </div>
 
           <AnimatePresence>
-            {menuOpen && isMe && (
+            {menuOpen && (
               <motion.div
                 ref={menuRef}
                 initial={{ opacity: 0, scale: 0.94, y: -4 }}
@@ -252,18 +251,31 @@ const MessageRow = React.memo(function MessageRow({
                 transition={{ duration: 0.14 }}
                 className={`absolute z-40 top-full mt-1 ${
                   isMe ? 'right-0' : 'left-0'
-                } min-w-[140px] rounded-xl bg-[#1A1816] border border-white/[0.08] shadow-[0_16px_40px_-10px_rgba(0,0,0,0.9)] overflow-hidden`}
+                } min-w-[190px] rounded-xl bg-[#1A1816] border border-white/[0.08] shadow-[0_16px_40px_-10px_rgba(0,0,0,0.9)] overflow-hidden`}
               >
                 <button
                   onClick={() => {
                     setMenuOpen(false);
-                    onRequestDelete(message);
+                    onDeleteForMe(message);
                   }}
-                  className="w-full flex items-center gap-2.5 px-3 py-2.5 text-[12.5px] text-[#F87171] hover:bg-[#B91C1C]/[0.10] transition-colors"
+                  className="w-full flex items-center gap-2.5 px-3 py-2.5 text-[12.5px] text-[#EDE5D4] hover:bg-white/[0.05] transition-colors"
                 >
-                  <Trash2 className="w-3.5 h-3.5" />
-                  <span>Delete</span>
+                  <EyeOff className="w-3.5 h-3.5" />
+                  <span>Delete for me</span>
                 </button>
+
+                {isMe && (
+                  <button
+                    onClick={() => {
+                      setMenuOpen(false);
+                      onDeleteForEveryone(message);
+                    }}
+                    className="w-full flex items-center gap-2.5 px-3 py-2.5 text-[12.5px] text-[#F87171] hover:bg-[#B91C1C]/[0.10] transition-colors border-t border-white/[0.04]"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                    <span>Delete for everyone</span>
+                  </button>
+                )}
               </motion.div>
             )}
           </AnimatePresence>
@@ -350,8 +362,8 @@ function InfoModal({
       cta: 'Unfriend',
     },
     clear: {
-      title: 'Clear conversation?',
-      body: 'All messages between you and this person will be permanently deleted for both sides.',
+      title: 'Clear this chat?',
+      body: `Messages will be hidden from your view only. ${targetUser.displayName} keeps their copy.`,
       cta: 'Clear',
     },
   };
@@ -406,7 +418,7 @@ function InfoModal({
                   className="w-full flex items-center gap-3 px-5 py-3.5 text-[13px] text-[#EDE5D4] hover:bg-white/[0.04] transition-colors text-left"
                 >
                   <Eraser className="w-4 h-4 text-[#A8A29E] shrink-0" />
-                  <span>Clear conversation</span>
+                  <span>Clear this chat</span>
                 </button>
                 <div className="w-full flex items-center gap-3 px-5 py-3.5 text-[13px] text-[#6B6259] cursor-not-allowed">
                   <Flag className="w-4 h-4 shrink-0" />
@@ -493,7 +505,9 @@ function DirectMessagePane(): React.JSX.Element {
   const [friendRequestStatus, setFriendRequestStatus] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
 
-  const [pendingDeleteId, setPendingDeleteId] = useState<string | number | null>(null);
+  const [pendingDeleteEveryoneId, setPendingDeleteEveryoneId] = useState<
+    string | number | null
+  >(null);
   const [infoOpen, setInfoOpen] = useState(false);
   const [profileModalUserId, setProfileModalUserId] = useState<string | null>(null);
 
@@ -758,20 +772,50 @@ function DirectMessagePane(): React.JSX.Element {
     }
   };
 
-  const handleRequestDelete = (m: DirectMessageDto) => {
-    setPendingDeleteId(m.id);
-  };
+  /* ── Delete handlers ─────────────────────────────────── */
 
-  const handleConfirmDelete = async () => {
-    if (pendingDeleteId == null) return;
+  const handleDeleteForMe = useCallback(async (m: DirectMessageDto) => {
+    setMessages((prev) => prev.filter((x) => x.id !== m.id));
     try {
-      setMessages((prev) => prev.filter((m) => m.id !== pendingDeleteId));
-      await apiService.deleteDm(pendingDeleteId);
-      setPendingDeleteId(null);
+      await apiService.deleteDm(m.id);
     } catch (err) {
+      setMessages((prev) =>
+        [...prev, m].sort(
+          (a, b) => new Date(a.sentAt).getTime() - new Date(b.sentAt).getTime(),
+        ),
+      );
       alert(`Delete failed: ${extractErrorMessage(err)}`);
     }
-  };
+  }, []);
+
+  const handleRequestDeleteForEveryone = useCallback((m: DirectMessageDto) => {
+    setPendingDeleteEveryoneId(m.id);
+  }, []);
+
+  const handleConfirmDeleteForEveryone = useCallback(async () => {
+    if (pendingDeleteEveryoneId == null) return;
+    const targetId = pendingDeleteEveryoneId;
+
+    setMessages((prev) => prev.filter((x) => x.id !== targetId));
+    setPendingDeleteEveryoneId(null);
+
+    try {
+      await apiService.deleteDmForEveryone(targetId);
+    } catch (err) {
+      if (userId) {
+        try {
+          const history = await apiService.getDmHistory(userId, 50);
+          const sorted = [...history].sort(
+            (a, b) => new Date(a.sentAt).getTime() - new Date(b.sentAt).getTime(),
+          );
+          setMessages(sorted);
+        } catch {
+          /* ignore */
+        }
+      }
+      alert(`Delete for everyone failed: ${extractErrorMessage(err)}`);
+    }
+  }, [pendingDeleteEveryoneId, userId]);
 
   const handleUnfriend = async () => {
     if (!userId) return;
@@ -1136,7 +1180,8 @@ function DirectMessagePane(): React.JSX.Element {
                       senderAvatar={isMe ? user?.avatarUrl : targetUser.avatarUrl}
                       grouped={item.grouped}
                       isLastOfGroup={isLastOfGroup.get(item.key) ?? true}
-                      onRequestDelete={handleRequestDelete}
+                      onDeleteForMe={handleDeleteForMe}
+                      onDeleteForEveryone={handleRequestDeleteForEveryone}
                       onRequestProfile={setProfileModalUserId}
                     />
                   );
@@ -1335,15 +1380,16 @@ function DirectMessagePane(): React.JSX.Element {
         )}
       </div>
 
+      {/* Delete-for-everyone confirmation modal */}
       <AnimatePresence>
-        {pendingDeleteId != null && (
+        {pendingDeleteEveryoneId != null && (
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             transition={{ duration: 0.15 }}
             className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4"
-            onClick={() => setPendingDeleteId(null)}
+            onClick={() => setPendingDeleteEveryoneId(null)}
           >
             <motion.div
               initial={{ scale: 0.96, opacity: 0, y: 6 }}
@@ -1355,24 +1401,25 @@ function DirectMessagePane(): React.JSX.Element {
             >
               <div className="p-5">
                 <h3 className="text-[14.5px] font-semibold text-[#EDE5D4] mb-1.5">
-                  Delete message?
+                  Delete for everyone?
                 </h3>
                 <p className="text-[12.5px] text-[#A8A29E] leading-relaxed">
-                  This will permanently remove the message for you. The other person may still see it in their chat.
+                  This message will be removed for both you and{' '}
+                  {targetUser?.displayName ?? 'the other person'}. Cannot be undone.
                 </p>
               </div>
               <div className="px-5 py-3 border-t border-white/[0.06] flex items-center justify-end gap-2">
                 <button
-                  onClick={() => setPendingDeleteId(null)}
+                  onClick={() => setPendingDeleteEveryoneId(null)}
                   className="h-9 px-4 rounded-lg bg-white/[0.04] hover:bg-white/[0.08] text-[12.5px] text-[#EDE5D4] transition-colors"
                 >
                   Cancel
                 </button>
                 <button
-                  onClick={() => void handleConfirmDelete()}
+                  onClick={() => void handleConfirmDeleteForEveryone()}
                   className="h-9 px-4 rounded-lg bg-[#B91C1C] hover:bg-[#991B1B] text-white text-[12.5px] font-medium transition-colors"
                 >
-                  Delete
+                  Delete for everyone
                 </button>
               </div>
             </motion.div>

@@ -401,12 +401,21 @@ const apiService = {
     }
   },
 
-  async deleteDm(messageId: string | number): Promise<void> {
-    await request<void>(
-      `/api/DirectMessage/${encodeURIComponent(String(messageId))}`,
-      { method: 'DELETE' },
-    );
-  },
+  /** Delete for me — hides the message from your own view only. */
+async deleteDm(messageId: string | number): Promise<void> {
+  await request<void>(
+    `/api/DirectMessage/${encodeURIComponent(String(messageId))}`,
+    { method: 'DELETE' },
+  );
+},
+
+/** Delete for everyone — only works on messages you sent. */
+async deleteDmForEveryone(messageId: string | number): Promise<void> {
+  await request<void>(
+    `/api/DirectMessage/${encodeURIComponent(String(messageId))}/everyone`,
+    { method: 'DELETE' },
+  );
+},
 
   async clearConversation(targetUserId: string): Promise<void> {
     await request<void>(
