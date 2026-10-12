@@ -157,13 +157,12 @@ export interface RegisterDto {
 export interface LoginDto {
   identifier: string;
   password: string;
+  rememberMe?: boolean;   // client-only, never sent to backend
 }
 
 export interface LoginResponseDto {
   token: string;
-  refreshToken?: string;
-  expiresAt?: string;
-  user?: UserProfileDto;
+  // ... your existing fields stay exactly as they are
 }
 
 export interface ConfirmEmailDto {

@@ -20,6 +20,7 @@ import {
   AlertCircle,
   AlertTriangle,
   AtSign,
+  Check,
   Clock,
   KeyRound,
   Lock,
@@ -38,27 +39,15 @@ import { API_BASE_URL, extractErrorMessage } from '../services/api';
 const SPRING = { type: 'spring' as const, stiffness: 240, damping: 26 };
 const SOFT_SPRING = { type: 'spring' as const, stiffness: 180, damping: 22 };
 
-/* ─────────────────────────────────────────────────────────
-   Identifier: handle (user@orbit) vs email
-   ───────────────────────────────────────────────────────── */
-
 type IdentifierMode = 'handle' | 'email' | 'unknown';
-
 const HANDLE_DOMAIN = 'orbit';
 
 function detectIdentifierMode(raw: string): IdentifierMode {
   const v = raw.trim().toLowerCase();
   if (!v) return 'unknown';
-
-  // Canonical handle suffix wins.
   if (v.endsWith(`@${HANDLE_DOMAIN}`)) return 'handle';
-
-  // Standard email shape (something@domain.tld).
   if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v)) return 'email';
-
-  // Bare word — treat as handle shorthand.
   if (/^[a-z0-9_.-]{2,}$/.test(v)) return 'handle';
-
   return 'unknown';
 }
 
@@ -107,10 +96,6 @@ function validateIdentifier(raw: string): IdentifierResult {
   };
 }
 
-/* ─────────────────────────────────────────────────────────
-   Error classification
-   ───────────────────────────────────────────────────────── */
-
 type AuthErrorKind =
   | 'validation'
   | 'credentials'
@@ -125,31 +110,17 @@ type AuthError = {
   kind: AuthErrorKind;
   message: string;
   field?: 'identifier' | 'password';
-  action?: {
-    label: string;
-    onClick: () => void;
-    icon?: React.ReactNode;
-  };
 };
 
 type FieldErrors = Partial<Record<'identifier' | 'password', string>>;
 
 function classifyAuthError(raw: string, status?: number): AuthErrorKind {
   const m = raw.toLowerCase();
-
-  if (
-    status === 401 ||
-    m.includes('invalid credential') ||
-    m.includes('wrong password')
-  )
+  if (status === 401 || m.includes('invalid credential') || m.includes('wrong password'))
     return 'credentials';
   if (status === 403 && (m.includes('verify') || m.includes('not verified')))
     return 'unverified';
-  if (
-    m.includes('verify your email') ||
-    m.includes('not verified') ||
-    m.includes('unverified')
-  )
+  if (m.includes('verify your email') || m.includes('not verified') || m.includes('unverified'))
     return 'unverified';
   if (status === 429 || m.includes('too many') || m.includes('rate limit'))
     return 'rate-limited';
@@ -176,16 +147,10 @@ function toAuthError(err: unknown, fallback = 'Invalid credentials.'): AuthError
     }
     return undefined;
   })();
-
   const raw = extractErrorMessage(err, fallback);
   const kind = classifyAuthError(raw, status);
-
   return { kind, message: raw };
 }
-
-/* ─────────────────────────────────────────────────────────
-   Error banner
-   ───────────────────────────────────────────────────────── */
 
 function ErrorBanner({
   error,
@@ -320,10 +285,6 @@ function ErrorBanner({
   );
 }
 
-/* ─────────────────────────────────────────────────────────
-   Login
-   ───────────────────────────────────────────────────────── */
-
 function Login(): React.JSX.Element {
   const navigate = useNavigate();
   const { login } = useAuth();
@@ -331,6 +292,7 @@ function Login(): React.JSX.Element {
 
   const [identifier, setIdentifier] = useState('');
   const [password, setPassword] = useState('');
+  const [rememberMe, setRememberMe] = useState(true);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<AuthError | null>(null);
   const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
@@ -339,7 +301,6 @@ function Login(): React.JSX.Element {
   const identifierRef = useRef<HTMLDivElement | null>(null);
   const passwordRef = useRef<HTMLDivElement | null>(null);
 
-  // Rate-limit countdown ticker
   useEffect(() => {
     if (retryCountdown == null) return;
     if (retryCountdown <= 0) {
@@ -354,8 +315,6 @@ function Login(): React.JSX.Element {
     return () => window.clearTimeout(t);
   }, [retryCountdown]);
 
-  /* ── Live mode chip ─────────────────────────────────── */
-
   const identifierMode = useMemo(
     () => detectIdentifierMode(identifier),
     [identifier],
@@ -368,16 +327,11 @@ function Login(): React.JSX.Element {
         ? 'Email'
         : undefined;
 
-  /* ── Validation ──────────────────────────────────────── */
-
   const validate = useCallback((): FieldErrors => {
     const errs: FieldErrors = {};
-
     const result = validateIdentifier(identifier);
     if (!result.ok) errs.identifier = result.message;
-
     if (!password) errs.password = 'Enter your password.';
-
     return errs;
   }, [identifier, password]);
 
@@ -385,8 +339,6 @@ function Login(): React.JSX.Element {
     if (errs.identifier) identifierRef.current?.querySelector('input')?.focus();
     else if (errs.password) passwordRef.current?.querySelector('input')?.focus();
   }, []);
-
-  /* ── Actions ─────────────────────────────────────────── */
 
   const doLogin = useCallback(async () => {
     if (loading) return;
@@ -410,15 +362,8 @@ function Login(): React.JSX.Element {
     setFieldErrors({});
     setRetryCountdown(null);
 
-    const controller = new AbortController();
-    const timeout = window.setTimeout(() => controller.abort(), 15000);
-
     try {
-      // Backend receives the normalized identifier:
-      //   'jane'         → 'jane@orbit'
-      //   'jane@orbit'   → 'jane@orbit'
-      //   'jane@gmail.com' → 'jane@gmail.com'
-      await login(parsed.normalized, password);
+      await login(parsed.normalized, password, rememberMe);
       navigate('/app');
     } catch (err) {
       const authErr = toAuthError(err, 'Invalid credentials.');
@@ -435,10 +380,9 @@ function Login(): React.JSX.Element {
         setRetryCountdown(30);
       }
     } finally {
-      window.clearTimeout(timeout);
       setLoading(false);
     }
-  }, [identifier, password, loading, login, navigate, validate, focusFirstError]);
+  }, [identifier, password, rememberMe, loading, login, navigate, validate, focusFirstError]);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -463,8 +407,6 @@ function Login(): React.JSX.Element {
     window.location.href = `${API_BASE_URL.replace(/\/+$/, '')}/api/Auth/google-login`;
   };
 
-  /* ── Field change helpers ───────────────────────────── */
-
   const onIdentifierChange = (value: string) => {
     setIdentifier(value);
     if (fieldErrors.identifier) {
@@ -483,8 +425,6 @@ function Login(): React.JSX.Element {
     if (error?.kind === 'credentials') setError(null);
   };
 
-  /* ── Motion helper ──────────────────────────────────── */
-
   const stagger = (delay: number) =>
     reduceMotion
       ? {}
@@ -499,7 +439,6 @@ function Login(): React.JSX.Element {
   return (
     <AuthShell title="Sign in" subtitle="Welcome back to Orbital.">
       <div className="space-y-5">
-        {/* Google */}
         <motion.div {...stagger(0)}>
           <button
             type="button"
@@ -512,7 +451,6 @@ function Login(): React.JSX.Element {
           </button>
         </motion.div>
 
-        {/* Divider */}
         <motion.div {...stagger(0.06)} className="relative">
           <div className="absolute inset-0 flex items-center" aria-hidden>
             <div className="w-full border-t border-white/[0.08]" />
@@ -524,7 +462,6 @@ function Login(): React.JSX.Element {
           </div>
         </motion.div>
 
-        {/* Form */}
         <form onSubmit={handleSubmit} className="space-y-4" noValidate>
           <motion.div {...stagger(0.12)} ref={identifierRef}>
             <AuthInput
@@ -566,7 +503,31 @@ function Login(): React.JSX.Element {
             </div>
           </motion.div>
 
-          {/* Form-level error banner */}
+          {/* Remember me */}
+          <motion.div {...stagger(0.21)} className="flex items-center gap-2 -mt-1">
+            <button
+              type="button"
+              role="checkbox"
+              aria-checked={rememberMe}
+              onClick={() => setRememberMe((v) => !v)}
+              className={`w-4 h-4 rounded border-[1.5px] shrink-0 grid place-items-center transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-[#B45309]/50 ${
+                rememberMe
+                  ? 'bg-[#B45309] border-[#B45309]'
+                  : 'bg-transparent border-[rgba(237,229,212,0.25)] hover:border-[rgba(237,229,212,0.4)]'
+              }`}
+            >
+              {rememberMe && (
+                <Check className="w-3 h-3 text-white" strokeWidth={3} />
+              )}
+            </button>
+            <label
+              onClick={() => setRememberMe((v) => !v)}
+              className="text-[12px] text-[#A8A29E] cursor-pointer select-none"
+            >
+              Keep me signed in
+            </label>
+          </motion.div>
+
           <AnimatePresence initial={false}>
             {error && (
               <ErrorBanner
@@ -586,7 +547,6 @@ function Login(): React.JSX.Element {
           </motion.div>
         </form>
 
-        {/* Bottom */}
         <motion.div
           {...stagger(0.3)}
           className="pt-5 border-t border-white/[0.06] text-center text-[12.5px] text-[#A8A29E]"
@@ -604,27 +564,13 @@ function Login(): React.JSX.Element {
   );
 }
 
-/* ────────────────────────────────────────────────────────── */
-
 function GoogleIcon() {
   return (
     <svg width="16" height="16" viewBox="0 0 48 48" aria-hidden="true">
-      <path
-        fill="#EA4335"
-        d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"
-      />
-      <path
-        fill="#4285F4"
-        d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"
-      />
-      <path
-        fill="#FBBC05"
-        d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"
-      />
-      <path
-        fill="#34A853"
-        d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"
-      />
+      <path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z" />
+      <path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z" />
+      <path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z" />
+      <path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z" />
     </svg>
   );
 }

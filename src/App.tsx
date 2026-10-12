@@ -3,12 +3,17 @@
  * Public auth pages + protected app shell with nested routes.
  */
 
-import type { ReactElement } from 'react';
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { useEffect, type ReactElement } from 'react';
+import {
+  BrowserRouter,
+  Routes,
+  Route,
+  Navigate,
+  useNavigate,
+} from 'react-router-dom';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { CallProvider } from './context/CallContext';
 import { ScrollToTop } from './components/ScrollToTop';
-
 
 // Public pages
 import Landing from './pages/Landing';
@@ -45,12 +50,40 @@ function ProtectedRoute({ children }: { children: ReactElement }) {
   return children;
 }
 
+/**
+ * Catches a `?token=` param on ANY URL before routing can strip it.
+ * Runs above <Routes> so no <Navigate> or catch-all can drop the token.
+ */
+function TokenInterceptor() {
+  const { hydrateFromToken } = useAuth();
+  const navigate = useNavigate();
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const token = params.get('token');
+    if (!token) return;
+
+    // Clean the URL immediately so the token doesn't linger in history.
+    window.history.replaceState({}, '', window.location.pathname);
+
+    (async () => {
+      const profile = await hydrateFromToken(token);
+      navigate(profile ? '/app' : '/login?error=hydrate_failed', {
+        replace: true,
+      });
+    })();
+  }, [hydrateFromToken, navigate]);
+
+  return null;
+}
+
 export default function App() {
   return (
     <BrowserRouter>
-          <ScrollToTop />           
       <AuthProvider>
         <CallProvider>
+          <ScrollToTop />
+          <TokenInterceptor />
           <Routes>
             {/* ── Public ───────────────────────────────── */}
             <Route path="/" element={<Landing />} />

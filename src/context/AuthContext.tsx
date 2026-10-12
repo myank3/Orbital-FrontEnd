@@ -22,10 +22,15 @@ export interface AuthContextType {
   token: string | null;
   loading: boolean;
   isAuthenticated: boolean;
-  login: (identifier: string, password: string) => Promise<UserProfileDto>;
+  login: (
+    identifier: string,
+    password: string,
+    rememberMe?: boolean,
+  ) => Promise<UserProfileDto>;
   register: (dto: RegisterDto) => Promise<string>;
   logout: () => Promise<void>;
   refreshUser: () => Promise<UserProfileDto | null>;
+  hydrateFromToken: (token: string) => Promise<UserProfileDto | null>;
 }
 
 export const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -45,19 +50,14 @@ function AuthProviderComponent({ children }: AuthProviderProps) {
     setUser(null);
   }, []);
 
-  // Best-effort start of the SignalR connection. Requires a token to be
-  // present in localStorage; callers must set the token BEFORE invoking this.
   const startSignalR = useCallback(async () => {
     try {
       await signalRService.start();
     } catch (err) {
-      // Non-fatal: the app still works over REST; live updates will just
-      // be missing until the connection succeeds on the next attempt.
       console.error('[signalR] start failed:', err);
     }
   }, []);
 
-  // Best-effort stop of the SignalR connection on logout.
   const stopSignalR = useCallback(async () => {
     try {
       await signalRService.stop();
@@ -73,11 +73,9 @@ function AuthProviderComponent({ children }: AuthProviderProps) {
       return null;
     }
     try {
-      // Backend rule: profile comes from /api/User/profile, NOT /api/Auth/me
       const profile = await apiService.getMyProfile();
       setUser(profile);
       setTokenState(currentToken);
-      // Ensure SignalR is running whenever a valid session exists.
       await startSignalR();
       return profile;
     } catch {
@@ -102,7 +100,6 @@ function AuthProviderComponent({ children }: AuthProviderProps) {
           setUser(profile);
           setTokenState(storedToken);
         }
-        // Token is in localStorage at this point — safe to open the socket.
         await startSignalR();
       } catch {
         if (isMounted) clearAuthState();
@@ -126,8 +123,11 @@ function AuthProviderComponent({ children }: AuthProviderProps) {
   }, [clearAuthState, startSignalR, stopSignalR]);
 
   const login = useCallback(
-    async (identifier: string, password: string): Promise<UserProfileDto> => {
-      // Trim identifier — backend trims too, but consistent
+    async (
+      identifier: string,
+      password: string,
+      rememberMe: boolean = true,
+    ): Promise<UserProfileDto> => {
       const trimmed = identifier.trim();
 
       const loginResponse = await authService.login({
@@ -139,16 +139,12 @@ function AuthProviderComponent({ children }: AuthProviderProps) {
         throw new Error('Authentication succeeded but no token was returned.');
       }
 
-      // Persist + set state BEFORE fetching profile
-      setAccessToken(loginResponse.token);
+      // ← the only difference between remember-on and remember-off
+      setAccessToken(loginResponse.token, rememberMe ? 'local' : 'session');
       setTokenState(loginResponse.token);
 
-      // Fetch profile (this is what makes login "work without refresh")
       const profile = await apiService.getMyProfile();
       setUser(profile);
-
-      // Now that the token is in localStorage and the user is known,
-      // open the realtime connection.
       await startSignalR();
 
       return profile;
@@ -156,19 +152,35 @@ function AuthProviderComponent({ children }: AuthProviderProps) {
     [startSignalR],
   );
 
+  const hydrateFromToken = useCallback(
+    async (incomingToken: string): Promise<UserProfileDto | null> => {
+      // Google / external sign-ins are always "remember me"
+      setAccessToken(incomingToken, 'local');
+      setTokenState(incomingToken);
+      try {
+        const profile = await apiService.getMyProfile();
+        setUser(profile);
+        await startSignalR();
+        return profile;
+      } catch (err) {
+        console.error('[auth] hydrateFromToken failed:', err);
+        clearAuthState();
+        return null;
+      }
+    },
+    [clearAuthState, startSignalR],
+  );
+
   const register = useCallback(async (dto: RegisterDto): Promise<string> => {
-    // Backend rule: register returns empty body — no token, no auto-login.
     await authService.register(dto);
     return 'Registration successful. Please verify your email before logging in.';
   }, []);
 
   const logout = useCallback(async (): Promise<void> => {
-    // Stop the realtime connection first so we don't get events
-    // delivered while the token is being torn down.
     await stopSignalR();
     try {
       await authService.logout().catch(() => {
-        // Ignore network errors on logout — clear state anyway
+        /* ignore network errors on logout */
       });
     } finally {
       clearAuthState();
@@ -187,8 +199,19 @@ function AuthProviderComponent({ children }: AuthProviderProps) {
       register,
       logout,
       refreshUser,
+      hydrateFromToken,
     }),
-    [user, token, loading, isAuthenticated, login, register, logout, refreshUser],
+    [
+      user,
+      token,
+      loading,
+      isAuthenticated,
+      login,
+      register,
+      logout,
+      refreshUser,
+      hydrateFromToken,
+    ],
   );
 
   return (

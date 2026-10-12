@@ -37,15 +37,38 @@ export const API_BASE_URL: string =
 export const TOKEN_KEY = 'orbital.token';
 export const MAX_FILE_SIZE = 25 * 1024 * 1024; // 25 MB ceiling
 
+/* ────────────────────────────────────────────────────────── */
+/* Dual-storage access token                                  */
+/*   localStorage   → survives browser close (remember me)    */
+/*   sessionStorage → cleared on browser close                */
+/* ────────────────────────────────────────────────────────── */
+
 export function getAccessToken(): string | null {
   if (typeof window === 'undefined') return null;
-  return localStorage.getItem(TOKEN_KEY);
+  return (
+    localStorage.getItem(TOKEN_KEY) ?? sessionStorage.getItem(TOKEN_KEY)
+  );
 }
 
-export function setAccessToken(token: string | null): void {
+export function setAccessToken(
+  token: string | null,
+  persist: 'local' | 'session' = 'local',
+): void {
   if (typeof window === 'undefined') return;
-  if (token) localStorage.setItem(TOKEN_KEY, token);
-  else localStorage.removeItem(TOKEN_KEY);
+
+  if (token === null) {
+    localStorage.removeItem(TOKEN_KEY);
+    sessionStorage.removeItem(TOKEN_KEY);
+    return;
+  }
+
+  if (persist === 'local') {
+    localStorage.setItem(TOKEN_KEY, token);
+    sessionStorage.removeItem(TOKEN_KEY);
+  } else {
+    sessionStorage.setItem(TOKEN_KEY, token);
+    localStorage.removeItem(TOKEN_KEY);
+  }
 }
 
 /* ────────────────────────────────────────────────────────── */
@@ -53,16 +76,10 @@ export function setAccessToken(token: string | null): void {
 /* SignalR reconnect when the access token has expired.       */
 /* ────────────────────────────────────────────────────────── */
 
-/**
- * Returns a fresh access token, refreshing if the current one is
- * near expiry. Falls back to the current token if refresh isn't
- * possible (no backend refresh endpoint, network failure, etc.).
- */
 export async function refreshAuthToken(): Promise<string | null> {
   const current = getAccessToken();
   if (!current) return null;
 
-  // If the token has more than 60s left, just use it.
   try {
     const payload = JSON.parse(atob(current.split('.')[1])) as { exp?: number };
     const nowSec = Math.floor(Date.now() / 1000);
@@ -72,7 +89,6 @@ export async function refreshAuthToken(): Promise<string | null> {
     /* non-JWT or malformed — use as-is */
   }
 
-  // Near expiry — try the backend refresh endpoint.
   try {
     const res = await fetch(
       `${API_BASE_URL.replace(/\/+$/, '')}/api/Auth/refresh`,
@@ -98,7 +114,8 @@ export async function refreshAuthToken(): Promise<string | null> {
     };
     const newToken = data.token ?? data.accessToken ?? null;
     if (newToken) {
-      setAccessToken(newToken);
+      const wasLocal = localStorage.getItem(TOKEN_KEY) !== null;
+      setAccessToken(newToken, wasLocal ? 'local' : 'session');
     }
     if (data.refreshToken && typeof window !== 'undefined') {
       localStorage.setItem('orbital.refreshToken', data.refreshToken);
@@ -118,7 +135,7 @@ export function extractErrorMessage(
   if (error instanceof Error) return error.message;
   if (typeof error === 'object' && error !== null) {
     const r = error as Record<string, unknown>;
-    if (typeof r.detail === 'string' && r.detail) return r.detail; // ProblemDetails
+    if (typeof r.detail === 'string' && r.detail) return r.detail;
     if (typeof r.message === 'string' && r.message) return r.message;
     if (typeof r.error === 'string' && r.error) return r.error;
     if (typeof r.title === 'string' && r.title) return r.title;
@@ -142,7 +159,6 @@ export function validateFileSize(file: File): { valid: boolean; error?: string }
   return { valid: true };
 }
 
-/** Human-readable file size — used by the DM composer's pending-file chip. */
 export function formatFileSize(bytes: number): string {
   if (!Number.isFinite(bytes) || bytes < 0) return '0 B';
   if (bytes < 1024) return `${bytes} B`;
@@ -251,8 +267,9 @@ const apiService = {
   },
 
   // 2. Auth: Login returns { token }
+  //    Persisting is left to AuthContext so it controls 'local' vs 'session'.
   async login(dto: LoginDto): Promise<LoginResponseDto> {
-    const result = await request<LoginResponseDto>('/api/Auth/login', {
+    return request<LoginResponseDto>('/api/Auth/login', {
       method: 'POST',
       body: JSON.stringify({
         identifier: dto.identifier.trim(),
@@ -260,17 +277,18 @@ const apiService = {
       }),
       skipAuth: true,
     });
-
-    if (result?.token) setAccessToken(result.token);
-    return result;
   },
 
   async refresh(refreshToken?: string): Promise<LoginResponseDto> {
+    const wasLocal =
+      typeof window !== 'undefined' && localStorage.getItem(TOKEN_KEY) !== null;
     const result = await request<LoginResponseDto>('/api/Auth/refresh', {
       method: 'POST',
       body: JSON.stringify({ refreshToken }),
     });
-    if (result?.token) setAccessToken(result.token);
+    if (result?.token) {
+      setAccessToken(result.token, wasLocal ? 'local' : 'session');
+    }
     return result;
   },
 
@@ -371,7 +389,6 @@ const apiService = {
     });
   },
 
-  /** Remove an existing friendship. Either side can unfriend. */
   async unfriend(targetUserId: string): Promise<void> {
     await request<void>(
       `/api/Friendship/unfriend/${encodeURIComponent(targetUserId)}`,
@@ -379,7 +396,6 @@ const apiService = {
     );
   },
 
-  /** Block a user. Prevents friend requests and messaging. */
   async blockUser(targetUserId: string): Promise<void> {
     await request<void>(
       `/api/Friendship/block/${encodeURIComponent(targetUserId)}`,
@@ -387,7 +403,6 @@ const apiService = {
     );
   },
 
-  /** Unblock a user. Reverts the friendship to Pending. */
   async unblockUser(targetUserId: string): Promise<void> {
     await request<void>(
       `/api/Friendship/unblock/${encodeURIComponent(targetUserId)}`,
@@ -429,10 +444,6 @@ const apiService = {
     }
   },
 
-  /**
-   * Delete your own DM. Backend enforces ownership — you can only
-   * delete messages where you are the sender.
-   */
   async deleteDm(messageId: string | number): Promise<void> {
     await request<void>(
       `/api/DirectMessage/${encodeURIComponent(String(messageId))}`,
@@ -440,10 +451,6 @@ const apiService = {
     );
   },
 
-  /**
-   * Clear the entire DM conversation with a user. Hard delete on the
-   * backend — removes the messages for both sides.
-   */
   async clearConversation(targetUserId: string): Promise<void> {
     await request<void>(
       `/api/DirectMessage/conversation/${encodeURIComponent(targetUserId)}`,
@@ -467,11 +474,6 @@ const apiService = {
     });
   },
 
-  /**
-   * Add an existing user to a group. Requester must already be a member.
-   * Backend: POST /api/Group/add-member  body: { groupId, userId }
-   * Note: backend expects a user GUID, not a handle.
-   */
   async addGroupMember(groupId: number, userId: string): Promise<void> {
     await request<void>('/api/Group/add-member', {
       method: 'POST',
@@ -501,12 +503,10 @@ const apiService = {
     });
   },
 
-  /** Leave a group. If you're the last member, the group is deleted. */
   async leaveGroup(groupId: number): Promise<void> {
     await request<void>(`/api/Group/${groupId}/leave`, { method: 'POST' });
   },
 
-  /** Remove another member from a group. Creator only. */
   async removeGroupMember(groupId: number, targetUserId: string): Promise<void> {
     await request<void>(
       `/api/Group/${groupId}/members/${encodeURIComponent(targetUserId)}`,
@@ -514,7 +514,6 @@ const apiService = {
     );
   },
 
-  /** Delete an entire group. Creator only. */
   async deleteGroup(groupId: number): Promise<void> {
     await request<void>(`/api/Group/${groupId}`, { method: 'DELETE' });
   },
