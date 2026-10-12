@@ -26,7 +26,6 @@ import {
   Upload,
   X,
   ShieldOff,
-  Shield,
   Inbox,
 } from 'lucide-react';
 
