@@ -779,16 +779,15 @@ export default function GroupPane(): React.JSX.Element {
         mediaType = validation.mediaType;
       }
 
-      const sent = await apiService.sendGroupMessage({
+      // ── Send via SignalR hub so the message is broadcast to all
+      //    group members in real time (via ReceiveGroupMessage).
+      //    Do NOT add to local state here — the incoming hub event
+      //    will append it (with dedup on message ID).
+      await signalRService.sendGroupMessage({
         groupId: activeGroupId,
         content: inputContent.trim(),
         mediaUrl,
         mediaType,
-      });
-
-      setMessages((prev) => {
-        if (prev.some((m) => m.id === sent.id)) return prev;
-        return [...prev, sent];
       });
 
       setInputContent('');
