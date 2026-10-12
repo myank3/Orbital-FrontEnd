@@ -9,6 +9,8 @@ import { motion, AnimatePresence, useReducedMotion } from 'motion/react';
 import { useAuth } from '../context/AuthContext';
 import { API_BASE_URL, extractErrorMessage, getAccessToken, apiService } from '../services/api';
 import { Avatar } from './Avatar';
+import { UserProfileModal } from './UserProfileModal';
+import type { UserProfileDto } from '../types/api';
 import {
   Copy,
   Check,
@@ -23,11 +25,13 @@ import {
   Camera,
   Upload,
   X,
+  ShieldOff,
+  Shield,
+  Inbox,
 } from 'lucide-react';
 
 const SPRING = { type: 'spring' as const, stiffness: 240, damping: 26 };
 
-/** Turn a relative avatar path into an absolute URL for <img src>. */
 function toAbsoluteAvatar(url: string | null | undefined): string | undefined {
   if (!url) return undefined;
   if (url.startsWith('http://') || url.startsWith('https://')) return url;
@@ -55,6 +59,14 @@ function SettingsPane(): React.JSX.Element {
   const [dragActive, setDragActive] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
+  // Blocked users modal
+  const [blockedModalOpen, setBlockedModalOpen] = useState(false);
+  const [blockedUsers, setBlockedUsers] = useState<UserProfileDto[]>([]);
+  const [blockedLoading, setBlockedLoading] = useState(false);
+  const [blockedError, setBlockedError] = useState<string | null>(null);
+  const [unblockingId, setUnblockingId] = useState<string | null>(null);
+  const [blockedProfileModalUserId, setBlockedProfileModalUserId] = useState<string | null>(null);
+
   const openAvatarModal = () => {
     setPendingFile(null);
     setPendingPreview(null);
@@ -72,7 +84,6 @@ function SettingsPane(): React.JSX.Element {
     if (fileInputRef.current) fileInputRef.current.value = '';
   }, [pendingPreview, uploading]);
 
-  // Cleanup preview URL if the component unmounts mid-preview
   useEffect(() => {
     return () => {
       if (pendingPreview) URL.revokeObjectURL(pendingPreview);
@@ -181,6 +192,34 @@ function SettingsPane(): React.JSX.Element {
     }
   };
 
+  // ── Blocked users: open modal + fetch list ────────────────
+  const openBlockedModal = useCallback(async () => {
+    setBlockedModalOpen(true);
+    setBlockedLoading(true);
+    setBlockedError(null);
+    try {
+      const list = await apiService.getBlockedUsers();
+      setBlockedUsers(list);
+    } catch (err) {
+      setBlockedError(extractErrorMessage(err, 'Could not load blocked users.'));
+      setBlockedUsers([]);
+    } finally {
+      setBlockedLoading(false);
+    }
+  }, []);
+
+  const handleUnblock = useCallback(async (targetId: string) => {
+    setUnblockingId(targetId);
+    try {
+      await apiService.unblockUser(targetId);
+      setBlockedUsers((prev) => prev.filter((u) => u.id !== targetId));
+    } catch (err) {
+      alert(`Could not unblock: ${extractErrorMessage(err)}`);
+    } finally {
+      setUnblockingId(null);
+    }
+  }, []);
+
   const handleSignOut = async () => {
     await logout();
     navigate('/login');
@@ -198,7 +237,6 @@ function SettingsPane(): React.JSX.Element {
   return (
     <div className="h-full overflow-y-auto bg-[#0F0D0A] text-[#EDE5D4]">
       <div className="max-w-3xl mx-auto px-6 py-10 space-y-8">
-        {/* Header */}
         <motion.div {...stagger(0)}>
           <h1 className="text-[26px] font-medium text-[#EDE5D4]">Settings</h1>
           <p className="text-[13px] text-[#A8A29E] mt-1">
@@ -216,7 +254,6 @@ function SettingsPane(): React.JSX.Element {
           </div>
 
           <form onSubmit={handleSaveProfile} className="p-6 space-y-6">
-            {/* Avatar row */}
             <div className="flex items-center gap-5">
               <button
                 type="button"
@@ -253,7 +290,6 @@ function SettingsPane(): React.JSX.Element {
               </div>
             </div>
 
-            {/* Display name */}
             <div className="space-y-1.5">
               <label className="block text-[11.5px] uppercase tracking-[0.16em] text-[#6B6259]">
                 Display name
@@ -271,7 +307,6 @@ function SettingsPane(): React.JSX.Element {
               />
             </div>
 
-            {/* Email */}
             <div className="space-y-1.5">
               <label className="block text-[11.5px] uppercase tracking-[0.16em] text-[#6B6259]">
                 Email
@@ -395,6 +430,20 @@ function SettingsPane(): React.JSX.Element {
             </Row>
 
             <Row
+              icon={<ShieldOff className="w-3.5 h-3.5 text-[#6B6259]" />}
+              label="Blocked users"
+              hint="Manage people you've blocked"
+            >
+              <button
+                type="button"
+                onClick={() => void openBlockedModal()}
+                className="text-[13px] text-[#D97706] hover:text-[#B45309] font-medium transition-colors"
+              >
+                Manage
+              </button>
+            </Row>
+
+            <Row
               icon={<Shield className="w-3.5 h-3.5 text-[#6B6259]" />}
               label="Data export"
               hint="Download a copy of your account data"
@@ -418,9 +467,7 @@ function SettingsPane(): React.JSX.Element {
         >
           <div className="p-6 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
             <div className="min-w-0">
-              <h3 className="text-[14.5px] font-medium text-[#EDE5D4]">
-                Sign out
-              </h3>
+              <h3 className="text-[14.5px] font-medium text-[#EDE5D4]">Sign out</h3>
               <p className="text-[12.5px] text-[#A8A29E] mt-0.5">
                 Log out of this device. You can sign back in any time.
               </p>
@@ -463,7 +510,6 @@ function SettingsPane(): React.JSX.Element {
               onClick={(e) => e.stopPropagation()}
               className="w-full max-w-md rounded-2xl bg-[#131110] border border-white/[0.10] overflow-hidden shadow-2xl"
             >
-              {/* Modal header */}
               <div className="flex items-center justify-between px-5 py-3.5 border-b border-white/[0.06]">
                 <h3 className="text-[14.5px] font-medium text-[#EDE5D4]">
                   Change profile picture
@@ -479,7 +525,6 @@ function SettingsPane(): React.JSX.Element {
                 </button>
               </div>
 
-              {/* Modal body */}
               <div className="p-5 space-y-4">
                 <div
                   onDragOver={(e) => { e.preventDefault(); setDragActive(true); }}
@@ -530,7 +575,6 @@ function SettingsPane(): React.JSX.Element {
                 )}
               </div>
 
-              {/* Modal footer */}
               <div className="px-5 py-3.5 border-t border-white/[0.06] flex items-center justify-end gap-2 bg-[#0F0D0A]/40">
                 <button
                   type="button"
@@ -563,11 +607,141 @@ function SettingsPane(): React.JSX.Element {
           </motion.div>
         )}
       </AnimatePresence>
+
+      {/* Blocked users modal */}
+      <AnimatePresence>
+        {blockedModalOpen && (
+          <motion.div
+            initial={reduceMotion ? false : { opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.18 }}
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4"
+            onClick={() => setBlockedModalOpen(false)}
+          >
+            <motion.div
+              initial={reduceMotion ? false : { opacity: 0, scale: 0.96, y: 8 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={reduceMotion ? undefined : { opacity: 0, scale: 0.96, y: 8 }}
+              transition={{ type: 'spring', stiffness: 260, damping: 26 }}
+              onClick={(e) => e.stopPropagation()}
+              className="w-full max-w-md rounded-2xl bg-[#131110] border border-white/[0.10] overflow-hidden shadow-2xl flex flex-col max-h-[85vh]"
+            >
+              <div className="flex items-center justify-between px-5 py-3.5 border-b border-white/[0.06] shrink-0">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-8 h-8 rounded-lg bg-[#B91C1C]/10 border border-[#B91C1C]/25 flex items-center justify-center text-[#F87171]">
+                    <ShieldOff className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <h3 className="text-[14.5px] font-medium text-[#EDE5D4]">
+                      Blocked users
+                    </h3>
+                    <p className="text-[11px] text-[#6B6259] mt-0.5">
+                      {blockedUsers.length} blocked
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setBlockedModalOpen(false)}
+                  className="w-8 h-8 rounded-lg flex items-center justify-center text-[#6B6259] hover:text-[#EDE5D4] hover:bg-white/[0.05] transition-colors"
+                  aria-label="Close"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              <div className="flex-1 overflow-y-auto">
+                {blockedLoading ? (
+                  <div className="py-12 flex items-center justify-center text-[12.5px] text-[#6B6259]">
+                    <Loader2 className="w-4 h-4 animate-spin mr-2 text-[#D97706]" />
+                    Loading…
+                  </div>
+                ) : blockedError ? (
+                  <div className="p-6 text-center">
+                    <AlertCircle className="w-8 h-8 text-[#F87171] mx-auto mb-3" />
+                    <p className="text-[13px] text-[#F87171]">{blockedError}</p>
+                  </div>
+                ) : blockedUsers.length === 0 ? (
+                  <div className="py-12 text-center px-6">
+                    <div className="w-14 h-14 rounded-2xl bg-white/[0.03] border border-white/[0.06] flex items-center justify-center mx-auto">
+                      <Inbox className="w-6 h-6 text-[#6B6259]" />
+                    </div>
+                    <p className="text-[14px] text-[#EDE5D4] font-medium mt-3">
+                      No blocked users
+                    </p>
+                    <p className="text-[12px] text-[#6B6259] mt-1">
+                      Anyone you block will appear here.
+                    </p>
+                  </div>
+                ) : (
+                  <div className="divide-y divide-white/[0.04]">
+                    {blockedUsers.map((u) => (
+                      <div
+                        key={u.id}
+                        className="px-5 py-3 flex items-center gap-3"
+                      >
+                        <button
+                          type="button"
+                          onClick={() => setBlockedProfileModalUserId(u.id)}
+                          className="shrink-0 rounded-full focus:outline-none focus-visible:ring-2 focus-visible:ring-[#D97706]/50"
+                          aria-label={`View ${u.displayName}'s profile`}
+                        >
+                          <Avatar
+                            name={u.displayName}
+                            src={toAbsoluteAvatar(u.avatarUrl)}
+                            size="sm"
+                          />
+                        </button>
+                        <div className="min-w-0 flex-1">
+                          <p className="text-[13px] text-[#EDE5D4] truncate">
+                            {u.displayName}
+                          </p>
+                          <p className="text-[11px] text-[#6B6259] truncate mt-0.5">
+                            @{u.userHandle}
+                          </p>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => void handleUnblock(u.id)}
+                          disabled={unblockingId === u.id}
+                          className="shrink-0 h-8 px-3 rounded-lg bg-white/[0.04] hover:bg-[#15803D]/[0.12] border border-white/[0.06] hover:border-[#15803D]/30 disabled:opacity-40 text-[12px] font-medium text-[#4ADE80] inline-flex items-center gap-1.5 transition-colors"
+                        >
+                          {unblockingId === u.id ? (
+                            <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                          ) : (
+                            <Shield className="w-3.5 h-3.5" />
+                          )}
+                          <span>Unblock</span>
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              <div className="px-5 py-3 border-t border-white/[0.06] flex items-center justify-end bg-[#0F0D0A]/40 shrink-0">
+                <button
+                  type="button"
+                  onClick={() => setBlockedModalOpen(false)}
+                  className="h-9 px-4 rounded-lg bg-white/[0.04] hover:bg-white/[0.08] border border-white/[0.06] text-[12.5px] text-[#EDE5D4] transition-colors"
+                >
+                  Close
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Profile modal for blocked user (opens over blocked list) */}
+      <UserProfileModal
+        userId={blockedProfileModalUserId}
+        onClose={() => setBlockedProfileModalUserId(null)}
+      />
     </div>
   );
 }
-
-/* ────────────────────────────────────────────────────────── */
 
 function Row({
   icon,

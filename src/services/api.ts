@@ -76,7 +76,7 @@ export async function refreshAuthToken(): Promise<string | null> {
       {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',        // ← sends refresh cookie cross-domain
+        credentials: 'include',
         body: JSON.stringify({}),
       },
     );
@@ -168,7 +168,7 @@ async function request<T>(endpoint: string, config: RequestConfig = {}): Promise
 
   const response = await fetch(url, {
     headers: requestHeaders,
-    credentials: 'include',          // ← sends refresh cookie cross-domain
+    credentials: 'include',
     ...customOptions,
   });
 
@@ -312,6 +312,18 @@ const apiService = {
     );
   },
 
+  /** Search all users (excluding self) by handle, name, or email. */
+  async searchUsers(query: string, take = 30): Promise<UserProfileDto[]> {
+    const params = new URLSearchParams({
+      q: query.trim(),
+      take: take.toString(),
+    });
+    return request<UserProfileDto[]>(
+      `/api/User/search?${params.toString()}`,
+      { method: 'GET' },
+    );
+  },
+
   async updateProfile(dto: UpdateProfileDto): Promise<UserProfileDto> {
     return request<UserProfileDto>('/api/User/profile', {
       method: 'PUT',
@@ -368,6 +380,13 @@ const apiService = {
       `/api/Friendship/unblock/${encodeURIComponent(targetUserId)}`,
       { method: 'POST' },
     );
+  },
+
+  /** Returns full profiles of everyone you've blocked. */
+  async getBlockedUsers(): Promise<UserProfileDto[]> {
+    return request<UserProfileDto[]>('/api/Friendship/blocked', {
+      method: 'GET',
+    });
   },
 
   async getDmHistory(

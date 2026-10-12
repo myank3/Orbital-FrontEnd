@@ -20,6 +20,8 @@ import {
   UserMinus,
   MessageSquare,
   Check,
+  ShieldOff,
+  Shield,
 } from 'lucide-react';
 import type { UserProfileDto, FriendDto } from '../types/api';
 
@@ -36,6 +38,7 @@ export function UserProfileModal({ userId, onClose }: UserProfileModalProps) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isFriend, setIsFriend] = useState<boolean | null>(null);
+  const [isBlocked, setIsBlocked] = useState<boolean>(false);
   const [actionBusy, setActionBusy] = useState(false);
   const [actionMessage, setActionMessage] = useState<string | null>(null);
   const [, setPresenceTick] = useState(0);
@@ -45,6 +48,7 @@ export function UserProfileModal({ userId, onClose }: UserProfileModalProps) {
       setProfile(null);
       setError(null);
       setIsFriend(null);
+      setIsBlocked(false);
       setActionMessage(null);
       return;
     }
@@ -53,16 +57,19 @@ export function UserProfileModal({ userId, onClose }: UserProfileModalProps) {
     setError(null);
     setProfile(null);
     setIsFriend(null);
+    setIsBlocked(false);
     setActionMessage(null);
 
     Promise.all([
       apiService.getUserProfile(userId),
       apiService.getFriends().catch(() => [] as FriendDto[]),
+      apiService.getBlockedUsers().catch(() => [] as UserProfileDto[]),
     ])
-      .then(([p, friends]) => {
+      .then(([p, friends, blocked]) => {
         if (!active) return;
         setProfile(p);
         setIsFriend(friends.some((f) => f.userId === userId));
+        setIsBlocked(blocked.some((b) => b.id === userId));
       })
       .catch((err) => {
         if (active) setError(extractErrorMessage(err, 'Failed to load profile.'));
@@ -110,6 +117,37 @@ export function UserProfileModal({ userId, onClose }: UserProfileModalProps) {
       setActionMessage('Unfriended');
     } catch (err) {
       setActionMessage(extractErrorMessage(err, 'Failed to unfriend.'));
+    } finally {
+      setActionBusy(false);
+    }
+  };
+
+  const handleBlock = async () => {
+    if (!userId) return;
+    setActionBusy(true);
+    setActionMessage(null);
+    try {
+      await apiService.blockUser(userId);
+      setIsBlocked(true);
+      setIsFriend(false);
+      setActionMessage('User blocked');
+    } catch (err) {
+      setActionMessage(extractErrorMessage(err, 'Failed to block.'));
+    } finally {
+      setActionBusy(false);
+    }
+  };
+
+  const handleUnblock = async () => {
+    if (!userId) return;
+    setActionBusy(true);
+    setActionMessage(null);
+    try {
+      await apiService.unblockUser(userId);
+      setIsBlocked(false);
+      setActionMessage('User unblocked');
+    } catch (err) {
+      setActionMessage(extractErrorMessage(err, 'Failed to unblock.'));
     } finally {
       setActionBusy(false);
     }
@@ -199,6 +237,13 @@ export function UserProfileModal({ userId, onClose }: UserProfileModalProps) {
                       {isOnline ? 'Online' : 'Offline'}
                     </span>
                   </div>
+
+                  {isBlocked && (
+                    <div className="mt-3 px-3 py-1 rounded-full bg-[#B91C1C]/10 border border-[#B91C1C]/25 text-[10.5px] uppercase tracking-wider text-[#F87171] inline-flex items-center gap-1.5">
+                      <ShieldOff className="w-3 h-3" />
+                      Blocked
+                    </div>
+                  )}
                 </div>
 
                 <div className="p-5 space-y-3 text-[12.5px]">
@@ -216,18 +261,27 @@ export function UserProfileModal({ userId, onClose }: UserProfileModalProps) {
                   )}
                 </div>
 
+                {actionMessage && (
+                  <div className="px-5 pb-3">
+                    <p className="text-[11.5px] text-[#A8A29E] flex items-center gap-1.5">
+                      <Check className="w-3.5 h-3.5 shrink-0 text-[#4ADE80]" />
+                      <span>{actionMessage}</span>
+                    </p>
+                  </div>
+                )}
+
                 {!isMe && (
                   <div className="border-t border-white/[0.06] divide-y divide-white/[0.04]">
                     <button
                       onClick={handleMessage}
-                      disabled={actionBusy}
-                      className="w-full flex items-center gap-3 px-5 py-3.5 text-[13px] text-[#EDE5D4] hover:bg-white/[0.04] disabled:opacity-50 transition-colors text-left"
+                      disabled={actionBusy || isBlocked}
+                      className="w-full flex items-center gap-3 px-5 py-3.5 text-[13px] text-[#EDE5D4] hover:bg-white/[0.04] disabled:opacity-40 disabled:cursor-not-allowed transition-colors text-left"
                     >
                       <MessageSquare className="w-4 h-4 text-[#A8A29E] shrink-0" />
                       <span>Send message</span>
                     </button>
 
-                    {isFriend === false && (
+                    {isFriend === false && !isBlocked && (
                       <button
                         onClick={() => void handleAddFriend()}
                         disabled={actionBusy || actionMessage !== null}
@@ -247,8 +301,8 @@ export function UserProfileModal({ userId, onClose }: UserProfileModalProps) {
                     {isFriend === true && (
                       <button
                         onClick={() => void handleUnfriend()}
-                        disabled={actionBusy}
-                        className="w-full flex items-center gap-3 px-5 py-3.5 text-[13px] text-[#F87171] hover:bg-[#B91C1C]/[0.08] disabled:opacity-50 transition-colors text-left"
+                        disabled={actionBusy || isBlocked}
+                        className="w-full flex items-center gap-3 px-5 py-3.5 text-[13px] text-[#F87171] hover:bg-[#B91C1C]/[0.08] disabled:opacity-40 transition-colors text-left"
                       >
                         {actionBusy ? (
                           <Loader2 className="w-4 h-4 animate-spin shrink-0" />
@@ -256,6 +310,34 @@ export function UserProfileModal({ userId, onClose }: UserProfileModalProps) {
                           <UserMinus className="w-4 h-4 shrink-0" />
                         )}
                         <span>Unfriend</span>
+                      </button>
+                    )}
+
+                    {!isBlocked ? (
+                      <button
+                        onClick={() => void handleBlock()}
+                        disabled={actionBusy}
+                        className="w-full flex items-center gap-3 px-5 py-3.5 text-[13px] text-[#F87171] hover:bg-[#B91C1C]/[0.08] disabled:opacity-40 transition-colors text-left"
+                      >
+                        {actionBusy ? (
+                          <Loader2 className="w-4 h-4 animate-spin shrink-0" />
+                        ) : (
+                          <ShieldOff className="w-4 h-4 shrink-0" />
+                        )}
+                        <span>Block user</span>
+                      </button>
+                    ) : (
+                      <button
+                        onClick={() => void handleUnblock()}
+                        disabled={actionBusy}
+                        className="w-full flex items-center gap-3 px-5 py-3.5 text-[13px] text-[#4ADE80] hover:bg-[#15803D]/[0.08] disabled:opacity-40 transition-colors text-left"
+                      >
+                        {actionBusy ? (
+                          <Loader2 className="w-4 h-4 animate-spin shrink-0" />
+                        ) : (
+                          <Shield className="w-4 h-4 shrink-0" />
+                        )}
+                        <span>Unblock user</span>
                       </button>
                     )}
                   </div>
