@@ -8,6 +8,7 @@ import { NavLink, Outlet, useNavigate, Link } from 'react-router-dom';
 import { motion, AnimatePresence, useReducedMotion } from 'motion/react';
 import { useAuth } from '../context/AuthContext';
 import { useCall } from '../context/CallContext';
+import { apiService } from '../services/api';
 import { Avatar } from '../components/Avatar';
 import VideoCallOverlay from '../components/VideoCallOverlay';
 import {
@@ -39,6 +40,37 @@ function AppShell(): React.JSX.Element {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [railHovered, setRailHovered] = useState(false);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
+
+  /* ─── Incoming-call caller name resolution ──────────────────── */
+  const [callerName, setCallerName] = useState<string | null>(null);
+
+  useEffect(() => {
+    const id = incomingCall?.initiatorId;
+    if (!id) {
+      setCallerName(null);
+      return;
+    }
+
+    let cancelled = false;
+
+    apiService
+      .getUserProfile(id)
+      .then((profile) => {
+        if (cancelled) return;
+        setCallerName(
+          profile?.displayName ||
+            profile?.userHandle ||
+            null,
+        );
+      })
+      .catch(() => {
+        if (!cancelled) setCallerName(null);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [incomingCall?.initiatorId]);
 
   const handleSignOut = async () => {
     try {
@@ -84,6 +116,9 @@ function AppShell(): React.JSX.Element {
   ];
 
   const desktopRailWidth = railHovered ? 220 : 68;
+
+  // What we display in the banner — name if resolved, else a friendly fallback.
+  const incomingDisplayName = callerName ?? 'Someone';
 
   return (
     <div className="flex h-screen bg-[#0B0A08] text-[#EDE5D4] overflow-hidden">
@@ -354,7 +389,7 @@ function AppShell(): React.JSX.Element {
                       Incoming call
                     </p>
                     <p className="text-[13.5px] text-[#EDE5D4] truncate">
-                      {incomingCall.initiatorId ?? 'Someone'} is calling
+                      {incomingDisplayName} is calling
                     </p>
                   </div>
                 </div>
