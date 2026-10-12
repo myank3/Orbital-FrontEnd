@@ -46,6 +46,7 @@ export interface CallContextType {
   isMuted: boolean;
   isVideoOff: boolean;
   isScreenSharing: boolean;
+  isSpeakerOn: boolean;
   isMinimized: boolean;
   incomingCall: CallSessionDto | null;
   peerId: string | null;
@@ -59,6 +60,7 @@ export interface CallContextType {
   toggleVideo: () => void;
   startScreenShare: () => Promise<void>;
   stopScreenShare: () => void;
+  setSpeakerOn: (on: boolean) => void;
   minimize: () => void;
   expand: () => void;
 }
@@ -300,6 +302,7 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
   const [isMuted, setIsMuted] = useState<boolean>(false);
   const [isVideoOff, setIsVideoOff] = useState<boolean>(false);
   const [isScreenSharing, setIsScreenSharing] = useState<boolean>(false);
+  const [isSpeakerOn, setIsSpeakerOn] = useState<boolean>(true);
   const [isMinimized, setIsMinimized] = useState<boolean>(false);
   const [incomingCall, setIncomingCall] = useState<CallSessionDto | null>(null);
   const [callState, setCallState] = useState<CallState>('idle');
@@ -598,6 +601,7 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
       setIsMuted(false);
       setIsVideoOff(false);
       setIsScreenSharing(false);
+      setIsSpeakerOn(true);
       setIsMinimized(false);
       setCallState('idle');
       setDuration(0);
@@ -704,30 +708,10 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
         (window as unknown as { __pc?: RTCPeerConnection }).__pc = pc;
       }
 
-      /* ── Deterministic m-line order ─────────────────────
-         Audio MUST come first, video second, on BOTH peers.
-         Using addTransceiver (not addTrack) fixes the m-line
-         order regardless of the order returned by getTracks(),
-         which is what was breaking video negotiation. */
-      const audioTrack = stream.getAudioTracks()[0];
-      if (audioTrack) {
-        pc.addTransceiver(audioTrack, {
-          direction: 'sendrecv',
-          streams: [stream],
-        });
-      } else {
-        pc.addTransceiver('audio', { direction: 'recvonly' });
-      }
-
-      const videoTrack = stream.getVideoTracks()[0];
-      if (videoTrack) {
-        pc.addTransceiver(videoTrack, {
-          direction: 'sendrecv',
-          streams: [stream],
-        });
-      } else if (_callType === CallType.Video) {
-        pc.addTransceiver('video', { direction: 'recvonly' });
-      }
+      // Add local media tracks to the connection
+      stream.getTracks().forEach((track) => {
+        pc.addTrack(track, stream);
+      });
 
       pc.ontrack = (event: RTCTrackEvent) => {
         event.track.enabled = true;
@@ -740,6 +724,7 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
           readyState: event.track.readyState,
         });
 
+        // Diagnostics only — no ICE restart hacks.
         event.track.addEventListener('unmute', () =>
           console.log('[Call] remote track UNMUTED', event.track.kind),
         );
@@ -945,6 +930,8 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
       });
       pendingRemoteOfferRef.current = null;
     } else {
+      // The offer hasn't arrived yet. handleSignalMessage will pick it up
+      // when it does and drive the answer from there.
       console.warn('[Call] No pending offer at accept time — awaiting offer signal');
     }
   }, [
@@ -1172,6 +1159,17 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
     }
   }, [stopScreenShare]);
 
+  /* ── Speaker toggle ──────────────────────────────────── */
+
+  const setSpeakerOn = useCallback((on: boolean) => {
+    setIsSpeakerOn(on);
+    const sink = audioSinkRef.current;
+    if (sink) {
+      sink.muted = !on;
+      sink.volume = on ? 1 : 0;
+    }
+  }, []);
+
   const minimize = useCallback(() => setIsMinimized(true), []);
   const expand = useCallback(() => setIsMinimized(false), []);
 
@@ -1195,6 +1193,7 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
       const replyToPeer = activePeerIdRef.current ?? payload.senderId;
 
       if (messageData.type === 'offer' && messageData.sdp) {
+        // Glare guard: only accept an offer when we're in the stable state.
         if (pc && pc.signalingState !== 'stable') {
           console.warn(
             '[Call] glare — dropping offer in signaling state:',
@@ -1228,6 +1227,7 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
           pendingRemoteOfferRef.current = description;
         }
       } else if (messageData.type === 'answer' && messageData.sdp) {
+        // Only accept an answer when we actually sent an offer.
         if (!pc || pc.signalingState !== 'have-local-offer') {
           console.warn(
             '[Call] ignoring answer — signaling state:',
@@ -1340,6 +1340,7 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
       isMuted,
       isVideoOff,
       isScreenSharing,
+      isSpeakerOn,
       isMinimized,
       incomingCall,
       peerId,
@@ -1353,6 +1354,7 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
       toggleVideo,
       startScreenShare,
       stopScreenShare,
+      setSpeakerOn,
       minimize,
       expand,
     }),
@@ -1363,6 +1365,7 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
       isMuted,
       isVideoOff,
       isScreenSharing,
+      isSpeakerOn,
       isMinimized,
       incomingCall,
       peerId,
@@ -1376,6 +1379,7 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
       toggleVideo,
       startScreenShare,
       stopScreenShare,
+      setSpeakerOn,
       minimize,
       expand,
     ],
