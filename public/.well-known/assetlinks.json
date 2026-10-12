@@ -1,0 +1,8 @@
+[{
+  "relation": ["delegate_permission/common.handle_all_urls"],
+  "target": {
+    "namespace": "android_app",
+    "package_name": "app.vercel.orbitalhq.twa",
+    "sha256_cert_fingerprints": ["37:CC:05:50:71:4A:9C:C6:A5:D2:93:54:FE:B9:ED:68:57:52:B1:79:5B:D5:94:01:4F:BD:AD:C5:C4:6B:13:8A"]
+  }
+}]
