@@ -495,8 +495,7 @@ function Register(): React.JSX.Element {
   };
 
   const handleGoogleSignup = () => {
-    window.location.href = `${API_BASE_URL.replace(/\/+$/, '')}/api/Auth/google-login`;
-  };
+  window.location.href = `${API_BASE_URL.replace(/\/+$/, '')}/api/Auth/google-login?prompt=select_account`;};
 
   const clearField = (key: FieldKey) => {
     if (fieldErrors[key]) setFieldErrors((f) => ({ ...f, [key]: undefined }));

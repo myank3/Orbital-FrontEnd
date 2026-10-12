@@ -402,8 +402,7 @@ function Login(): React.JSX.Element {
   };
 
   const handleGoogleLogin = () => {
-    window.location.href = `${API_BASE_URL.replace(/\/+$/, '')}/api/Auth/google-login`;
-  };
+  window.location.href = `${API_BASE_URL.replace(/\/+$/, '')}/api/Auth/google-login?prompt=select_account`; };
 
   const onIdentifierChange = (value: string) => {
     setIdentifier(value);
