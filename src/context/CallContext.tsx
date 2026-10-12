@@ -869,18 +869,25 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
 
   /* ── Initiate (caller) ───────────────────────────────── */
 
-  const initiateCall = useCallback(
-    async (targetPeerId: string, callType: number): Promise<void> => {
-      if (!targetPeerId) {
-        throw new Error('Peer ID is required to initiate a call.');
-      }
+ const initiateCall = useCallback(
+  async (targetPeerId: string, callType: number): Promise<void> => {
+    if (!targetPeerId) {
+      throw new Error('Peer ID is required to initiate a call.');
+    }
 
-      teardown();
-      setCallState('outgoing');
-      setPeerId(targetPeerId);
-      activePeerIdRef.current = targetPeerId;
+    // Prime the sink BEFORE teardown/await so we're still inside the
+    // click handler. This claims the element into the "user-activated"
+    // state and lets the real playback start when the remote track lands.
+    if (audioSinkRef.current) {
+      audioSinkRef.current.play().catch(() => {});
+    }
 
-      const stream = await acquireMediaStream(callType);
+    teardown();
+    setCallState('outgoing');
+    setPeerId(targetPeerId);
+    activePeerIdRef.current = targetPeerId;
+
+    const stream = await acquireMediaStream(callType);
       setLocalStream(stream);
 
       const newSession = await withTimeout(
