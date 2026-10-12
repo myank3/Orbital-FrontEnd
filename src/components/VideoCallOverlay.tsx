@@ -70,12 +70,17 @@ function VideoCallOverlay(): React.JSX.Element | null {
     remoteStream,
     isMuted,
     isVideoOff,
+    isScreenSharing,
+    isSpeakerOn,
     isMinimized,
     callState,
     duration,
     peerId: contextPeerId,
     toggleMute,
     toggleVideo,
+    startScreenShare,
+    stopScreenShare,
+    setSpeakerOn,
     minimize,
     expand,
     endCall,
@@ -86,10 +91,7 @@ function VideoCallOverlay(): React.JSX.Element | null {
 
   const localVideoRef = useRef<HTMLVideoElement | null>(null);
   const remoteVideoRef = useRef<HTMLVideoElement | null>(null);
-  const cameraTrackRef = useRef<MediaStreamTrack | null>(null);
 
-  const [isSpeakerOn, setIsSpeakerOn] = useState<boolean>(true);
-  const [isScreenSharing, setIsScreenSharing] = useState<boolean>(false);
   const [screenBusy, setScreenBusy] = useState<boolean>(false);
   const [peerProfile, setPeerProfile] = useState<UserProfileDto | null>(null);
 
@@ -145,10 +147,9 @@ function VideoCallOverlay(): React.JSX.Element | null {
   }, [localStream]);
 
   /* ── Attach remote video stream (MUTED) ──────────────── */
-  // Audio playback is handled by a persistent <video> sink inside
-  // CallContext. The overlay's video element only carries the video
-  // track — audio is muted here to prevent double-play and the
-  // Chrome "one-way audio" bug where muting the element silences it.
+  // Audio playback is handled by the persistent <audio> sink
+  // inside CallContext. The overlay's video element only carries
+  // the video track — audio is muted here to prevent double-play.
   useEffect(() => {
     const el = remoteVideoRef.current;
     if (!el) return;
@@ -156,7 +157,6 @@ function VideoCallOverlay(): React.JSX.Element | null {
     el.srcObject = null;
 
     if (remoteStream) {
-      // Only attach video tracks (audio comes from the sink)
       const videoOnly = new MediaStream(remoteStream.getVideoTracks());
       if (videoOnly.getVideoTracks().length > 0) {
         el.srcObject = videoOnly;
@@ -177,62 +177,20 @@ function VideoCallOverlay(): React.JSX.Element | null {
     return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
   }, [duration]);
 
-  /* ── Screen share ────────────────────────────────────── */
+  /* ── Screen share — delegated to CallContext ─────────── */
 
   const handleToggleScreenShare = useCallback(async () => {
-    if (!localStream) return;
     setScreenBusy(true);
     try {
       if (isScreenSharing) {
-        localStream.getVideoTracks().forEach((t) => {
-          t.stop();
-          localStream.removeTrack(t);
-        });
-        if (cameraTrackRef.current) {
-          localStream.addTrack(cameraTrackRef.current);
-          cameraTrackRef.current = null;
-        }
-        setIsScreenSharing(false);
+        stopScreenShare();
       } else {
-        const existingCam = localStream.getVideoTracks()[0] ?? null;
-        if (existingCam) {
-          cameraTrackRef.current = existingCam;
-          existingCam.stop();
-          localStream.removeTrack(existingCam);
-        }
-
-        const display = await navigator.mediaDevices.getDisplayMedia({
-          video: true,
-          audio: false,
-        });
-        const screenTrack = display.getVideoTracks()[0];
-        if (!screenTrack) {
-          if (cameraTrackRef.current) {
-            localStream.addTrack(cameraTrackRef.current);
-            cameraTrackRef.current = null;
-          }
-          return;
-        }
-
-        localStream.addTrack(screenTrack);
-        screenTrack.onended = () => {
-          localStream.removeTrack(screenTrack);
-          if (cameraTrackRef.current) {
-            localStream.addTrack(cameraTrackRef.current);
-            cameraTrackRef.current = null;
-          }
-          setIsScreenSharing(false);
-        };
-
-        setIsScreenSharing(true);
+        await startScreenShare();
       }
-    } catch (err) {
-      console.warn('Screen share toggle failed:', err);
-      setIsScreenSharing(false);
     } finally {
       setScreenBusy(false);
     }
-  }, [isScreenSharing, localStream]);
+  }, [isScreenSharing, startScreenShare, stopScreenShare]);
 
   if (!session) return null;
 
@@ -408,7 +366,7 @@ function VideoCallOverlay(): React.JSX.Element | null {
             <ControlButton
               icon={isSpeakerOn ? Volume2 : VolumeX}
               active={!isSpeakerOn}
-              onClick={() => setIsSpeakerOn((v) => !v)}
+              onClick={() => setSpeakerOn(!isSpeakerOn)}
               label={isSpeakerOn ? 'Speaker on' : 'Speaker off'}
             />
             <button
@@ -430,9 +388,6 @@ function VideoCallOverlay(): React.JSX.Element | null {
 
   return (
     <div className="fixed inset-0 z-[100] bg-gradient-to-b from-[#0B141A] via-[#0F1A21] to-[#0B141A] flex flex-col select-none">
-      {/* Remote audio is played by the persistent sink inside CallContext.
-          No local element needed here. */}
-
       {/* Top bar */}
       <div className="flex items-center justify-between px-4 sm:px-6 py-4">
         <div className="text-xs font-mono uppercase tracking-[0.22em] text-white/50">
@@ -481,7 +436,7 @@ function VideoCallOverlay(): React.JSX.Element | null {
           <ControlButton
             icon={isSpeakerOn ? Volume2 : VolumeX}
             active={!isSpeakerOn}
-            onClick={() => setIsSpeakerOn((v) => !v)}
+            onClick={() => setSpeakerOn(!isSpeakerOn)}
             label={isSpeakerOn ? 'Speaker on' : 'Speaker off'}
           />
           <button

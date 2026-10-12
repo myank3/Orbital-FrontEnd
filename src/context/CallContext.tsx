@@ -45,6 +45,7 @@ export interface CallContextType {
   remoteStream: MediaStream | null;
   isMuted: boolean;
   isVideoOff: boolean;
+  isScreenSharing: boolean;
   isMinimized: boolean;
   incomingCall: CallSessionDto | null;
   peerId: string | null;
@@ -56,6 +57,8 @@ export interface CallContextType {
   endCall: () => Promise<void>;
   toggleMute: () => void;
   toggleVideo: () => void;
+  startScreenShare: () => Promise<void>;
+  stopScreenShare: () => void;
   minimize: () => void;
   expand: () => void;
 }
@@ -296,6 +299,7 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
   const [remoteStream, setRemoteStream] = useState<MediaStream | null>(null);
   const [isMuted, setIsMuted] = useState<boolean>(false);
   const [isVideoOff, setIsVideoOff] = useState<boolean>(false);
+  const [isScreenSharing, setIsScreenSharing] = useState<boolean>(false);
   const [isMinimized, setIsMinimized] = useState<boolean>(false);
   const [incomingCall, setIncomingCall] = useState<CallSessionDto | null>(null);
   const [callState, setCallState] = useState<CallState>('idle');
@@ -315,6 +319,7 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
   const sessionRef = useRef<CallSessionDto | null>(null);
   const incomingCallRef = useRef<CallSessionDto | null>(null);
   const callStartedAtRef = useRef<number | null>(null);
+  const screenStreamRef = useRef<MediaStream | null>(null);
 
   /**
    * Dedicated HTMLAudioElement for remote audio playback.
@@ -452,11 +457,6 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
     }
   }, []);
 
-  /* NOTE: teardown is declared after this callback in source order,
-     but armWatchdog only *references* it inside a setTimeout callback,
-     so the TDZ doesn't bite at runtime. We declare armWatchdog via
-     useCallback with teardown in deps (see below). */
-
   const teardownRef = useRef<((opts?: { playTone?: boolean }) => void) | null>(
     null,
   );
@@ -556,6 +556,15 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
       });
       remoteStreamRef.current = null;
 
+      screenStreamRef.current?.getTracks().forEach((t) => {
+        try {
+          t.stop();
+        } catch {
+          /* ignore */
+        }
+      });
+      screenStreamRef.current = null;
+
       if (
         audioSinkRef.current &&
         audioSinkRef.current.srcObject instanceof MediaStream
@@ -588,6 +597,7 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
       setPeerId(null);
       setIsMuted(false);
       setIsVideoOff(false);
+      setIsScreenSharing(false);
       setIsMinimized(false);
       setCallState('idle');
       setDuration(0);
@@ -694,10 +704,30 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
         (window as unknown as { __pc?: RTCPeerConnection }).__pc = pc;
       }
 
-      // Add local media tracks to the connection
-      stream.getTracks().forEach((track) => {
-        pc.addTrack(track, stream);
-      });
+      /* ── Deterministic m-line order ─────────────────────
+         Audio MUST come first, video second, on BOTH peers.
+         Using addTransceiver (not addTrack) fixes the m-line
+         order regardless of the order returned by getTracks(),
+         which is what was breaking video negotiation. */
+      const audioTrack = stream.getAudioTracks()[0];
+      if (audioTrack) {
+        pc.addTransceiver(audioTrack, {
+          direction: 'sendrecv',
+          streams: [stream],
+        });
+      } else {
+        pc.addTransceiver('audio', { direction: 'recvonly' });
+      }
+
+      const videoTrack = stream.getVideoTracks()[0];
+      if (videoTrack) {
+        pc.addTransceiver(videoTrack, {
+          direction: 'sendrecv',
+          streams: [stream],
+        });
+      } else if (_callType === CallType.Video) {
+        pc.addTransceiver('video', { direction: 'recvonly' });
+      }
 
       pc.ontrack = (event: RTCTrackEvent) => {
         event.track.enabled = true;
@@ -710,7 +740,6 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
           readyState: event.track.readyState,
         });
 
-        // Diagnostics only — no ICE restart hacks.
         event.track.addEventListener('unmute', () =>
           console.log('[Call] remote track UNMUTED', event.track.kind),
         );
@@ -916,8 +945,6 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
       });
       pendingRemoteOfferRef.current = null;
     } else {
-      // The offer hasn't arrived yet. handleSignalMessage will pick it up
-      // when it does and drive the answer from there.
       console.warn('[Call] No pending offer at accept time — awaiting offer signal');
     }
   }, [
@@ -1063,6 +1090,88 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
     setIsVideoOff(next);
   }, [localStream, isVideoOff]);
 
+  /* ── Screen share ────────────────────────────────────── */
+
+  const stopScreenShare = useCallback(() => {
+    const pc = peerConnectionRef.current;
+    const sender = pc?.getSenders().find((s) => s.track?.kind === 'video');
+    const cameraTrack = localStreamRef.current?.getVideoTracks()[0];
+
+    if (sender && cameraTrack) {
+      // Restore the camera track on the existing sender.
+      void sender.replaceTrack(cameraTrack).catch((err) => {
+        console.warn('[Call] Failed to restore camera track:', err);
+      });
+    }
+
+    screenStreamRef.current?.getTracks().forEach((t) => {
+      try {
+        t.stop();
+      } catch {
+        /* ignore */
+      }
+    });
+    screenStreamRef.current = null;
+    setIsScreenSharing(false);
+  }, []);
+
+  const startScreenShare = useCallback(async () => {
+    const pc = peerConnectionRef.current;
+    if (!pc) {
+      console.warn('[Call] No active peer connection for screen share');
+      return;
+    }
+
+    if (!navigator.mediaDevices?.getDisplayMedia) {
+      console.warn('[Call] getDisplayMedia not supported in this browser');
+      return;
+    }
+
+    try {
+      const displayStream = await navigator.mediaDevices.getDisplayMedia({
+        video: true,
+        audio: false,
+      });
+      const displayTrack = displayStream.getVideoTracks()[0];
+      if (!displayTrack) {
+        displayStream.getTracks().forEach((t) => t.stop());
+        return;
+      }
+
+      // Prefer replacing the existing video sender's track (no renegotiation
+      // needed and m-lines stay untouched — the working audio path is safe).
+      const sender = pc.getSenders().find((s) => s.track?.kind === 'video');
+
+      if (sender) {
+        await sender.replaceTrack(displayTrack);
+      } else {
+        // No video sender yet (audio-only call). Add the track and renegotiate.
+        pc.addTrack(displayTrack, displayStream);
+        const offer = await pc.createOffer();
+        await pc.setLocalDescription(offer);
+        const sessionId = sessionRef.current?.sessionId;
+        const peer = activePeerIdRef.current;
+        if (sessionId && peer) {
+          await signalRService.sendCallSignal(sessionId, peer, {
+            type: 'offer',
+            sdp: offer.sdp,
+          });
+        }
+      }
+
+      screenStreamRef.current = displayStream;
+      setIsScreenSharing(true);
+
+      // Auto-stop when the user clicks the browser's "Stop sharing" button.
+      displayTrack.addEventListener('ended', () => {
+        stopScreenShare();
+      });
+    } catch (err) {
+      // User cancelled the picker, or the browser refused. Not fatal.
+      console.warn('[Call] Screen share cancelled or failed:', err);
+    }
+  }, [stopScreenShare]);
+
   const minimize = useCallback(() => setIsMinimized(true), []);
   const expand = useCallback(() => setIsMinimized(false), []);
 
@@ -1086,7 +1195,6 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
       const replyToPeer = activePeerIdRef.current ?? payload.senderId;
 
       if (messageData.type === 'offer' && messageData.sdp) {
-        // Glare guard: only accept an offer when we're in the stable state.
         if (pc && pc.signalingState !== 'stable') {
           console.warn(
             '[Call] glare — dropping offer in signaling state:',
@@ -1120,7 +1228,6 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
           pendingRemoteOfferRef.current = description;
         }
       } else if (messageData.type === 'answer' && messageData.sdp) {
-        // Only accept an answer when we actually sent an offer.
         if (!pc || pc.signalingState !== 'have-local-offer') {
           console.warn(
             '[Call] ignoring answer — signaling state:',
@@ -1232,6 +1339,7 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
       remoteStream,
       isMuted,
       isVideoOff,
+      isScreenSharing,
       isMinimized,
       incomingCall,
       peerId,
@@ -1243,6 +1351,8 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
       endCall,
       toggleMute,
       toggleVideo,
+      startScreenShare,
+      stopScreenShare,
       minimize,
       expand,
     }),
@@ -1252,6 +1362,7 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
       remoteStream,
       isMuted,
       isVideoOff,
+      isScreenSharing,
       isMinimized,
       incomingCall,
       peerId,
@@ -1263,6 +1374,8 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
       endCall,
       toggleMute,
       toggleVideo,
+      startScreenShare,
+      stopScreenShare,
       minimize,
       expand,
     ],
