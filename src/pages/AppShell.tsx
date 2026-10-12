@@ -92,7 +92,6 @@ function AppShell(): React.JSX.Element {
     return () => window.removeEventListener('click', onDocClick);
   }, [userMenuOpen]);
 
-  /* ─── Nav grouping ───────────────────────────────────── */
   const primaryNav: NavItem[] = [
     { to: '/app/dm', label: 'Messages', icon: MessageSquare },
     { to: '/app/groups', label: 'Groups', icon: Users },
@@ -104,10 +103,9 @@ function AppShell(): React.JSX.Element {
     { to: '/app/notifications', label: 'Media', icon: ImageIcon },
   ];
 
-  // Bottom section: Settings first, then Orbit as the special accent.
   const bottomNav: NavItem[] = [
     { to: '/app/settings', label: 'Settings', icon: Settings },
-    { to: '/app/orbit', label: 'Orbit', icon: Orbit, accent: true },
+    { to: '/app/orbit', label: 'Your Orbit', icon: Orbit, accent: true },
   ];
 
   const railWidth = railHovered ? 224 : 68;
@@ -207,17 +205,20 @@ function AppShell(): React.JSX.Element {
         )}
       </AnimatePresence>
 
-      {/* ─── DESKTOP RAIL (overlay — does not push content) ── */}
+      {/* ─── DESKTOP RAIL — always visible, semi-transparent glass ─── */}
       <div
-        className="hidden md:block relative w-[68px] shrink-0"
+        className="hidden md:block relative shrink-0 w-[68px]"
         onMouseEnter={() => setRailHovered(true)}
         onMouseLeave={() => setRailHovered(false)}
       >
         <motion.aside
           initial={false}
           animate={{ width: railWidth }}
-          transition={{ type: 'spring', stiffness: 340, damping: 32 }}
-          className="absolute inset-y-0 left-0 flex flex-col bg-[#0F0D0A] border-r border-white/[0.06] overflow-hidden z-30 shadow-[8px_0_24px_-12px_rgba(0,0,0,0.6)]"
+          transition={{ type: 'spring', stiffness: 360, damping: 34 }}
+          className="absolute inset-y-0 left-0 flex flex-col overflow-hidden z-30
+                     bg-[#0F0D0A]/70 backdrop-blur-2xl
+                     border-r border-white/[0.06]
+                     shadow-[10px_0_40px_-16px_rgba(0,0,0,0.85)]"
         >
           {/* Logo */}
           <div className="h-16 flex items-center px-4 shrink-0 border-b border-white/[0.05]">
@@ -251,7 +252,7 @@ function AppShell(): React.JSX.Element {
               ))}
             </div>
 
-            <div className="my-3 mx-3 h-px bg-white/[0.05]" />
+            <div className="my-4 mx-3 h-px bg-gradient-to-r from-transparent via-white/[0.08] to-transparent" />
 
             <div className="space-y-0.5">
               {activityNav.map((item) => (
@@ -450,87 +451,84 @@ function RailItem({
       onClick={onNavigate}
       className={({ isActive }) =>
         `relative group flex items-center h-10 rounded-xl transition-colors overflow-hidden ${
-          isActive
-            ? 'text-[#EDE5D4]'
-            : 'text-[#A8A29E] hover:text-[#EDE5D4] hover:bg-white/[0.04]'
+          isActive ? 'text-[#EDE5D4]' : 'text-[#A8A29E] hover:text-[#EDE5D4]'
         }`
       }
     >
       {({ isActive }) => (
         <>
-          {/* Accent halo for special items (Orbit) */}
+          {!isActive && (
+            <span className="absolute inset-0 rounded-xl opacity-0 group-hover:opacity-100 transition-opacity duration-200 bg-white/[0.04]" />
+          )}
+
           {accent && !isActive && (
             <span
               aria-hidden
-              className="absolute left-2 top-1/2 -translate-y-1/2 w-7 h-7 rounded-full pointer-events-none opacity-0 group-hover:opacity-100 transition-opacity duration-300"
+              className="absolute left-3 top-1/2 -translate-y-1/2 w-6 h-6 rounded-full pointer-events-none opacity-0 group-hover:opacity-100 transition-opacity duration-300"
               style={{
                 background:
-                  'radial-gradient(circle, rgba(217,119,6,0.45) 0%, rgba(217,119,6,0) 70%)',
+                  'radial-gradient(circle, rgba(217,119,6,0.5) 0%, rgba(217,119,6,0) 70%)',
                 filter: 'blur(6px)',
               }}
             />
           )}
 
-          {/* Active background */}
           {isActive && (
             <motion.span
               layoutId="rail-active-bg"
               transition={{ type: 'spring', stiffness: 400, damping: 34 }}
               className={`absolute inset-0 rounded-xl ring-1 ring-inset ${
                 accent
-                  ? 'bg-[#D97706]/[0.18] ring-[#D97706]/40'
+                  ? 'bg-[#D97706]/[0.16] ring-[#D97706]/35'
                   : 'bg-[#D97706]/[0.10] ring-[#D97706]/20'
               }`}
             />
           )}
 
-          {/* Active left bar */}
           {isActive && (
             <motion.span
               layoutId="rail-active-bar"
               transition={{ type: 'spring', stiffness: 400, damping: 34 }}
-              className="absolute left-0 top-2.5 bottom-2.5 w-[2.5px] rounded-r bg-[#D97706] shadow-[0_0_10px_rgba(217,119,6,0.7)]"
+              className="absolute left-0 top-2.5 bottom-2.5 w-[2.5px] rounded-r bg-[#D97706] shadow-[0_0_12px_rgba(217,119,6,0.8)]"
             />
           )}
 
-          {/* Icon slot */}
           <span className="w-[68px] shrink-0 flex items-center justify-center relative z-10">
             <motion.span
-              whileHover={{ scale: 1.12, rotate: accent ? -8 : 0 }}
-              whileTap={{ scale: 0.94 }}
+              whileHover={{ scale: 1.1 }}
+              whileTap={{ scale: 0.92 }}
               transition={{ type: 'spring', stiffness: 420, damping: 18 }}
               className="inline-flex"
             >
               <Icon
                 className={`w-[18px] h-[18px] transition-colors ${
-                  isActive || accent
+                  isActive
                     ? 'text-[#D97706]'
+                    : accent
+                    ? 'text-[#D97706]/70 group-hover:text-[#D97706]'
                     : 'text-[#A8A29E] group-hover:text-[#EDE5D4]'
                 }`}
               />
             </motion.span>
           </span>
 
-          {/* Label */}
           <span
-            className={`relative z-10 text-[13.5px] font-medium truncate whitespace-nowrap transition-opacity duration-150 ${
+            className={`relative z-10 text-[13.5px] font-medium truncate whitespace-nowrap transition-opacity duration-200 ${
               expanded ? 'opacity-100' : 'opacity-0'
             }`}
           >
             {item.label}
           </span>
 
-          {/* Live pulse on active accent item */}
           {accent && isActive && (
             <motion.span
               aria-hidden
-              animate={{ opacity: [0.4, 1, 0.4] }}
+              animate={{ opacity: [0.3, 1, 0.3] }}
               transition={{ duration: 2.2, repeat: Infinity, ease: 'easeInOut' }}
-              className="relative z-10 ml-auto mr-3 w-1.5 h-1.5 rounded-full bg-[#D97706] shadow-[0_0_8px_rgba(217,119,6,0.8)]"
+              className="relative z-10 ml-auto mr-3 w-1.5 h-1.5 rounded-full bg-[#D97706] shadow-[0_0_8px_rgba(217,119,6,0.9)]"
             />
           )}
 
-          {/* Badge */}
           {typeof item.badge === 'number' && item.badge > 0 && (
             <span className="relative z-10 ml-auto mr-2 min-w-[18px] h-[18px] px-1 rounded-full bg-[#D97706] text-[#0F0D0A] text-[10.5px] font-semibold flex items-center justify-center">
               {item.badge > 99 ? '99+' : item.badge}

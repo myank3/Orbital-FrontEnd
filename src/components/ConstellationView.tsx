@@ -11,7 +11,7 @@ import { presenceStore } from '../services/presenceStore';
 import { useAuth } from '../context/AuthContext';
 import { Avatar } from './Avatar';
 import type { FriendDto } from '../types/api';
-import { Search, X, Users, Sparkles } from 'lucide-react';
+import { Search, X, Users } from 'lucide-react';
 
 /* ────────────────────────────────────────────────────────── */
 /* Deterministic hashing                                      */
@@ -35,8 +35,8 @@ function stableRandom(seed: string, salt: string): number {
 /* Tunables                                                   */
 /* ────────────────────────────────────────────────────────── */
 
-const ONLINE_RADIUS = '28vmin';
-const OFFLINE_RADIUS = '42vmin';
+const ONLINE_RADIUS = '26vmin';
+const OFFLINE_RADIUS = '39vmin';
 const ONLINE_SPIN_SEC = 120;
 const OFFLINE_SPIN_SEC = 240;
 const MAX_ORBIT = 30;
@@ -56,7 +56,7 @@ interface Star {
 
 const STARS: Star[] = (() => {
   const out: Star[] = [];
-  for (let i = 0; i < 70; i++) {
+  for (let i = 0; i < 90; i++) {
     const seed = `star-${i}`;
     out.push({
       top: stableRandom(seed, 'top') * 100,
@@ -64,7 +64,7 @@ const STARS: Star[] = (() => {
       size: 1 + stableRandom(seed, 'size') * 2,
       delay: stableRandom(seed, 'delay') * 6,
       duration: 3 + stableRandom(seed, 'dur') * 4,
-      opacity: 0.15 + stableRandom(seed, 'op') * 0.5,
+      opacity: 0.15 + stableRandom(seed, 'op') * 0.55,
     });
   }
   return out;
@@ -92,7 +92,7 @@ function Starfield() {
 }
 
 /* ────────────────────────────────────────────────────────── */
-/* Tier — one rotating ring of friends                        */
+/* Tier                                                       */
 /* ────────────────────────────────────────────────────────── */
 
 interface TierProps {
@@ -179,10 +179,9 @@ function Tier({
                       onMouseLeave={() => onHover(null)}
                       className="relative flex flex-col items-center focus:outline-none group"
                       aria-label={`Open chat with ${f.displayName}`}
-                      animate={{ scale: isHovered ? 1.2 : 1 }}
+                      animate={{ scale: isHovered ? 1.18 : 1 }}
                       transition={{ type: 'spring', stiffness: 420, damping: 20 }}
                     >
-                      {/* Online glow */}
                       {online && (
                         <motion.span
                           aria-hidden
@@ -202,7 +201,6 @@ function Tier({
                         />
                       )}
 
-                      {/* Hover glow */}
                       <AnimatePresence>
                         {isHovered && (
                           <motion.span
@@ -222,7 +220,6 @@ function Tier({
                         )}
                       </AnimatePresence>
 
-                      {/* Hover ring */}
                       <AnimatePresence>
                         {isHovered && (
                           <motion.span
@@ -243,22 +240,6 @@ function Tier({
                           size="md"
                           isOnline={online}
                         />
-
-                        {/* Sparkle badge on hover */}
-                        <AnimatePresence>
-                          {isHovered && (
-                            <motion.span
-                              aria-hidden
-                              initial={{ opacity: 0, scale: 0, rotate: -30 }}
-                              animate={{ opacity: 1, scale: 1, rotate: 0 }}
-                              exit={{ opacity: 0, scale: 0, rotate: 30 }}
-                              transition={{ type: 'spring', stiffness: 500, damping: 20 }}
-                              className="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full bg-[#D97706] text-[#0F0D0A] flex items-center justify-center shadow-[0_4px_12px_-2px_rgba(217,119,6,0.7)]"
-                            >
-                              <Sparkles className="w-3 h-3" />
-                            </motion.span>
-                          )}
-                        </AnimatePresence>
                       </div>
 
                       <AnimatePresence>
@@ -364,7 +345,7 @@ export default function ConstellationView({ friends: friendsProp }: Constellatio
   const inOrbit = visibleOnline.length + visibleOffline.length;
 
   return (
-    <div className="relative w-full h-full flex flex-col bg-[#0B0A08] text-[#EDE5D4] overflow-hidden">
+    <div className="relative w-full h-full bg-[#0B0A08] text-[#EDE5D4] overflow-hidden">
       <style>{`
         @keyframes constellationSpin {
           from { transform: rotate(0deg); }
@@ -384,40 +365,53 @@ export default function ConstellationView({ friends: friendsProp }: Constellatio
         }
       `}</style>
 
-      {/* ─── Header ────────────────────────────────────────── */}
-      <motion.div
-        initial={{ opacity: 0, y: -8 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.4, ease: [0.22, 1, 0.36, 1] }}
-        className="relative z-10 px-5 py-4 border-b border-white/[0.05] flex items-center justify-between gap-3 shrink-0"
-      >
-        <div className="min-w-0">
-          <h2
-            className="text-[18px] font-semibold tracking-tight flex items-center gap-2"
-            style={{ fontFamily: '"Instrument Serif", Georgia, serif' }}
-          >
-            Your orbit
-          </h2>
-          <p className="text-[12px] text-[#6B6259] mt-0.5 tabular-nums flex items-center gap-1.5">
-            <span
-              className={`inline-block w-1.5 h-1.5 rounded-full ${
-                onlineTotal > 0
-                  ? 'bg-[#4ADE80] shadow-[0_0_8px_rgba(74,222,128,0.8)]'
-                  : 'bg-[#6B6259]'
-              }`}
-            />
-            <span className="text-[#4ADE80] font-medium">{onlineTotal}</span>
-            <span>online ·</span>
-            <span>{friends.length} total</span>
-          </p>
-        </div>
+      <Starfield />
 
+      {/* Floating header top-left */}
+      <motion.div
+        initial={{ opacity: 0, y: -12 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.5, ease: [0.22, 1, 0.36, 1] }}
+        className="absolute top-4 left-4 md:top-5 md:left-5 z-20 pointer-events-none"
+      >
+        <div className="flex items-center gap-3 px-4 py-2.5 rounded-2xl bg-[#0F0D0A]/60 backdrop-blur-xl border border-white/[0.06] shadow-[0_8px_32px_-8px_rgba(0,0,0,0.7)] pointer-events-auto">
+          <div>
+            <h2
+              className="text-[16px] sm:text-[17px] font-medium tracking-tight text-[#EDE5D4]"
+              style={{ fontFamily: '"Instrument Serif", Georgia, serif' }}
+            >
+              Your Orbit
+            </h2>
+            <p className="text-[11px] text-[#6B6259] tabular-nums flex items-center gap-1.5 mt-0.5">
+              <span
+                className={`inline-block w-1.5 h-1.5 rounded-full ${
+                  onlineTotal > 0
+                    ? 'bg-[#4ADE80] shadow-[0_0_8px_rgba(74,222,128,0.8)]'
+                    : 'bg-[#6B6259]'
+                }`}
+              />
+              <span className="text-[#4ADE80] font-medium">{onlineTotal}</span>
+              <span>online ·</span>
+              <span>{friends.length} total</span>
+            </p>
+          </div>
+        </div>
+      </motion.div>
+
+      {/* Floating search top-right */}
+      <motion.div
+        initial={{ opacity: 0, y: -12 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: 0.05, duration: 0.5, ease: [0.22, 1, 0.36, 1] }}
+        className="absolute top-4 right-4 md:top-5 md:right-5 z-20"
+      >
         <motion.div
-          className="relative shrink-0"
           animate={{ width: searchFocused || query ? 240 : 160 }}
           transition={{ type: 'spring', stiffness: 340, damping: 30 }}
+          className="relative"
         >
-          <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-[#6B6259] pointer-events-none" />
+          <div className="absolute inset-0 rounded-2xl bg-[#0F0D0A]/60 backdrop-blur-xl border border-white/[0.06] shadow-[0_8px_32px_-8px_rgba(0,0,0,0.7)] pointer-events-none" />
+          <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-[#6B6259] pointer-events-none z-10" />
           <input
             type="text"
             value={query}
@@ -425,7 +419,7 @@ export default function ConstellationView({ friends: friendsProp }: Constellatio
             onFocus={() => setSearchFocused(true)}
             onBlur={() => setSearchFocused(false)}
             placeholder="Find someone"
-            className="h-8 w-full pl-8 pr-7 rounded-lg bg-white/[0.03] border border-white/[0.06] text-[12px] text-[#EDE5D4] placeholder:text-[#6B6259] focus:outline-none focus:border-[#D97706]/40 focus:bg-white/[0.05] transition-colors"
+            className="relative z-10 h-10 w-full pl-9 pr-8 rounded-2xl bg-transparent text-[12.5px] text-[#EDE5D4] placeholder:text-[#6B6259] focus:outline-none"
           />
           <AnimatePresence>
             {query && (
@@ -434,20 +428,18 @@ export default function ConstellationView({ friends: friendsProp }: Constellatio
                 animate={{ opacity: 1, scale: 1 }}
                 exit={{ opacity: 0, scale: 0.7 }}
                 onClick={() => setQuery('')}
-                className="absolute right-2 top-1/2 -translate-y-1/2 text-[#6B6259] hover:text-[#EDE5D4] transition-colors"
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-[#6B6259] hover:text-[#EDE5D4] transition-colors z-10"
                 aria-label="Clear search"
               >
-                <X className="w-3 h-3" />
+                <X className="w-3.5 h-3.5" />
               </motion.button>
             )}
           </AnimatePresence>
         </motion.div>
       </motion.div>
 
-      {/* ─── Stage ─────────────────────────────────────────── */}
-      <div className="flex-1 flex items-center justify-center overflow-hidden relative">
-        <Starfield />
-
+      {/* Stage */}
+      <div className="absolute inset-0 flex items-center justify-center">
         {loading ? (
           <motion.div
             initial={{ opacity: 0 }}
@@ -494,14 +486,13 @@ export default function ConstellationView({ friends: friendsProp }: Constellatio
           <div
             className="relative"
             style={{
-              width: '88vmin',
-              height: '88vmin',
-              maxWidth: '820px',
-              maxHeight: '820px',
+              width: '80vmin',
+              height: '80vmin',
+              maxWidth: '760px',
+              maxHeight: '760px',
             }}
             onMouseLeave={() => setHoveredId(null)}
           >
-            {/* Core ambient glow */}
             <div
               aria-hidden
               className="absolute inset-0 pointer-events-none"
@@ -511,9 +502,7 @@ export default function ConstellationView({ friends: friendsProp }: Constellatio
               }}
             />
 
-            {/* Orbit rings */}
             <div aria-hidden className="absolute inset-0 pointer-events-none">
-              {/* Online ring */}
               <div
                 className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 rounded-full border border-dashed border-[#4ADE80]/15"
                 style={{
@@ -522,7 +511,6 @@ export default function ConstellationView({ friends: friendsProp }: Constellatio
                   animation: 'ringPulse 6s ease-in-out infinite',
                 }}
               />
-              {/* Offline ring */}
               <div
                 className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 rounded-full border border-dashed border-white/[0.06]"
                 style={{
@@ -533,7 +521,6 @@ export default function ConstellationView({ friends: friendsProp }: Constellatio
               />
             </div>
 
-            {/* Offline tier */}
             <Tier
               friends={visibleOffline}
               radius={OFFLINE_RADIUS}
@@ -546,7 +533,6 @@ export default function ConstellationView({ friends: friendsProp }: Constellatio
               online={false}
             />
 
-            {/* Online tier */}
             <Tier
               friends={visibleOnline}
               radius={ONLINE_RADIUS}
@@ -559,10 +545,8 @@ export default function ConstellationView({ friends: friendsProp }: Constellatio
               online
             />
 
-            {/* Center — you */}
             <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 z-10 pointer-events-none">
               <div className="relative">
-                {/* Triple glow layers */}
                 <span
                   aria-hidden
                   className="absolute inset-0 rounded-full"
@@ -606,7 +590,6 @@ export default function ConstellationView({ friends: friendsProp }: Constellatio
               </div>
             </div>
 
-            {/* +N more */}
             <AnimatePresence>
               {hiddenCount > 0 && !query && (
                 <motion.button
@@ -626,40 +609,45 @@ export default function ConstellationView({ friends: friendsProp }: Constellatio
         )}
       </div>
 
-      {/* ─── Footer ────────────────────────────────────────── */}
+      {/* Floating status pill bottom-center */}
       <motion.div
-        initial={{ opacity: 0, y: 8 }}
+        initial={{ opacity: 0, y: 12 }}
         animate={{ opacity: 1, y: 0 }}
-        transition={{ delay: 0.15, duration: 0.35, ease: [0.22, 1, 0.36, 1] }}
-        className="relative z-10 px-5 py-3 border-t border-white/[0.05] flex items-center justify-between text-[11px] text-[#6B6259] shrink-0"
+        transition={{ delay: 0.2, duration: 0.5, ease: [0.22, 1, 0.36, 1] }}
+        className="absolute bottom-4 left-1/2 -translate-x-1/2 z-20 pointer-events-none"
       >
-        <motion.span
-          key={paused ? 'paused' : 'live'}
-          initial={{ opacity: 0, y: 4 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.18 }}
-          className="flex items-center gap-1.5"
-        >
-          <span
-            className={`inline-block w-1.5 h-1.5 rounded-full ${
-              paused
-                ? 'bg-[#D97706] shadow-[0_0_8px_rgba(217,119,6,0.7)]'
-                : 'bg-[#4ADE80] shadow-[0_0_8px_rgba(74,222,128,0.7)]'
-            }`}
-          />
-          {paused ? 'Paused while you browse' : 'Live — tap a face to chat'}
-        </motion.span>
-
-        {inOrbit > 0 && (
+        <div className="flex items-center gap-2.5 px-4 py-2 rounded-full bg-[#0F0D0A]/60 backdrop-blur-xl border border-white/[0.06] shadow-[0_8px_32px_-8px_rgba(0,0,0,0.7)] pointer-events-auto">
           <motion.span
-            key={inOrbit}
-            initial={{ opacity: 0, scale: 0.9 }}
-            animate={{ opacity: 1, scale: 1 }}
-            className="tabular-nums"
+            key={paused ? 'paused' : 'live'}
+            initial={{ opacity: 0, y: 4 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.18 }}
+            className="flex items-center gap-2 text-[11.5px] text-[#6B6259]"
           >
-            {inOrbit} in orbit
+            <span
+              className={`inline-block w-1.5 h-1.5 rounded-full ${
+                paused
+                  ? 'bg-[#D97706] shadow-[0_0_8px_rgba(217,119,6,0.7)]'
+                  : 'bg-[#4ADE80] shadow-[0_0_8px_rgba(74,222,128,0.7)]'
+              }`}
+            />
+            {paused ? 'Paused' : 'Live'}
           </motion.span>
-        )}
+
+          {inOrbit > 0 && (
+            <>
+              <span className="w-px h-3 bg-white/[0.08]" />
+              <motion.span
+                key={inOrbit}
+                initial={{ opacity: 0, scale: 0.9 }}
+                animate={{ opacity: 1, scale: 1 }}
+                className="text-[11.5px] text-[#6B6259] tabular-nums"
+              >
+                {inOrbit} in orbit
+              </motion.span>
+            </>
+          )}
+        </div>
       </motion.div>
     </div>
   );
