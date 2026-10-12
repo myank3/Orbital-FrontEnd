@@ -14,6 +14,7 @@ import {
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { CallProvider } from './context/CallContext';
 import { ScrollToTop } from './components/ScrollToTop';
+import ConnectionBanner from './components/ConnectionBanner';
 
 // Public pages
 import Landing from './pages/Landing';
@@ -64,7 +65,6 @@ function TokenInterceptor() {
     const token = params.get('token');
     if (!token) return;
 
-    // Clean the URL immediately so the token doesn't linger in history.
     window.history.replaceState({}, '', window.location.pathname);
 
     (async () => {
@@ -83,6 +83,7 @@ export default function App() {
     <BrowserRouter>
       <AuthProvider>
         <CallProvider>
+          <ConnectionBanner />
           <ScrollToTop />
           <TokenInterceptor />
           <Routes>

@@ -16,6 +16,11 @@ import { apiService, extractErrorMessage } from '../services/api';
 import { signalRService } from '../services/signalr';
 import { useAuth } from '../context/AuthContext';
 import {
+  playReceive,
+  playSend,
+  unlockSounds,
+} from '../services/sounds';
+import {
   GroupDto,
   GroupDetailDto,
   GroupMessageDto,
@@ -24,6 +29,7 @@ import {
 } from '../types/api';
 import { Avatar } from './Avatar';
 import { UserProfileModal } from './UserProfileModal';
+import MessageSkeleton from './MessageSkeleton';
 import { validateFileSize } from '../services/upload';
 import {
   Plus,
@@ -669,6 +675,24 @@ export default function GroupPane(): React.JSX.Element {
   const { onType: onGroupType, stop: stopGroupTyping } = useGroupTypingEmitter(activeGroupId);
   const typingUsers = useGroupTypingReceiver(activeGroupId, user?.id);
 
+  // One-time audio unlock on first gesture
+  useEffect(() => {
+    const unlock = () => {
+      unlockSounds();
+      document.removeEventListener('click', unlock);
+      document.removeEventListener('keydown', unlock);
+      document.removeEventListener('touchstart', unlock);
+    };
+    document.addEventListener('click', unlock, { once: true });
+    document.addEventListener('keydown', unlock, { once: true });
+    document.addEventListener('touchstart', unlock, { once: true });
+    return () => {
+      document.removeEventListener('click', unlock);
+      document.removeEventListener('keydown', unlock);
+      document.removeEventListener('touchstart', unlock);
+    };
+  }, []);
+
   const fetchGroups = useCallback(async () => {
     try {
       const data = await apiService.getMyGroups();
@@ -752,6 +776,7 @@ export default function GroupPane(): React.JSX.Element {
           if (prev.some((m) => m.id === msg.id)) return prev;
           return [...prev, msg];
         });
+        if (msg.senderId !== user?.id) playReceive();
         setTimeout(() => {
           messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
         }, 50);
@@ -760,7 +785,7 @@ export default function GroupPane(): React.JSX.Element {
     return () => {
       unsub();
     };
-  }, [activeGroupId]);
+  }, [activeGroupId, user?.id]);
 
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     setFileError(null);
@@ -801,14 +826,14 @@ export default function GroupPane(): React.JSX.Element {
         mediaType = validation.mediaType;
       }
 
-      // Send via SignalR hub so every group member receives it in real time
-      // through the `ReceiveGroupMessage` event. The listener above appends it.
       await signalRService.sendGroupMessage({
         groupId: activeGroupId,
         content: inputContent.trim(),
         mediaUrl,
         mediaType,
       });
+
+      playSend();
 
       setInputContent('');
       setPendingFile(null);
@@ -1052,10 +1077,7 @@ export default function GroupPane(): React.JSX.Element {
               )}
 
               {loadingHistory ? (
-                <div className="h-40 flex items-center justify-center text-[12.5px] text-[#6B6259]">
-                  <Loader2 className="w-4 h-4 animate-spin mr-2 text-[#D97706]" />
-                  Loading messages…
-                </div>
+                <MessageSkeleton />
               ) : messages.length === 0 ? (
                 <div className="h-full flex flex-col items-center justify-center text-center gap-3 py-12">
                   <div className="w-16 h-16 rounded-2xl bg-white/[0.03] border border-white/[0.06] flex items-center justify-center">

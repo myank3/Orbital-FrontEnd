@@ -18,6 +18,11 @@ import { presenceStore } from '../services/presenceStore';
 import { useAuth } from '../context/AuthContext';
 import { useCall } from '../context/CallContext';
 import {
+  playReceive,
+  playSend,
+  unlockSounds,
+} from '../services/sounds';
+import {
   useDmTypingEmitter,
   useDmTypingReceiver,
 } from '../hooks/useTypingIndicator';
@@ -30,6 +35,7 @@ import {
 } from '../types/api';
 import { Avatar } from './Avatar';
 import { UserProfileModal } from './UserProfileModal';
+import MessageSkeleton from './MessageSkeleton';
 import { validateFileSize, formatFileSize } from '../services/upload';
 import {
   Phone,
@@ -281,18 +287,18 @@ const MessageRow = React.memo(function MessageRow({
           </AnimatePresence>
         </div>
 
-       {isMe && isLastOfGroup && (
-  <div
-    className="flex items-center mt-0.5 px-1"
-    aria-label={message.isRead ? 'Read' : 'Delivered'}
-  >
-    <CheckCheck
-      className={`w-3.5 h-3.5 transition-colors ${
-        message.isRead ? 'text-[#4ADE80]' : 'text-[#6B6259]'
-      }`}
-    />
-  </div>
-     )}
+        {isMe && isLastOfGroup && (
+          <div
+            className="flex items-center mt-0.5 px-1"
+            aria-label={message.isRead ? 'Read' : 'Delivered'}
+          >
+            <CheckCheck
+              className={`w-3.5 h-3.5 transition-colors ${
+                message.isRead ? 'text-[#4ADE80]' : 'text-[#6B6259]'
+              }`}
+            />
+          </div>
+        )}
       </div>
     </div>
   );
@@ -511,6 +517,27 @@ function DirectMessagePane(): React.JSX.Element {
   const [composerVisible, setComposerVisible] = useState(true);
   const [showJumpToLatest, setShowJumpToLatest] = useState(false);
 
+  // Local unread counters per friend (device-only)
+  const UNREAD_KEY = `orbital.unreadDms.${user?.id ?? 'anon'}`;
+  const [unreadCounts, setUnreadCounts] = useState<Record<string, number>>(() => {
+    if (typeof window === 'undefined') return {};
+    try {
+      const raw = localStorage.getItem(`orbital.unreadDms.${user?.id ?? 'anon'}`);
+      return raw ? (JSON.parse(raw) as Record<string, number>) : {};
+    } catch {
+      return {};
+    }
+  });
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try {
+      localStorage.setItem(UNREAD_KEY, JSON.stringify(unreadCounts));
+    } catch {
+      /* quota */
+    }
+  }, [unreadCounts, UNREAD_KEY]);
+
   const [, setPresenceTick] = useState(0);
 
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
@@ -523,6 +550,24 @@ function DirectMessagePane(): React.JSX.Element {
     el.style.height = 'auto';
     el.style.height = Math.min(el.scrollHeight, 140) + 'px';
   };
+
+  // One-time audio unlock on first gesture
+  useEffect(() => {
+    const unlock = () => {
+      unlockSounds();
+      document.removeEventListener('click', unlock);
+      document.removeEventListener('keydown', unlock);
+      document.removeEventListener('touchstart', unlock);
+    };
+    document.addEventListener('click', unlock, { once: true });
+    document.addEventListener('keydown', unlock, { once: true });
+    document.addEventListener('touchstart', unlock, { once: true });
+    return () => {
+      document.removeEventListener('click', unlock);
+      document.removeEventListener('keydown', unlock);
+      document.removeEventListener('touchstart', unlock);
+    };
+  }, []);
 
   const loadFriends = useCallback(async () => {
     try {
@@ -598,6 +643,17 @@ function DirectMessagePane(): React.JSX.Element {
     return () => { active = false; };
   }, [userId, friends]);
 
+  // Clear unread badge when opening a conversation
+  useEffect(() => {
+    if (!userId) return;
+    setUnreadCounts((prev) => {
+      if (!prev[userId]) return prev;
+      const next = { ...prev };
+      delete next[userId];
+      return next;
+    });
+  }, [userId]);
+
   useEffect(() => {
     if (!userId) return;
     let active = true;
@@ -651,18 +707,29 @@ function DirectMessagePane(): React.JSX.Element {
 
   useEffect(() => {
     const unsub = signalRService.onReceiveDirectMessage((msg: DirectMessageDto) => {
-      if (
+      const isCurrentChat =
         (msg.senderId === userId && msg.recipientId === user?.id) ||
-        (msg.senderId === user?.id && msg.recipientId === userId)
-      ) {
+        (msg.senderId === user?.id && msg.recipientId === userId);
+
+      if (isCurrentChat) {
         setMessages((prev) => {
           if (prev.some((m) => m.id === msg.id)) return prev;
           return [...prev, msg];
         });
-        if (msg.senderId === userId) void apiService.markDmRead(userId);
+        if (msg.senderId === userId) {
+          playReceive();
+          void apiService.markDmRead(userId);
+        }
         setTimeout(() => {
           messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
         }, 50);
+      } else if (msg.recipientId === user?.id && msg.senderId !== user?.id) {
+        // Incoming message from someone else
+        playReceive();
+        setUnreadCounts((prev) => ({
+          ...prev,
+          [msg.senderId]: (prev[msg.senderId] ?? 0) + 1,
+        }));
       }
     });
     return () => { unsub(); };
@@ -723,6 +790,8 @@ function DirectMessagePane(): React.JSX.Element {
         mediaType,
       });
 
+      playSend();
+
       setInputContent('');
       setPendingFile(null);
       if (fileInputRef.current) fileInputRef.current.value = '';
@@ -768,8 +837,6 @@ function DirectMessagePane(): React.JSX.Element {
       alert(`Call failed: ${extractErrorMessage(err)}`);
     }
   };
-
-  /* ── Delete handlers ─────────────────────────────────── */
 
   const handleDeleteForMe = useCallback(async (m: DirectMessageDto) => {
     setMessages((prev) => prev.filter((x) => x.id !== m.id));
@@ -946,6 +1013,7 @@ function DirectMessagePane(): React.JSX.Element {
             filteredFriends.map((friend) => {
               const isSelected = friend.userId === userId;
               const isOnline = presenceStore.isOnline(friend.userId);
+              const unread = unreadCounts[friend.userId] ?? 0;
               return (
                 <button
                   key={friend.friendshipId}
@@ -970,6 +1038,11 @@ function DirectMessagePane(): React.JSX.Element {
                       @{friend.handle}
                     </p>
                   </div>
+                  {unread > 0 && (
+                    <span className="shrink-0 min-w-[20px] h-5 px-1.5 rounded-full bg-[#D97706] text-[#0F0D0A] text-[11px] font-semibold tabular-nums flex items-center justify-center">
+                      {unread > 99 ? '99+' : unread}
+                    </span>
+                  )}
                 </button>
               );
             })
@@ -1135,10 +1208,7 @@ function DirectMessagePane(): React.JSX.Element {
               )}
 
               {loadingHistory ? (
-                <div className="h-40 flex items-center justify-center text-[12.5px] text-[#6B6259]">
-                  <Loader2 className="w-4 h-4 animate-spin mr-2 text-[#D97706]" />
-                  Loading messages…
-                </div>
+                <MessageSkeleton />
               ) : messages.length === 0 ? (
                 <div className="h-full flex flex-col items-center justify-center text-center gap-3 py-12">
                   <div className="w-16 h-16 rounded-2xl bg-white/[0.03] border border-white/[0.06] flex items-center justify-center">
