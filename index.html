@@ -12,7 +12,7 @@
     <meta property="og:description" content="Warm editorial web client for Orbital chat, real-time messaging, and direct calls." />
     <meta property="og:type" content="website" />
     <meta name="twitter:card" content="summary_large_image" />
-    <meta name="theme-color" content="#0F0D0A" />
+    <meta name="theme-color" content="#0B0A08" />
 
     <!-- PWA + fullscreen -->
     <meta name="mobile-web-app-capable" content="yes" />
@@ -21,7 +21,7 @@
     <meta name="format-detection" content="telephone=no" />
 
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-    <link rel="apple-touch-icon" href="/favicon.svg" />
+    <link rel="apple-touch-icon" href="/icons/icon-192.png" />
     <link rel="mask-icon" href="/favicon.svg" color="#D97706" />
     <link rel="manifest" href="/manifest.webmanifest" />
 
@@ -32,5 +32,14 @@
   <body class="bg-[#EDEAE3] text-[#0F0D0A]">
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
+
+    <!-- Service worker — enables full-screen PWA install on Android -->
+    <script>
+      if ('serviceWorker' in navigator) {
+        window.addEventListener('load', () => {
+          navigator.serviceWorker.register('/sw.js').catch(() => {});
+        });
+      }
+    </script>
   </body>
 </html>
