@@ -5,6 +5,7 @@
 
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { motion, AnimatePresence } from 'motion/react';
 import { apiService, extractErrorMessage } from '../services/api';
 import { FriendDto, PendingFriendRequestDto, UserProfileDto } from '../types/api';
 import { presenceStore } from '../services/presenceStore';
@@ -135,11 +136,8 @@ function FriendsPane(): React.JSX.Element {
     );
   }, [friends, searchQuery]);
 
-  // Only show Discover hits whose full @handle@orbit OR display name
-  // contains the search term. The backend also matches on email, so this
-  // drops email-only matches.
-    // Match if any word in the handle or display name STARTS WITH the query.
-  // "ma" matches "mayank" and "ma" but not "isharma" (buried mid-word).
+  // Match if any word in the handle or display name STARTS WITH the query.
+  // "ma" matches "mayank" but not "isharma" (buried mid-word).
   const filteredDiscoverResults = useMemo(() => {
     const q = discoverQuery.trim().replace(/^@/, '').toLowerCase();
     if (!q) return discoverResults;
@@ -207,23 +205,35 @@ function FriendsPane(): React.JSX.Element {
 
   return (
     <div className="h-full flex flex-col bg-[#0B0A08] text-[#EDE5D4] overflow-hidden">
+      {/* Header */}
       <div className="h-16 px-4 sm:px-6 border-b border-white/[0.05] flex items-center justify-between shrink-0">
         <div className="flex items-center gap-3 min-w-0">
-          <div className="w-9 h-9 rounded-xl bg-white/[0.04] border border-white/[0.06] flex items-center justify-center text-[#D97706] shrink-0">
+          <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-[#D97706]/20 to-[#D97706]/5 border border-[#D97706]/25 flex items-center justify-center text-[#D97706] shrink-0">
             <Users className="w-[18px] h-[18px]" />
           </div>
           <div className="min-w-0">
-            <h2 className="text-[15px] sm:text-[15.5px] font-semibold text-[#EDE5D4] tracking-tight truncate">
+            <h2 className="text-[15.5px] font-semibold text-[#EDE5D4] tracking-tight truncate">
               Friends
             </h2>
-            <p className="text-[11px] sm:text-[11.5px] text-[#6B6259] truncate mt-0.5">
-              {friends.length} friend{friends.length === 1 ? '' : 's'}
-              {onlineCount > 0 ? ` · ${onlineCount} online` : ''}
+            <p className="text-[11.5px] text-[#6B6259] truncate mt-0.5 flex items-center gap-1.5">
+              <span>
+                {friends.length} friend{friends.length === 1 ? '' : 's'}
+              </span>
+              {onlineCount > 0 && (
+                <>
+                  <span className="text-[#6B6259]/60">·</span>
+                  <span className="inline-flex items-center gap-1 text-[#22C55E]">
+                    <span className="w-1.5 h-1.5 rounded-full bg-[#22C55E]" />
+                    {onlineCount} online
+                  </span>
+                </>
+              )}
             </p>
           </div>
         </div>
       </div>
 
+      {/* Tabs + search */}
       <div className="px-4 sm:px-6 py-3 border-b border-white/[0.05] flex flex-col sm:flex-row sm:items-center gap-3 shrink-0">
         <div className="flex items-center gap-1">
           <button
@@ -292,6 +302,7 @@ function FriendsPane(): React.JSX.Element {
         )}
       </div>
 
+      {/* Body */}
       <div className="flex-1 overflow-y-auto px-4 sm:px-6 py-4">
         {loading && activeTab !== 'discover' ? (
           <div className="h-40 flex items-center justify-center text-[12.5px] text-[#6B6259]">
@@ -300,141 +311,139 @@ function FriendsPane(): React.JSX.Element {
           </div>
         ) : activeTab === 'all' ? (
           friends.length === 0 ? (
-            <div className="max-w-md mx-auto mt-12 text-center">
-              <div className="w-16 h-16 rounded-2xl bg-white/[0.03] border border-white/[0.06] flex items-center justify-center mx-auto">
-                <UserCheck className="w-7 h-7 text-[#6B6259]" />
-              </div>
-              <p className="text-[14.5px] text-[#EDE5D4] font-semibold tracking-tight mt-4">
-                No friends yet
-              </p>
-              <p className="text-[12.5px] text-[#6B6259] mt-1 leading-relaxed">
-                Head to Discover to find people by their @handle.
-              </p>
-              <button
-                onClick={() => setActiveTab('discover')}
-                className="mt-5 h-9 px-4 rounded-xl bg-[#D97706] hover:bg-[#B45309] text-[#0F0D0A] text-[12.5px] font-semibold inline-flex items-center gap-1.5 transition-colors"
-              >
-                <Compass className="w-4 h-4" />
-                <span>Discover people</span>
-              </button>
-            </div>
+            <EmptyState
+              icon={<UserCheck className="w-7 h-7 text-[#6B6259]" />}
+              title="No friends yet"
+              subtitle="Head to Discover to find people by their @handle."
+              action={
+                <button
+                  onClick={() => setActiveTab('discover')}
+                  className="mt-5 h-9 px-4 rounded-xl bg-[#D97706] hover:bg-[#B45309] text-[#0F0D0A] text-[12.5px] font-semibold inline-flex items-center gap-1.5 transition-colors"
+                >
+                  <Compass className="w-4 h-4" />
+                  <span>Discover people</span>
+                </button>
+              }
+            />
           ) : filteredFriends.length === 0 ? (
-            <div className="max-w-md mx-auto mt-12 text-center">
-              <div className="w-16 h-16 rounded-2xl bg-white/[0.03] border border-white/[0.06] flex items-center justify-center mx-auto">
-                <Search className="w-7 h-7 text-[#6B6259]" />
-              </div>
-              <p className="text-[14.5px] text-[#EDE5D4] font-semibold tracking-tight mt-4">
-                No matches
-              </p>
-              <p className="text-[12.5px] text-[#6B6259] mt-1">
-                No friends matched &ldquo;{searchQuery}&rdquo;.
-              </p>
-            </div>
+            <EmptyState
+              icon={<Search className="w-7 h-7 text-[#6B6259]" />}
+              title="No matches"
+              subtitle={`No friends matched "${searchQuery}".`}
+            />
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-              {filteredFriends.map((friend) => {
-                const isOnline = presenceStore.isOnline(friend.userId);
-                return (
-                  <div
-                    key={friend.friendshipId}
-                    className="bg-[#1A1816] border border-white/[0.06] rounded-2xl p-4 flex items-center gap-3 hover:border-white/[0.12] transition-colors"
-                  >
-                    <button
-                      type="button"
-                      onClick={() => setProfileModalUserId(friend.userId)}
-                      className="shrink-0 rounded-full focus:outline-none focus-visible:ring-2 focus-visible:ring-[#D97706]/50"
-                      aria-label={`View ${friend.displayName}'s profile`}
+              <AnimatePresence initial={false}>
+                {filteredFriends.map((friend) => {
+                  const isOnline = presenceStore.isOnline(friend.userId);
+                  return (
+                    <motion.div
+                      key={friend.friendshipId}
+                      layout
+                      initial={{ opacity: 0, y: 6 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      exit={{ opacity: 0, y: -4 }}
+                      transition={{ type: 'spring', stiffness: 320, damping: 30 }}
+                      className="group bg-[#1A1816] border border-white/[0.06] rounded-2xl p-4 flex items-center gap-3 hover:border-white/[0.12] hover:bg-[#1E1C19] transition-colors"
                     >
-                      <Avatar
-                        name={friend.displayName}
-                        src={friend.avatarUrl}
-                        size="md"
-                        isOnline={isOnline}
-                      />
-                    </button>
-
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-2">
-                        <p className="text-[13.5px] font-semibold text-[#EDE5D4] truncate">
-                          {friend.displayName}
-                        </p>
-                        <span
-                          className={`inline-block w-1.5 h-1.5 rounded-full shrink-0 ${
-                            isOnline ? 'bg-[#22C55E]' : 'bg-[#6B6259]'
-                          }`}
-                          title={isOnline ? 'Online' : 'Offline'}
+                      <button
+                        type="button"
+                        onClick={() => setProfileModalUserId(friend.userId)}
+                        className="shrink-0 rounded-full focus:outline-none focus-visible:ring-2 focus-visible:ring-[#D97706]/50 transition-transform group-hover:scale-[1.03]"
+                        aria-label={`View ${friend.displayName}'s profile`}
+                      >
+                        <Avatar
+                          name={friend.displayName}
+                          src={friend.avatarUrl}
+                          size="md"
+                          isOnline={isOnline}
                         />
-                      </div>
-                      <p className="text-[11.5px] text-[#6B6259] truncate mt-0.5">
-                        @{friend.handle}
-                      </p>
-                    </div>
+                      </button>
 
-                    <button
-                      onClick={() => navigate(`/app/dm/${friend.userId}`)}
-                      className="shrink-0 h-8 px-3 rounded-lg bg-white/[0.04] hover:bg-white/[0.08] border border-white/[0.06] text-[12px] font-medium text-[#EDE5D4] inline-flex items-center gap-1.5 transition-colors"
-                    >
-                      <MessageSquare className="w-3.5 h-3.5 text-[#D97706]" />
-                      <span>Message</span>
-                    </button>
-                  </div>
-                );
-              })}
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-2">
+                          <p className="text-[13.5px] font-semibold text-[#EDE5D4] truncate">
+                            {friend.displayName}
+                          </p>
+                          <span
+                            className={`inline-block w-1.5 h-1.5 rounded-full shrink-0 ${
+                              isOnline ? 'bg-[#22C55E]' : 'bg-[#6B6259]'
+                            }`}
+                            title={isOnline ? 'Online' : 'Offline'}
+                          />
+                        </div>
+                        <p className="text-[11.5px] text-[#6B6259] truncate mt-0.5">
+                          @{friend.handle}
+                        </p>
+                      </div>
+
+                      <button
+                        onClick={() => navigate(`/app/dm/${friend.userId}`)}
+                        className="shrink-0 h-8 px-3 rounded-lg bg-white/[0.04] hover:bg-[#D97706] border border-white/[0.06] hover:border-[#D97706] text-[12px] font-medium text-[#EDE5D4] hover:text-[#0F0D0A] inline-flex items-center gap-1.5 transition-colors"
+                      >
+                        <MessageSquare className="w-3.5 h-3.5" />
+                        <span>Message</span>
+                      </button>
+                    </motion.div>
+                  );
+                })}
+              </AnimatePresence>
             </div>
           )
         ) : activeTab === 'pending' ? (
           pendingRequests.length === 0 ? (
-            <div className="max-w-md mx-auto mt-12 text-center">
-              <div className="w-16 h-16 rounded-2xl bg-white/[0.03] border border-white/[0.06] flex items-center justify-center mx-auto">
-                <Inbox className="w-7 h-7 text-[#6B6259]" />
-              </div>
-              <p className="text-[14.5px] text-[#EDE5D4] font-semibold tracking-tight mt-4">
-                No pending requests
-              </p>
-              <p className="text-[12.5px] text-[#6B6259] mt-1 leading-relaxed">
-                Incoming friend requests will appear here.
-              </p>
-            </div>
+            <EmptyState
+              icon={<Inbox className="w-7 h-7 text-[#6B6259]" />}
+              title="No pending requests"
+              subtitle="Incoming friend requests will appear here."
+            />
           ) : (
             <div className="space-y-2">
-              {pendingRequests.map((req) => (
-                <div
-                  key={req.friendshipId}
-                  className="bg-[#1A1816] border border-white/[0.06] rounded-2xl p-4 flex items-center gap-3"
-                >
-                  <Avatar
-                    name={req.requesterDisplayName}
-                    src={req.requesterAvatarUrl}
-                    size="md"
-                  />
+              <AnimatePresence initial={false}>
+                {pendingRequests.map((req) => (
+                  <motion.div
+                    key={req.friendshipId}
+                    layout
+                    initial={{ opacity: 0, y: 6 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, y: -4 }}
+                    transition={{ type: 'spring', stiffness: 320, damping: 30 }}
+                    className="bg-[#1A1816] border border-white/[0.06] rounded-2xl p-4 flex items-center gap-3"
+                  >
+                    <Avatar
+                      name={req.requesterDisplayName}
+                      src={req.requesterAvatarUrl}
+                      size="md"
+                    />
 
-                  <div className="min-w-0 flex-1">
-                    <p className="text-[13.5px] font-semibold text-[#EDE5D4] truncate">
-                      {req.requesterDisplayName}
-                    </p>
-                    <p className="text-[11.5px] text-[#6B6259] truncate mt-0.5">
-                      @{req.requesterHandle} · {relativeTime(req.sentAt)}
-                    </p>
-                  </div>
+                    <div className="min-w-0 flex-1">
+                      <p className="text-[13.5px] font-semibold text-[#EDE5D4] truncate">
+                        {req.requesterDisplayName}
+                      </p>
+                      <p className="text-[11.5px] text-[#6B6259] truncate mt-0.5">
+                        @{req.requesterHandle} · {relativeTime(req.sentAt)}
+                      </p>
+                    </div>
 
-                  <div className="flex items-center gap-2 shrink-0">
-                    <button
-                      onClick={() => void handleRespondRequest(req.friendshipId, true)}
-                      className="h-8 px-3 rounded-lg bg-[#D97706] hover:bg-[#B45309] text-[#0F0D0A] text-[12px] font-semibold inline-flex items-center gap-1 transition-colors"
-                    >
-                      <Check className="w-3.5 h-3.5" />
-                      <span className="hidden sm:inline">Accept</span>
-                    </button>
-                    <button
-                      onClick={() => void handleRespondRequest(req.friendshipId, false)}
-                      className="h-8 px-3 rounded-lg bg-white/[0.04] hover:bg-[#B91C1C]/[0.12] border border-white/[0.06] text-[#F87171] text-[12px] font-medium inline-flex items-center gap-1 transition-colors"
-                    >
-                      <X className="w-3.5 h-3.5" />
-                      <span className="hidden sm:inline">Decline</span>
-                    </button>
-                  </div>
-                </div>
-              ))}
+                    <div className="flex items-center gap-2 shrink-0">
+                      <button
+                        onClick={() => void handleRespondRequest(req.friendshipId, true)}
+                        className="h-8 px-3 rounded-lg bg-[#D97706] hover:bg-[#B45309] text-[#0F0D0A] text-[12px] font-semibold inline-flex items-center gap-1 transition-colors"
+                      >
+                        <Check className="w-3.5 h-3.5" />
+                        <span className="hidden sm:inline">Accept</span>
+                      </button>
+                      <button
+                        onClick={() => void handleRespondRequest(req.friendshipId, false)}
+                        className="h-8 px-3 rounded-lg bg-white/[0.04] hover:bg-[#B91C1C]/[0.12] border border-white/[0.06] text-[#F87171] text-[12px] font-medium inline-flex items-center gap-1 transition-colors"
+                      >
+                        <X className="w-3.5 h-3.5" />
+                        <span className="hidden sm:inline">Decline</span>
+                      </button>
+                    </div>
+                  </motion.div>
+                ))}
+              </AnimatePresence>
             </div>
           )
         ) : (
@@ -461,17 +470,11 @@ function FriendsPane(): React.JSX.Element {
             </div>
 
             {discoverQuery.trim().length < 2 && (
-              <div className="mt-12 text-center">
-                <div className="w-16 h-16 rounded-2xl bg-white/[0.03] border border-white/[0.06] flex items-center justify-center mx-auto">
-                  <Compass className="w-7 h-7 text-[#6B6259]" />
-                </div>
-                <p className="text-[14.5px] text-[#EDE5D4] font-semibold tracking-tight mt-4">
-                  Discover people
-                </p>
-                <p className="text-[12.5px] text-[#6B6259] mt-1 leading-relaxed max-w-xs mx-auto">
-                  Type at least 2 characters. Matches full @handle@orbit or display name.
-                </p>
-              </div>
+              <EmptyState
+                icon={<Compass className="w-7 h-7 text-[#6B6259]" />}
+                title="Discover people"
+                subtitle="Type at least 2 characters. Matches word start of @handle or display name."
+              />
             )}
 
             {discoverQuery.trim().length >= 2 && discoverLoading && (
@@ -492,17 +495,11 @@ function FriendsPane(): React.JSX.Element {
               !discoverLoading &&
               !discoverError &&
               filteredDiscoverResults.length === 0 && (
-                <div className="mt-12 text-center">
-                  <div className="w-16 h-16 rounded-2xl bg-white/[0.03] border border-white/[0.06] flex items-center justify-center mx-auto">
-                    <Search className="w-7 h-7 text-[#6B6259]" />
-                  </div>
-                  <p className="text-[14.5px] text-[#EDE5D4] font-semibold tracking-tight mt-4">
-                    No users found
-                  </p>
-                  <p className="text-[12.5px] text-[#6B6259] mt-1">
-                    No one matched &ldquo;{discoverQuery}&rdquo;.
-                  </p>
-                </div>
+                <EmptyState
+                  icon={<Search className="w-7 h-7 text-[#6B6259]" />}
+                  title="No users found"
+                  subtitle={`No one matched "${discoverQuery}".`}
+                />
               )}
 
             {discoverQuery.trim().length >= 2 &&
@@ -510,57 +507,64 @@ function FriendsPane(): React.JSX.Element {
               !discoverError &&
               filteredDiscoverResults.length > 0 && (
                 <div className="mt-4 space-y-2">
-                  {filteredDiscoverResults.map((user) => {
-                    const isFriend = friendUserIds.has(user.id);
-                    const sent = sentTo.has(user.id);
-                    return (
-                      <div
-                        key={user.id}
-                        className="bg-[#1A1816] border border-white/[0.06] rounded-2xl p-4 flex items-center gap-3"
-                      >
-                        <button
-                          type="button"
-                          onClick={() => setProfileModalUserId(user.id)}
-                          className="shrink-0 rounded-full focus:outline-none focus-visible:ring-2 focus-visible:ring-[#D97706]/50"
-                          aria-label={`View ${user.displayName}'s profile`}
+                  <AnimatePresence initial={false}>
+                    {filteredDiscoverResults.map((user) => {
+                      const isFriend = friendUserIds.has(user.id);
+                      const sent = sentTo.has(user.id);
+                      return (
+                        <motion.div
+                          key={user.id}
+                          layout
+                          initial={{ opacity: 0, y: 6 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          exit={{ opacity: 0, y: -4 }}
+                          transition={{ type: 'spring', stiffness: 320, damping: 30 }}
+                          className="bg-[#1A1816] border border-white/[0.06] rounded-2xl p-4 flex items-center gap-3 hover:border-white/[0.12] transition-colors"
                         >
-                          <Avatar name={user.displayName} src={user.avatarUrl} size="md" />
-                        </button>
-
-                        <div className="min-w-0 flex-1">
-                          <p className="text-[13.5px] font-semibold text-[#EDE5D4] truncate">
-                            {user.displayName}
-                          </p>
-                          <p className="text-[11.5px] text-[#6B6259] truncate mt-0.5">
-                            @{user.userHandle}
-                          </p>
-                        </div>
-
-                        {isFriend ? (
                           <button
-                            onClick={() => navigate(`/app/dm/${user.id}`)}
-                            className="shrink-0 h-8 px-3 rounded-lg bg-white/[0.04] hover:bg-white/[0.08] border border-white/[0.06] text-[12px] font-medium text-[#EDE5D4] inline-flex items-center gap-1.5 transition-colors"
+                            type="button"
+                            onClick={() => setProfileModalUserId(user.id)}
+                            className="shrink-0 rounded-full focus:outline-none focus-visible:ring-2 focus-visible:ring-[#D97706]/50"
+                            aria-label={`View ${user.displayName}'s profile`}
                           >
-                            <MessageSquare className="w-3.5 h-3.5 text-[#D97706]" />
-                            <span>Message</span>
+                            <Avatar name={user.displayName} src={user.avatarUrl} size="md" />
                           </button>
-                        ) : sent ? (
-                          <span className="shrink-0 h-8 px-3 rounded-lg bg-white/[0.03] border border-white/[0.06] text-[12px] font-medium text-[#6B6259] inline-flex items-center gap-1.5">
-                            <CheckCircle2 className="w-3.5 h-3.5 text-[#4ADE80]" />
-                            <span>Sent</span>
-                          </span>
-                        ) : (
-                          <button
-                            onClick={() => void handleDiscoverAdd(user)}
-                            className="shrink-0 h-8 px-3 rounded-lg bg-[#D97706] hover:bg-[#B45309] text-[#0F0D0A] text-[12px] font-semibold inline-flex items-center gap-1.5 transition-colors"
-                          >
-                            <UserPlus className="w-3.5 h-3.5" />
-                            <span>Add</span>
-                          </button>
-                        )}
-                      </div>
-                    );
-                  })}
+
+                          <div className="min-w-0 flex-1">
+                            <p className="text-[13.5px] font-semibold text-[#EDE5D4] truncate">
+                              {user.displayName}
+                            </p>
+                            <p className="text-[11.5px] text-[#6B6259] truncate mt-0.5">
+                              @{user.userHandle}
+                            </p>
+                          </div>
+
+                          {isFriend ? (
+                            <button
+                              onClick={() => navigate(`/app/dm/${user.id}`)}
+                              className="shrink-0 h-8 px-3 rounded-lg bg-white/[0.04] hover:bg-white/[0.08] border border-white/[0.06] text-[12px] font-medium text-[#EDE5D4] inline-flex items-center gap-1.5 transition-colors"
+                            >
+                              <MessageSquare className="w-3.5 h-3.5 text-[#D97706]" />
+                              <span>Message</span>
+                            </button>
+                          ) : sent ? (
+                            <span className="shrink-0 h-8 px-3 rounded-lg bg-white/[0.03] border border-white/[0.06] text-[12px] font-medium text-[#6B6259] inline-flex items-center gap-1.5">
+                              <CheckCircle2 className="w-3.5 h-3.5 text-[#4ADE80]" />
+                              <span>Sent</span>
+                            </span>
+                          ) : (
+                            <button
+                              onClick={() => void handleDiscoverAdd(user)}
+                              className="shrink-0 h-8 px-3 rounded-lg bg-[#D97706] hover:bg-[#B45309] text-[#0F0D0A] text-[12px] font-semibold inline-flex items-center gap-1.5 transition-colors"
+                            >
+                              <UserPlus className="w-3.5 h-3.5" />
+                              <span>Add</span>
+                            </button>
+                          )}
+                        </motion.div>
+                      );
+                    })}
+                  </AnimatePresence>
                 </div>
               )}
           </div>
@@ -571,6 +575,33 @@ function FriendsPane(): React.JSX.Element {
         userId={profileModalUserId}
         onClose={() => setProfileModalUserId(null)}
       />
+    </div>
+  );
+}
+
+function EmptyState({
+  icon,
+  title,
+  subtitle,
+  action,
+}: {
+  icon: React.ReactNode;
+  title: string;
+  subtitle: string;
+  action?: React.ReactNode;
+}) {
+  return (
+    <div className="max-w-md mx-auto mt-12 text-center">
+      <div className="w-16 h-16 rounded-2xl bg-white/[0.03] border border-white/[0.06] flex items-center justify-center mx-auto">
+        {icon}
+      </div>
+      <p className="text-[14.5px] text-[#EDE5D4] font-semibold tracking-tight mt-4">
+        {title}
+      </p>
+      <p className="text-[12.5px] text-[#6B6259] mt-1 leading-relaxed">
+        {subtitle}
+      </p>
+      {action}
     </div>
   );
 }
