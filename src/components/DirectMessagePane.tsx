@@ -23,6 +23,7 @@ import {
   encryptFor,
   getPublicKeyFor,
 } from '../services/cryptoService';
+import { compressImage } from '../services/imageCompress';
 import {
   playReceive,
   playSend,
@@ -515,6 +516,10 @@ function DirectMessagePane(): React.JSX.Element {
   const [friendRequestStatus, setFriendRequestStatus] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
 
+  // Tracks the newest message timestamp per peer userId, used to sort
+  // the conversation list like WhatsApp (most recent at the top).
+  const [lastMessageTimes, setLastMessageTimes] = useState<Record<string, number>>({});
+
   const [pendingDeleteEveryoneId, setPendingDeleteEveryoneId] = useState<
     string | number | null
   >(null);
@@ -604,15 +609,27 @@ function DirectMessagePane(): React.JSX.Element {
     return incomingCall.initiatorId === userId;
   }, [incomingCall, userId]);
 
+  // WhatsApp-style ordering: most recently messaged conversations on top.
+  // Friends without a known message time fall back to backend order at the bottom.
   const filteredFriends = useMemo(() => {
-    if (!searchQuery.trim()) return friends;
     const q = searchQuery.trim().toLowerCase();
-    return friends.filter(
-      (f) =>
-        f.displayName.toLowerCase().includes(q) ||
-        (f.handle ?? '').toLowerCase().includes(q),
-    );
-  }, [friends, searchQuery]);
+    const base = [...friends];
+    const list = q
+      ? base.filter(
+          (f) =>
+            f.displayName.toLowerCase().includes(q) ||
+            (f.handle ?? '').toLowerCase().includes(q),
+        )
+      : base;
+
+    list.sort((a, b) => {
+      const ta = lastMessageTimes[a.userId] ?? 0;
+      const tb = lastMessageTimes[b.userId] ?? 0;
+      return tb - ta;
+    });
+
+    return list;
+  }, [friends, searchQuery, lastMessageTimes]);
 
   useEffect(() => {
     if (!userId) { setTargetUser(null); setMessages([]); return; }
@@ -679,6 +696,15 @@ function DirectMessagePane(): React.JSX.Element {
 
         setMessages(decrypted);
         setHasMore(history.length >= 50);
+
+        if (decrypted.length > 0) {
+          const latest = decrypted.reduce(
+            (max, m) => Math.max(max, new Date(m.sentAt).getTime()),
+            0,
+          );
+          setLastMessageTimes((prev) => ({ ...prev, [userId]: latest }));
+        }
+
         void apiService.markDmRead(userId);
         setTimeout(() => {
           messagesEndRef.current?.scrollIntoView({ behavior: 'auto' });
@@ -720,6 +746,16 @@ function DirectMessagePane(): React.JSX.Element {
     const unsub = signalRService.onReceiveDirectMessage(async (msg: DirectMessageDto) => {
       const decrypted = await decryptOne(msg, user?.id ?? '');
 
+      // Bump the conversation to the top of the sidebar on any traffic.
+      const otherId = msg.senderId === user?.id ? msg.recipientId : msg.senderId;
+      const ts = new Date(msg.sentAt).getTime();
+      if (otherId) {
+        setLastMessageTimes((prev) => {
+          if (prev[otherId] && prev[otherId] >= ts) return prev;
+          return { ...prev, [otherId]: ts };
+        });
+      }
+
       const isCurrentChat =
         (msg.senderId === userId && msg.recipientId === user?.id) ||
         (msg.senderId === user?.id && msg.recipientId === userId);
@@ -757,10 +793,11 @@ function DirectMessagePane(): React.JSX.Element {
     }
   }, [isPeerTyping]);
 
-  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
     setFileError(null);
     const file = e.target.files?.[0];
     if (!file) return;
+
     const validation = validateFileSize(file);
     if (!validation.valid) {
       setFileError('File is too large (max 25 MB).');
@@ -768,7 +805,19 @@ function DirectMessagePane(): React.JSX.Element {
       if (fileInputRef.current) fileInputRef.current.value = '';
       return;
     }
-    setPendingFile(file);
+
+    // Compress images before staging — keeps the in-memory payload tiny
+    // and prevents the 130 MB+ RAM spike per send.
+    if (file.type.startsWith('image/')) {
+      try {
+        const compressed = await compressImage(file);
+        setPendingFile(compressed);
+      } catch {
+        setPendingFile(file);
+      }
+    } else {
+      setPendingFile(file);
+    }
   };
 
   const handleSendMessage = async (e: React.FormEvent) => {
@@ -814,6 +863,9 @@ function DirectMessagePane(): React.JSX.Element {
       });
 
       playSend();
+
+      // Sending bumps this conversation to the top of the sidebar.
+      setLastMessageTimes((prev) => ({ ...prev, [userId]: Date.now() }));
 
       setInputContent('');
       setPendingFile(null);

@@ -128,3 +128,19 @@ body {
     touch-action: manipulation;
   }
 }
+/* ────────────────────────────────────────────────────────── */
+/* Lightweight entrance animations (replaces motion/react)    */
+/* ────────────────────────────────────────────────────────── */
+
+@keyframes orbital-fade-up {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0);   }
+}
+
+.orbital-fade-up {
+  animation: orbital-fade-up 0.5s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .orbital-fade-up { animation: none; }
+}

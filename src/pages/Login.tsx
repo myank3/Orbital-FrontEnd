@@ -11,11 +11,7 @@ import React, {
   useState,
 } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import {
-  AnimatePresence,
-  motion,
-  useReducedMotion,
-} from 'motion/react';
+import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
 import {
   AlertCircle,
   AlertTriangle,
@@ -35,7 +31,6 @@ import { AuthInput } from '../components/AuthInput';
 import { AuthButton } from '../components/AuthButton';
 import { API_BASE_URL, extractErrorMessage } from '../services/api';
 
-const SPRING = { type: 'spring' as const, stiffness: 240, damping: 26 };
 const SOFT_SPRING = { type: 'spring' as const, stiffness: 180, damping: 22 };
 
 type IdentifierMode = 'handle' | 'email' | 'unknown';
@@ -287,7 +282,6 @@ function ErrorBanner({
 function Login(): React.JSX.Element {
   const navigate = useNavigate();
   const { login } = useAuth();
-  const reduceMotion = useReducedMotion();
 
   const [identifier, setIdentifier] = useState('');
   const [password, setPassword] = useState('');
@@ -402,7 +396,8 @@ function Login(): React.JSX.Element {
   };
 
   const handleGoogleLogin = () => {
-  window.location.href = `${API_BASE_URL.replace(/\/+$/, '')}/api/Auth/google-login?prompt=select_account`; };
+    window.location.href = `${API_BASE_URL.replace(/\/+$/, '')}/api/Auth/google-login?prompt=select_account`;
+  };
 
   const onIdentifierChange = (value: string) => {
     setIdentifier(value);
@@ -422,21 +417,13 @@ function Login(): React.JSX.Element {
     if (error?.kind === 'credentials') setError(null);
   };
 
-  const stagger = (delay: number) =>
-    reduceMotion
-      ? {}
-      : {
-          initial: { opacity: 0, y: 8 },
-          animate: { opacity: 1, y: 0 },
-          transition: { ...SPRING, delay },
-        };
-
   const busy = loading;
 
   return (
     <AuthShell title="Sign in" subtitle="Welcome back to Orbital.">
       <div className="space-y-5">
-        <motion.div {...stagger(0)}>
+        {/* Google button — CSS fade, no JS spring solver */}
+        <div className="orbital-fade-up">
           <button
             type="button"
             onClick={handleGoogleLogin}
@@ -446,9 +433,13 @@ function Login(): React.JSX.Element {
             <GoogleIcon />
             <span>Continue with Google</span>
           </button>
-        </motion.div>
+        </div>
 
-        <motion.div {...stagger(0.06)} className="relative">
+        {/* Divider — CSS fade */}
+        <div
+          className="orbital-fade-up relative"
+          style={{ animationDelay: '0.06s' }}
+        >
           <div className="absolute inset-0 flex items-center" aria-hidden>
             <div className="w-full border-t border-white/[0.08]" />
           </div>
@@ -457,10 +448,15 @@ function Login(): React.JSX.Element {
               or
             </span>
           </div>
-        </motion.div>
+        </div>
 
         <form onSubmit={handleSubmit} className="space-y-4" noValidate>
-          <motion.div {...stagger(0.12)} ref={identifierRef}>
+          {/* Identifier field — CSS fade */}
+          <div
+            ref={identifierRef}
+            className="orbital-fade-up"
+            style={{ animationDelay: '0.12s' }}
+          >
             <AuthInput
               id="login-identifier"
               label="Email or handle"
@@ -475,9 +471,14 @@ function Login(): React.JSX.Element {
               error={fieldErrors.identifier}
               hint="Use your email or handle@orbit"
             />
-          </motion.div>
+          </div>
 
-          <motion.div {...stagger(0.18)} className="space-y-2" ref={passwordRef}>
+          {/* Password field — CSS fade */}
+          <div
+            ref={passwordRef}
+            className="orbital-fade-up space-y-2"
+            style={{ animationDelay: '0.18s' }}
+          >
             <AuthInput
               id="login-password"
               label="Password"
@@ -498,7 +499,7 @@ function Login(): React.JSX.Element {
                 Forgot password?
               </Link>
             </div>
-          </motion.div>
+          </div>
 
           <AnimatePresence initial={false}>
             {error && (
@@ -512,16 +513,18 @@ function Login(): React.JSX.Element {
             )}
           </AnimatePresence>
 
-          <motion.div {...stagger(0.24)}>
+          {/* Submit — CSS fade */}
+          <div className="orbital-fade-up" style={{ animationDelay: '0.24s' }}>
             <AuthButton type="submit" loading={loading} variant="primary">
               {retryCountdown ? `Try again in ${retryCountdown}s` : 'Sign in'}
             </AuthButton>
-          </motion.div>
+          </div>
         </form>
 
-        <motion.div
-          {...stagger(0.3)}
-          className="pt-5 border-t border-white/[0.06] text-center text-[12.5px] text-[#A8A29E]"
+        {/* Footer link — CSS fade */}
+        <div
+          className="orbital-fade-up pt-5 border-t border-white/[0.06] text-center text-[12.5px] text-[#A8A29E]"
+          style={{ animationDelay: '0.3s' }}
         >
           Don't have an account?{' '}
           <Link
@@ -530,7 +533,7 @@ function Login(): React.JSX.Element {
           >
             Sign up
           </Link>
-        </motion.div>
+        </div>
       </div>
     </AuthShell>
   );
