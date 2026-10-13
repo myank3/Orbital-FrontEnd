@@ -138,16 +138,18 @@ function FriendsPane(): React.JSX.Element {
 
   // Match if any word in the handle or display name STARTS WITH the query.
   // "ma" matches "mayank" but not "isharma" (buried mid-word).
+    // Exact word match — the query must equal a whole word in the handle
+  // or display name. "may" does NOT match "mayank". "mayank" does.
   const filteredDiscoverResults = useMemo(() => {
     const q = discoverQuery.trim().replace(/^@/, '').toLowerCase();
     if (!q) return discoverResults;
 
-    const anyWordStartsWith = (haystack: string): boolean => {
+    const hasExactWord = (haystack: string): boolean => {
       const words = haystack
         .toLowerCase()
         .split(/[^a-z0-9]+/)
         .filter(Boolean);
-      return words.some((w) => w.startsWith(q));
+      return words.some((w) => w === q);
     };
 
     return discoverResults.filter((u) => {
@@ -155,8 +157,8 @@ function FriendsPane(): React.JSX.Element {
         u.fullHandle || `${u.userHandle}@orbit`
       ).replace(/^@/, '');
       return (
-        anyWordStartsWith(fullHandle) ||
-        anyWordStartsWith(u.displayName)
+        hasExactWord(fullHandle) ||
+        hasExactWord(u.displayName)
       );
     });
   }, [discoverResults, discoverQuery]);
