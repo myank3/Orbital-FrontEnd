@@ -18,6 +18,12 @@ import { presenceStore } from '../services/presenceStore';
 import { useAuth } from '../context/AuthContext';
 import { useCall } from '../context/CallContext';
 import {
+  decryptBatch,
+  decryptOne,
+  encryptFor,
+  getPublicKeyFor,
+} from '../services/cryptoService';
+import {
   playReceive,
   playSend,
   unlockSounds,
@@ -148,6 +154,7 @@ const MessageRow = React.memo(function MessageRow({
   };
 
   const hasMedia = Boolean(message.mediaUrl);
+  const displayText = message.plaintext ?? message.content ?? '';
 
   return (
     <div
@@ -242,8 +249,8 @@ const MessageRow = React.memo(function MessageRow({
               </div>
             )}
 
-            {message.content && (
-              <p className="whitespace-pre-wrap">{message.content}</p>
+            {displayText && (
+              <p className="whitespace-pre-wrap">{displayText}</p>
             )}
           </div>
 
@@ -662,17 +669,20 @@ function DirectMessagePane(): React.JSX.Element {
       setLoadingHistory(true);
       try {
         const history = await apiService.getDmHistory(userId, 50);
-        if (active) {
-          const sorted = [...history].sort(
-            (a, b) => new Date(a.sentAt).getTime() - new Date(b.sentAt).getTime(),
-          );
-          setMessages(sorted);
-          setHasMore(history.length >= 50);
-          void apiService.markDmRead(userId);
-          setTimeout(() => {
-            messagesEndRef.current?.scrollIntoView({ behavior: 'auto' });
-          }, 50);
-        }
+        if (!active) return;
+
+        const sorted = [...history].sort(
+          (a, b) => new Date(a.sentAt).getTime() - new Date(b.sentAt).getTime(),
+        );
+        const decrypted = await decryptBatch(sorted, user?.id ?? '');
+        if (!active) return;
+
+        setMessages(decrypted);
+        setHasMore(history.length >= 50);
+        void apiService.markDmRead(userId);
+        setTimeout(() => {
+          messagesEndRef.current?.scrollIntoView({ behavior: 'auto' });
+        }, 50);
       } catch (err) {
         console.error('Error fetching DM history:', err);
       } finally {
@@ -681,7 +691,7 @@ function DirectMessagePane(): React.JSX.Element {
     };
     void fetchHistory();
     return () => { active = false; };
-  }, [userId]);
+  }, [userId, user?.id]);
 
   const handleLoadEarlier = async () => {
     if (!userId || loadingMore || !hasMore || messages.length === 0) return;
@@ -693,7 +703,8 @@ function DirectMessagePane(): React.JSX.Element {
         const sortedEarlier = [...earlier].sort(
           (a, b) => new Date(a.sentAt).getTime() - new Date(b.sentAt).getTime(),
         );
-        setMessages((prev) => [...sortedEarlier, ...prev]);
+        const decrypted = await decryptBatch(sortedEarlier, user?.id ?? '');
+        setMessages((prev) => [...decrypted, ...prev]);
         setHasMore(earlier.length >= 50);
       } else {
         setHasMore(false);
@@ -706,7 +717,9 @@ function DirectMessagePane(): React.JSX.Element {
   };
 
   useEffect(() => {
-    const unsub = signalRService.onReceiveDirectMessage((msg: DirectMessageDto) => {
+    const unsub = signalRService.onReceiveDirectMessage(async (msg: DirectMessageDto) => {
+      const decrypted = await decryptOne(msg, user?.id ?? '');
+
       const isCurrentChat =
         (msg.senderId === userId && msg.recipientId === user?.id) ||
         (msg.senderId === user?.id && msg.recipientId === userId);
@@ -714,7 +727,7 @@ function DirectMessagePane(): React.JSX.Element {
       if (isCurrentChat) {
         setMessages((prev) => {
           if (prev.some((m) => m.id === msg.id)) return prev;
-          return [...prev, msg];
+          return [...prev, decrypted];
         });
         if (msg.senderId === userId) {
           playReceive();
@@ -724,7 +737,6 @@ function DirectMessagePane(): React.JSX.Element {
           messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
         }, 50);
       } else if (msg.recipientId === user?.id && msg.senderId !== user?.id) {
-        // Incoming message from someone else
         playReceive();
         setUnreadCounts((prev) => ({
           ...prev,
@@ -783,9 +795,20 @@ function DirectMessagePane(): React.JSX.Element {
         mediaType = validateFileSize(pendingFile).mediaType;
       }
 
+      // Encrypt the text (if any) for the recipient
+      let ciphertext = '';
+      let nonce = '';
+      if (inputContent.trim()) {
+        const recipientPub = await getPublicKeyFor(userId);
+        const enc = await encryptFor(recipientPub, inputContent.trim());
+        ciphertext = enc.ciphertext;
+        nonce = enc.nonce;
+      }
+
       await signalRService.sendDirectMessage({
         recipientId: userId,
-        content: inputContent.trim(),
+        ciphertext,
+        nonce,
         mediaUrl,
         mediaType,
       });
@@ -872,14 +895,15 @@ function DirectMessagePane(): React.JSX.Element {
           const sorted = [...history].sort(
             (a, b) => new Date(a.sentAt).getTime() - new Date(b.sentAt).getTime(),
           );
-          setMessages(sorted);
+          const decrypted = await decryptBatch(sorted, user?.id ?? '');
+          setMessages(decrypted);
         } catch {
           /* ignore */
         }
       }
       alert(`Delete for everyone failed: ${extractErrorMessage(err)}`);
     }
-  }, [pendingDeleteEveryoneId, userId]);
+  }, [pendingDeleteEveryoneId, userId, user?.id]);
 
   const handleUnfriend = async () => {
     if (!userId) return;

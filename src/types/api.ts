@@ -68,16 +68,22 @@ export interface DirectMessageDto {
   id: number;
   senderId: string;
   recipientId: string;
-  content: string;
+  ciphertext: string | null;
+  nonce: string | null;
+  content: string | null;
   mediaUrl?: string;
-  mediaType: number;
+  mediaType?: number;
   isRead: boolean;
   sentAt: string;
+
+  // Client-only: filled after decryption. Never sent to the server.
+  plaintext?: string;
 }
 
 export interface SendDirectMessageDto {
   recipientId: string;
-  content: string;
+  ciphertext: string;
+  nonce: string;
   mediaUrl?: string;
   mediaType?: number;
 }
@@ -156,11 +162,11 @@ export interface RegisterDto {
 
 export interface LoginDto {
   identifier: string;
-  password: string;// client-only, never sent to backend
+  password: string;
 }
+
 export interface LoginResponseDto {
   token: string;
-  // ... your existing fields stay exactly as they are
 }
 
 export interface ConfirmEmailDto {

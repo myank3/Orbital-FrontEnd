@@ -35,11 +35,7 @@ export const API_BASE_URL: string =
   (import.meta.env.VITE_API_BASE as string | undefined) ?? 'https://orbital.runasp.net';
 
 export const TOKEN_KEY = 'orbital.token';
-export const MAX_FILE_SIZE = 25 * 1024 * 1024; // 25 MB ceiling
-
-/* ────────────────────────────────────────────────────────── */
-/* Access token — stored in localStorage only                  */
-/* ────────────────────────────────────────────────────────── */
+export const MAX_FILE_SIZE = 25 * 1024 * 1024;
 
 export function getAccessToken(): string | null {
   if (typeof window === 'undefined') return null;
@@ -51,11 +47,6 @@ export function setAccessToken(token: string | null): void {
   if (token) localStorage.setItem(TOKEN_KEY, token);
   else localStorage.removeItem(TOKEN_KEY);
 }
-
-/* ────────────────────────────────────────────────────────── */
-/* Refresh helper — used by signalr.ts to avoid 401s on       */
-/* SignalR reconnect when the access token has expired.       */
-/* ────────────────────────────────────────────────────────── */
 
 export async function refreshAuthToken(): Promise<string | null> {
   const current = getAccessToken();
@@ -121,11 +112,15 @@ export function extractErrorMessage(
   return fallback;
 }
 
-export function validateFileSize(file: File): { valid: boolean; error?: string } {
+export function validateFileSize(file: File): { valid: boolean; error?: string; mediaType: number } {
   if (file.size > MAX_FILE_SIZE) {
-    return { valid: false, error: 'File size exceeds 25 MB limit.' };
+    return { valid: false, error: 'File size exceeds 25 MB limit.', mediaType: 0 };
   }
-  return { valid: true };
+  let mediaType = 4;
+  if (file.type.startsWith('image/')) mediaType = 1;
+  else if (file.type.startsWith('video/')) mediaType = 2;
+  else if (file.type.startsWith('audio/')) mediaType = 3;
+  return { valid: true, mediaType };
 }
 
 export function formatFileSize(bytes: number): string {
@@ -312,7 +307,6 @@ const apiService = {
     );
   },
 
-  /** Search all users (excluding self) by handle, name, or email. */
   async searchUsers(query: string, take = 30): Promise<UserProfileDto[]> {
     const params = new URLSearchParams({
       q: query.trim(),
@@ -382,12 +376,38 @@ const apiService = {
     );
   },
 
-  /** Returns full profiles of everyone you've blocked. */
   async getBlockedUsers(): Promise<UserProfileDto[]> {
     return request<UserProfileDto[]>('/api/Friendship/blocked', {
       method: 'GET',
     });
   },
+
+  /* ── E2EE: public key endpoints ──────────────────────── */
+
+  async uploadPublicKey(publicKey: string): Promise<void> {
+    await request<void>('/api/Keys/upload', {
+      method: 'POST',
+      body: JSON.stringify({ publicKey }),
+    });
+  },
+
+  async getMyPublicKey(): Promise<string | null> {
+    const res = await request<{ publicKey: string | null }>(
+      '/api/Keys/me',
+      { method: 'GET' },
+    );
+    return res.publicKey ?? null;
+  },
+
+  async getUserPublicKey(userId: string): Promise<string> {
+    const res = await request<{ publicKey: string }>(
+      `/api/Keys/${encodeURIComponent(userId)}`,
+      { method: 'GET' },
+    );
+    return res.publicKey;
+  },
+
+  /* ── Direct messages ─────────────────────────────────── */
 
   async getDmHistory(
     targetUserId: string,
@@ -422,7 +442,6 @@ const apiService = {
     }
   },
 
-  /** Delete for me — hides the message from your own view only. */
   async deleteDm(messageId: string | number): Promise<void> {
     await request<void>(
       `/api/DirectMessage/${encodeURIComponent(String(messageId))}`,
@@ -430,7 +449,6 @@ const apiService = {
     );
   },
 
-  /** Delete for everyone — only works on messages you sent. */
   async deleteDmForEveryone(messageId: string | number): Promise<void> {
     await request<void>(
       `/api/DirectMessage/${encodeURIComponent(String(messageId))}/everyone`,
@@ -444,6 +462,8 @@ const apiService = {
       { method: 'DELETE' },
     );
   },
+
+  /* ── Groups ──────────────────────────────────────────── */
 
   async getMyGroups(): Promise<GroupDto[]> {
     return request<GroupDto[]>('/api/Group/my-groups', { method: 'GET' });
@@ -503,6 +523,8 @@ const apiService = {
   async deleteGroup(groupId: number): Promise<void> {
     await request<void>(`/api/Group/${groupId}`, { method: 'DELETE' });
   },
+
+  /* ── Calls ───────────────────────────────────────────── */
 
   async getIceServers(): Promise<IceServerConfigDto[]> {
     try {
