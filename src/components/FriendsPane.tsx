@@ -5,7 +5,6 @@
 
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { motion, AnimatePresence } from 'motion/react';
 import { apiService, extractErrorMessage } from '../services/api';
 import { FriendDto, PendingFriendRequestDto, UserProfileDto } from '../types/api';
 import { presenceStore } from '../services/presenceStore';
@@ -53,12 +52,6 @@ function FriendsPane(): React.JSX.Element {
   const [pendingRequests, setPendingRequests] = useState<PendingFriendRequestDto[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [searchQuery, setSearchQuery] = useState('');
-
-  const [addModalOpen, setAddModalOpen] = useState<boolean>(false);
-  const [targetHandle, setTargetHandle] = useState<string>('');
-  const [addLoading, setAddLoading] = useState<boolean>(false);
-  const [addSuccess, setAddSuccess] = useState<string | null>(null);
-  const [addError, setAddError] = useState<string | null>(null);
 
   const [discoverQuery, setDiscoverQuery] = useState('');
   const [discoverResults, setDiscoverResults] = useState<UserProfileDto[]>([]);
@@ -142,6 +135,21 @@ function FriendsPane(): React.JSX.Element {
     );
   }, [friends, searchQuery]);
 
+  // Only show Discover hits whose full @handle@orbit OR display name
+  // contains the search term. The backend also matches on email, so this
+  // drops email-only matches.
+  const filteredDiscoverResults = useMemo(() => {
+    const q = discoverQuery.trim().replace(/^@/, '').toLowerCase();
+    if (!q) return discoverResults;
+    return discoverResults.filter((u) => {
+      const fullHandle = (
+        u.fullHandle || `${u.userHandle}@orbit`
+      ).toLowerCase().replace(/^@/, '');
+      const displayName = u.displayName.toLowerCase();
+      return fullHandle.includes(q) || displayName.includes(q);
+    });
+  }, [discoverResults, discoverQuery]);
+
   const onlineCount = useMemo(
     () => friends.filter((f) => presenceStore.isOnline(f.userId)).length,
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -154,30 +162,6 @@ function FriendsPane(): React.JSX.Element {
       await fetchFriendsAndPending();
     } catch (err) {
       alert(`Could not process request: ${extractErrorMessage(err)}`);
-    }
-  };
-
-  const handleSendFriendRequest = async (e: React.FormEvent) => {
-    e.preventDefault();
-    const handleClean = targetHandle.trim().replace(/^@/, '').replace(/@orbit$/, '');
-    if (!handleClean) {
-      setAddError('Please enter a valid handle.');
-      return;
-    }
-
-    setAddLoading(true);
-    setAddError(null);
-    setAddSuccess(null);
-
-    try {
-      const res = await apiService.sendFriendRequest({ targetIdentifier: handleClean });
-      setAddSuccess(res.message || `Friend request dispatched to @${handleClean}.`);
-      setTargetHandle('');
-      void fetchFriendsAndPending();
-    } catch (err) {
-      setAddError(extractErrorMessage(err));
-    } finally {
-      setAddLoading(false);
     }
   };
 
@@ -225,19 +209,6 @@ function FriendsPane(): React.JSX.Element {
             </p>
           </div>
         </div>
-
-        <button
-          onClick={() => {
-            setAddModalOpen(true);
-            setAddSuccess(null);
-            setAddError(null);
-          }}
-          className="h-9 px-3 sm:px-4 rounded-xl bg-[#D97706] hover:bg-[#B45309] text-[#0F0D0A] text-[12.5px] font-semibold inline-flex items-center gap-1.5 transition-colors shrink-0"
-        >
-          <UserPlus className="w-4 h-4" />
-          <span className="hidden sm:inline">Add Friend</span>
-          <span className="sm:hidden">Add</span>
-        </button>
       </div>
 
       <div className="px-4 sm:px-6 py-3 border-b border-white/[0.05] flex flex-col sm:flex-row sm:items-center gap-3 shrink-0">
@@ -324,7 +295,7 @@ function FriendsPane(): React.JSX.Element {
                 No friends yet
               </p>
               <p className="text-[12.5px] text-[#6B6259] mt-1 leading-relaxed">
-                Find people in Discover, or add someone by their exact handle.
+                Head to Discover to find people by their @handle.
               </p>
               <button
                 onClick={() => setActiveTab('discover')}
@@ -485,7 +456,7 @@ function FriendsPane(): React.JSX.Element {
                   Discover people
                 </p>
                 <p className="text-[12.5px] text-[#6B6259] mt-1 leading-relaxed max-w-xs mx-auto">
-                  Type at least 2 characters. Search matches display names, handles, and emails.
+                  Type at least 2 characters. Matches full @handle@orbit or display name.
                 </p>
               </div>
             )}
@@ -507,7 +478,7 @@ function FriendsPane(): React.JSX.Element {
             {discoverQuery.trim().length >= 2 &&
               !discoverLoading &&
               !discoverError &&
-              discoverResults.length === 0 && (
+              filteredDiscoverResults.length === 0 && (
                 <div className="mt-12 text-center">
                   <div className="w-16 h-16 rounded-2xl bg-white/[0.03] border border-white/[0.06] flex items-center justify-center mx-auto">
                     <Search className="w-7 h-7 text-[#6B6259]" />
@@ -524,9 +495,9 @@ function FriendsPane(): React.JSX.Element {
             {discoverQuery.trim().length >= 2 &&
               !discoverLoading &&
               !discoverError &&
-              discoverResults.length > 0 && (
+              filteredDiscoverResults.length > 0 && (
                 <div className="mt-4 space-y-2">
-                  {discoverResults.map((user) => {
+                  {filteredDiscoverResults.map((user) => {
                     const isFriend = friendUserIds.has(user.id);
                     const sent = sentTo.has(user.id);
                     return (
@@ -582,106 +553,6 @@ function FriendsPane(): React.JSX.Element {
           </div>
         )}
       </div>
-
-      <AnimatePresence>
-        {addModalOpen && (
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            transition={{ duration: 0.15 }}
-            className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4"
-            onClick={() => setAddModalOpen(false)}
-          >
-            <motion.div
-              initial={{ scale: 0.96, opacity: 0, y: 6 }}
-              animate={{ scale: 1, opacity: 1, y: 0 }}
-              exit={{ scale: 0.96, opacity: 0, y: 6 }}
-              transition={{ type: 'spring', stiffness: 340, damping: 28 }}
-              onClick={(e) => e.stopPropagation()}
-              className="w-full max-w-md rounded-2xl bg-[#1A1816] border border-white/[0.08] shadow-[0_24px_60px_-12px_rgba(0,0,0,0.95)] overflow-hidden"
-            >
-              <div className="p-5 border-b border-white/[0.06] flex items-center justify-between">
-                <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-xl bg-white/[0.04] border border-white/[0.06] flex items-center justify-center text-[#D97706] shrink-0">
-                    <UserPlus className="w-[18px] h-[18px]" />
-                  </div>
-                  <div>
-                    <p className="text-[14.5px] font-semibold text-[#EDE5D4] tracking-tight">
-                      Add Friend
-                    </p>
-                    <p className="text-[11.5px] text-[#6B6259] mt-0.5">
-                      Send a request by handle
-                    </p>
-                  </div>
-                </div>
-                <button
-                  onClick={() => setAddModalOpen(false)}
-                  className="w-8 h-8 rounded-lg flex items-center justify-center text-[#A8A29E] hover:text-[#EDE5D4] hover:bg-white/[0.05] transition-colors"
-                  aria-label="Close"
-                >
-                  <X className="w-4 h-4" />
-                </button>
-              </div>
-
-              <form onSubmit={handleSendFriendRequest} className="p-5 space-y-4">
-                <div>
-                  <label className="block text-[11px] uppercase tracking-[0.16em] text-[#6B6259] font-medium mb-2">
-                    Target Handle
-                  </label>
-                  <div className="h-10 w-full rounded-lg bg-[#0F0D0A] px-3.5 flex items-center border border-white/[0.08] focus-within:border-[#D97706]/50 transition-colors">
-                    <span className="text-[12.5px] text-[#6B6259] select-none mr-1">@</span>
-                    <input
-                      type="text"
-                      value={targetHandle}
-                      onChange={(e) => setTargetHandle(e.target.value)}
-                      placeholder="elena_rostova"
-                      className="flex-1 bg-transparent border-none outline-none text-[12.5px] text-[#EDE5D4] placeholder-[#6B6259]"
-                      autoFocus
-                      required
-                    />
-                    <span className="text-[11.5px] font-mono text-[#6B6259] select-none">
-                      @orbit
-                    </span>
-                  </div>
-                </div>
-
-                {addError && (
-                  <div className="p-3 rounded-lg bg-[#B91C1C]/10 border border-[#B91C1C]/20 text-[12px] text-[#F87171] flex items-center gap-2">
-                    <AlertCircle className="w-3.5 h-3.5 shrink-0" />
-                    <span>{addError}</span>
-                  </div>
-                )}
-
-                {addSuccess && (
-                  <div className="p-3 rounded-lg bg-[#15803D]/10 border border-[#15803D]/20 text-[12px] text-[#4ADE80] flex items-center gap-2">
-                    <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
-                    <span>{addSuccess}</span>
-                  </div>
-                )}
-
-                <div className="pt-2 flex items-center justify-end gap-2">
-                  <button
-                    type="button"
-                    onClick={() => setAddModalOpen(false)}
-                    className="h-9 px-4 rounded-lg bg-white/[0.04] hover:bg-white/[0.08] text-[12.5px] text-[#EDE5D4] transition-colors"
-                  >
-                    Close
-                  </button>
-                  <button
-                    type="submit"
-                    disabled={addLoading}
-                    className="h-9 px-4 rounded-lg bg-[#D97706] hover:bg-[#B45309] disabled:opacity-50 text-[#0F0D0A] text-[12.5px] font-semibold inline-flex items-center gap-1.5 transition-colors"
-                  >
-                    {addLoading && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
-                    <span>Send Request</span>
-                  </button>
-                </div>
-              </form>
-            </motion.div>
-          </motion.div>
-        )}
-      </AnimatePresence>
 
       <UserProfileModal
         userId={profileModalUserId}
