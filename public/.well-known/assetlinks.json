@@ -3,6 +3,6 @@
   "target": {
     "namespace": "android_app",
     "package_name": "app.vercel.orbitalhq.twa",
-    "sha256_cert_fingerprints": ["BC:EB:7C:A1:8B:4C:7C:A4:5E:99:72:78:41:CE:72:7C:8D:27:9A:40:D4:D7:54:74:60:2B:E2:A4:09:A9:39:D2"]
+    "sha256_cert_fingerprints": ["32:63:8D:FD:28:F4:68:3E:B2:81:B4:C6:18:46:47:4E:4B:DD:E4:72:8A:C3:B8:71:F5:F2:38:F8:B5:9D:CD:32"]
   }
 }]
