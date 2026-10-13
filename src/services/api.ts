@@ -169,6 +169,18 @@ async function request<T>(endpoint: string, config: RequestConfig = {}): Promise
 
   if (response.status === 401) {
     if (typeof window !== 'undefined') {
+      // Capture the server's reason (e.g. "You signed in on another device")
+      // so the login page can show it after the redirect.
+      let reason: string | null = null;
+      try {
+        const body = (await response.clone().json()) as { message?: string };
+        reason = body?.message ?? null;
+      } catch {
+        /* body isn't JSON — ignore */
+      }
+      if (reason) {
+        sessionStorage.setItem('orbital.auth.reason', reason);
+      }
       window.dispatchEvent(new Event('auth:unauthorized'));
     }
     throw new Error('Unauthorized');
