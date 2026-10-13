@@ -2,12 +2,12 @@
   "name": "Orbital",
   "short_name": "Orbital",
   "description": "Private messaging, group chats, and HD calls.",
-  "start_url": "/app/orbit",
-  "scope": "/",
-  "display": "standalone",
-  "orientation": "portrait",
   "background_color": "#0B0A08",
   "theme_color": "#0B0A08",
+  "display": "standalone",
+  "orientation": "portrait",
+  "start_url": "/app/orbit",
+  "scope": "/",
   "icons": [
     {
       "src": "/icons/icon-192.png",

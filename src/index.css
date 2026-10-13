@@ -75,3 +75,56 @@ body {
   scrollbar-width: thin;
   scrollbar-color: rgba(255, 255, 255, 0.10) transparent;
 }
+
+/* ──────────────────────────────────────────────────────────
+   Mobile-only app-like behavior
+   Only applies on touch devices (phones/tablets).
+   Desktop with mouse/trackpad is completely untouched.
+   ────────────────────────────────────────────────────────── */
+
+@media (pointer: coarse), (hover: none) {
+  /* Kill text selection globally on touch devices.
+     Re-enabled only for inputs and textareas. */
+  *,
+  *::before,
+  *::after {
+    -webkit-user-select: none;
+    -moz-user-select: none;
+    -ms-user-select: none;
+    user-select: none;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  /* Allow typing + selecting in form fields */
+  input,
+  textarea,
+  [contenteditable='true'],
+  .selectable {
+    -webkit-user-select: text;
+    -moz-user-select: text;
+    -ms-user-select: text;
+    user-select: text;
+  }
+
+  /* No long-press context menu on links, images, buttons */
+  a,
+  img,
+  button {
+    -webkit-touch-callout: none;
+  }
+
+  /* Kill rubber-band overscroll */
+  html,
+  body {
+    overscroll-behavior: none;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  /* Prevent iOS's 300ms tap delay */
+  button,
+  a,
+  input,
+  textarea {
+    touch-action: manipulation;
+  }
+}
