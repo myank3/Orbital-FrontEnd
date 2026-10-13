@@ -138,15 +138,28 @@ function FriendsPane(): React.JSX.Element {
   // Only show Discover hits whose full @handle@orbit OR display name
   // contains the search term. The backend also matches on email, so this
   // drops email-only matches.
+    // Match if any word in the handle or display name STARTS WITH the query.
+  // "ma" matches "mayank" and "ma" but not "isharma" (buried mid-word).
   const filteredDiscoverResults = useMemo(() => {
     const q = discoverQuery.trim().replace(/^@/, '').toLowerCase();
     if (!q) return discoverResults;
+
+    const anyWordStartsWith = (haystack: string): boolean => {
+      const words = haystack
+        .toLowerCase()
+        .split(/[^a-z0-9]+/)
+        .filter(Boolean);
+      return words.some((w) => w.startsWith(q));
+    };
+
     return discoverResults.filter((u) => {
       const fullHandle = (
         u.fullHandle || `${u.userHandle}@orbit`
-      ).toLowerCase().replace(/^@/, '');
-      const displayName = u.displayName.toLowerCase();
-      return fullHandle.includes(q) || displayName.includes(q);
+      ).replace(/^@/, '');
+      return (
+        anyWordStartsWith(fullHandle) ||
+        anyWordStartsWith(u.displayName)
+      );
     });
   }, [discoverResults, discoverQuery]);
 
