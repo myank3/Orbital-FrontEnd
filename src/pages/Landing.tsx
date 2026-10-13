@@ -29,26 +29,26 @@ import {
 const SPRING = { type: 'spring' as const, stiffness: 180, damping: 30 };
 
 /* ────────────────────────────────────────────────────────── */
-/* Unsplash imagery — sized for realistic mobile download      */
+/* Unsplash imagery                                          */
 /* ────────────────────────────────────────────────────────── */
 
 const HERO_IMAGE =
-  'https://images.unsplash.com/photo-1419242902214-272b3f66ee7a?w=1600&q=75&auto=format&fit=crop';
+  'https://images.unsplash.com/photo-1419242902214-272b3f66ee7a?w=2400&q=80&auto=format&fit=crop';
 
 const ENCRYPTION_IMAGE =
-  'https://images.unsplash.com/photo-1633265486064-086b219458ec?w=1200&q=75&auto=format&fit=crop';
+  'https://images.unsplash.com/photo-1633265486064-086b219458ec?w=1600&q=80&auto=format&fit=crop';
 
 const FEATURE_MESSAGES_IMAGE =
-  'https://images.unsplash.com/photo-1516110833967-0b5716ca1387?w=800&q=75&auto=format&fit=crop';
+  'https://images.unsplash.com/photo-1516110833967-0b5716ca1387?w=1000&q=80&auto=format&fit=crop';
 
 const FEATURE_GROUPS_IMAGE =
-  'https://images.unsplash.com/photo-1522071820081-009f0129c71c?w=800&q=75&auto=format&fit=crop';
+  'https://images.unsplash.com/photo-1522071820081-009f0129c71c?w=1000&q=80&auto=format&fit=crop';
 
 const FEATURE_CALLS_IMAGE =
-  'https://images.unsplash.com/photo-1516387938699-a93567ec168e?w=800&q=75&auto=format&fit=crop';
+  'https://images.unsplash.com/photo-1516387938699-a93567ec168e?w=1000&q=80&auto=format&fit=crop';
 
 const CTA_IMAGE =
-  'https://images.unsplash.com/photo-1470071459604-3b5ec3a7fe05?w=1600&q=75&auto=format&fit=crop';
+  'https://images.unsplash.com/photo-1470071459604-3b5ec3a7fe05?w=2400&q=80&auto=format&fit=crop';
 
 /* ────────────────────────────────────────────────────────── */
 
@@ -79,14 +79,6 @@ export function Landing() {
     if (reduceMotion) return;
     const el = heroRef.current;
     if (!el) return;
-
-    // Only enable the mouse-tracked glow on real pointer devices.
-    // Touch phones don't fire mousemove, but the listener + RAF loop
-    // still runs for nothing on mobile — skip it entirely there.
-    const isFinePointer =
-      typeof window !== 'undefined' &&
-      window.matchMedia('(hover: hover) and (pointer: fine)').matches;
-    if (!isFinePointer) return;
 
     let raf = 0;
     const onMove = (e: MouseEvent) => {
@@ -131,11 +123,11 @@ export function Landing() {
       <Navbar />
 
       {/* ═══════════════════════════════════════════════════ */}
-      {/* HERO — shorter on mobile for faster paint           */}
+      {/* HERO — trimmed height                               */}
       {/* ═══════════════════════════════════════════════════ */}
       <section
         ref={heroRef}
-        className="relative min-h-[80svh] sm:min-h-[92svh] flex items-center justify-center overflow-hidden"
+        className="relative min-h-[92svh] flex items-center justify-center overflow-hidden"
       >
         <motion.div
           aria-hidden
@@ -145,8 +137,6 @@ export function Landing() {
           <img
             src={HERO_IMAGE}
             alt=""
-            loading="eager"
-            fetchPriority="high"
             className="absolute inset-0 w-full h-full object-cover scale-110"
           />
           <div className="absolute inset-0 bg-[#0F0D0A]/75" />
@@ -186,19 +176,19 @@ export function Landing() {
             y: reduceMotion ? 0 : heroContentY,
             opacity: reduceMotion ? 1 : heroContentOpacity,
           }}
-          className="relative max-w-4xl mx-auto px-5 sm:px-6 text-center will-change-transform"
+          className="relative max-w-4xl mx-auto px-6 text-center will-change-transform"
         >
           <motion.div
             {...reveal(0.05)}
-            className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-white/[0.05] backdrop-blur-md border border-white/[0.10] mb-5 sm:mb-7"
+            className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-white/[0.05] backdrop-blur-md border border-white/[0.10] mb-7"
           >
             <Lock className="w-3 h-3 text-[#D97706]" />
-            <span className="text-[10.5px] sm:text-[11px] uppercase tracking-[0.24em] text-[#A8A29E]">
+            <span className="text-[11px] uppercase tracking-[0.24em] text-[#A8A29E]">
               End-to-end encrypted
             </span>
           </motion.div>
 
-          <h1 className="text-[34px] sm:text-[56px] lg:text-[84px] leading-[1.05] sm:leading-[1] tracking-[-0.04em] text-[#EDE5D4] font-normal">
+          <h1 className="text-[44px] sm:text-[68px] lg:text-[84px] leading-[1] tracking-[-0.04em] text-[#EDE5D4] font-normal">
             {headlineWords.map((word, i) => (
               <motion.span
                 key={`${word}-${i}`}
@@ -209,7 +199,7 @@ export function Landing() {
                   delay: 0.15 + i * 0.07,
                   ease: [0.22, 1, 0.36, 1],
                 }}
-                className={`inline-block mr-2 sm:mr-4 ${
+                className={`inline-block mr-3 sm:mr-4 ${
                   i === 2 || i === 5 ? 'text-[#D97706]' : ''
                 }`}
               >
@@ -220,7 +210,7 @@ export function Landing() {
 
           <motion.p
             {...reveal(0.65)}
-            className="text-[14px] sm:text-[16px] text-[#A8A29E] leading-[1.7] max-w-[560px] mx-auto mt-5 sm:mt-7 px-2"
+            className="text-[15px] sm:text-[16px] text-[#A8A29E] leading-[1.7] max-w-[560px] mx-auto mt-7"
           >
             Every message, call, and file is encrypted on your device before
             it leaves it. We can't read your conversations — and neither can
@@ -229,11 +219,11 @@ export function Landing() {
 
           <motion.div
             {...reveal(0.8)}
-            className="mt-8 sm:mt-10 flex flex-col sm:flex-row items-stretch sm:items-center justify-center gap-3 px-4 sm:px-0 max-w-[420px] sm:max-w-none mx-auto"
+            className="mt-10 flex items-center justify-center gap-3 flex-wrap"
           >
             <Link
               to="/register"
-              className="group relative h-11 px-7 rounded-xl bg-[#D97706] hover:bg-[#B45309] text-[#0F0D0A] text-sm font-medium inline-flex items-center justify-center transition-all duration-200 active:scale-[0.97] shadow-[0_8px_28px_-8px_rgba(217,119,6,0.7)] hover:shadow-[0_12px_40px_-8px_rgba(217,119,6,0.9)]"
+              className="group relative h-11 px-7 rounded-xl bg-[#D97706] hover:bg-[#B45309] text-[#0F0D0A] text-sm font-medium inline-flex items-center transition-all duration-200 active:scale-[0.97] shadow-[0_8px_28px_-8px_rgba(217,119,6,0.7)] hover:shadow-[0_12px_40px_-8px_rgba(217,119,6,0.9)]"
             >
               <span
                 aria-hidden
@@ -247,7 +237,7 @@ export function Landing() {
             </Link>
             <Link
               to="/login"
-              className="h-11 px-7 rounded-xl text-sm text-[#A8A29E] hover:text-[#EDE5D4] transition-colors inline-flex items-center justify-center border border-white/[0.08] hover:border-white/[0.16] backdrop-blur-md bg-white/[0.02]"
+              className="h-11 px-7 rounded-xl text-sm text-[#A8A29E] hover:text-[#EDE5D4] transition-colors inline-flex items-center border border-white/[0.08] hover:border-white/[0.16] backdrop-blur-md bg-white/[0.02]"
             >
               Sign in
             </Link>
@@ -255,7 +245,7 @@ export function Landing() {
 
           <motion.div
             {...reveal(0.95)}
-            className="mt-9 sm:mt-11 flex items-center justify-center gap-x-5 gap-y-2.5 flex-wrap text-[11.5px] sm:text-[12px] text-[#6B6259] px-4"
+            className="mt-11 flex items-center justify-center gap-6 flex-wrap text-[12px] text-[#6B6259]"
           >
             <TrustChip icon={<Lock className="w-3 h-3" />} label="E2E encrypted" />
             <TrustChip icon={<Server className="w-3 h-3" />} label="No data mining" />
@@ -271,6 +261,9 @@ export function Landing() {
             transition={{ delay: 1.4, duration: 0.6 }}
             className="absolute bottom-6 left-1/2 -translate-x-1/2 flex flex-col items-center gap-2"
           >
+            <span className="text-[10px] uppercase tracking-[0.32em] text-[#6B6259]">
+              
+            </span>
             <motion.span
               animate={{ y: [0, 6, 0] }}
               transition={{ duration: 1.8, repeat: Infinity, ease: 'easeInOut' }}
@@ -286,7 +279,7 @@ export function Landing() {
       <section
         id="features"
         ref={encryptionRef}
-        className="relative px-5 sm:px-6 py-14 sm:py-20 lg:py-24 bg-[#0F0D0A] overflow-hidden"
+        className="relative px-6 py-20 sm:py-24 bg-[#0F0D0A] overflow-hidden"
       >
         <div
           aria-hidden
@@ -300,22 +293,22 @@ export function Landing() {
         />
 
         <div className="relative max-w-6xl mx-auto">
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-10 sm:gap-12 items-center">
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-12 items-center">
             <motion.div {...inView(0)}>
               <div className="text-[11px] uppercase tracking-[0.32em] text-[#D97706] mb-3">
                 Encryption
               </div>
-              <h2 className="text-[26px] sm:text-[36px] lg:text-[42px] leading-[1.15] sm:leading-[1.1] tracking-[-0.03em] text-[#EDE5D4]">
+              <h2 className="text-[32px] sm:text-[42px] leading-[1.1] tracking-[-0.03em] text-[#EDE5D4]">
                 We couldn't read your messages
-                <br className="hidden sm:block" />
-                {' '}even if we wanted to.
+                <br />
+                even if we wanted to.
               </h2>
-              <p className="mt-4 sm:mt-5 text-[14px] sm:text-[14.5px] text-[#A8A29E] leading-[1.7] max-w-[480px]">
+              <p className="mt-5 text-[14.5px] text-[#A8A29E] leading-[1.7] max-w-[480px]">
                 Encryption happens on your device before anything is sent.
                 Keys never touch the server.
               </p>
 
-              <ul className="mt-6 sm:mt-8 space-y-4">
+              <ul className="mt-8 space-y-4">
                 <EncryptionPoint
                   icon={<Lock className="w-4 h-4" />}
                   title="On-device encryption"
@@ -349,12 +342,11 @@ export function Landing() {
 
             <motion.div
               {...inView(0.12)}
-              className="relative aspect-[4/5] max-h-[520px] rounded-2xl overflow-hidden border border-white/[0.08] shadow-[0_30px_80px_-30px_rgba(0,0,0,0.9)]"
+              className="relative aspect-[4/5] rounded-2xl overflow-hidden border border-white/[0.08] shadow-[0_30px_80px_-30px_rgba(0,0,0,0.9)]"
             >
               <motion.img
                 src={ENCRYPTION_IMAGE}
                 alt="Encrypted data visualization"
-                loading="lazy"
                 style={{ y: reduceMotion ? 0 : encryptionImgY }}
                 className="absolute inset-0 w-full h-[120%] object-cover -top-[10%] will-change-transform"
               />
@@ -376,17 +368,17 @@ export function Landing() {
       {/* ═══════════════════════════════════════════════════ */}
       <section
         id="calling"
-        className="relative px-5 sm:px-6 py-14 sm:py-20 lg:py-24 border-t border-white/[0.06] overflow-hidden"
+        className="relative px-6 py-20 sm:py-24 border-t border-white/[0.06] overflow-hidden"
       >
         <div className="relative max-w-6xl mx-auto">
-          <motion.div {...inView(0)} className="mb-10 sm:mb-12 text-center">
+          <motion.div {...inView(0)} className="mb-12 text-center">
             <div className="text-[11px] uppercase tracking-[0.32em] text-[#D97706] mb-3">
               Comparison
             </div>
-            <h2 className="text-[26px] sm:text-[36px] lg:text-[42px] leading-[1.15] sm:leading-[1.1] tracking-[-0.03em] text-[#EDE5D4]">
+            <h2 className="text-[32px] sm:text-[42px] leading-[1.1] tracking-[-0.03em] text-[#EDE5D4]">
               How we compare.
             </h2>
-            <p className="mt-3 sm:mt-4 text-[14px] sm:text-[14.5px] text-[#A8A29E] max-w-[560px] mx-auto leading-[1.7]">
+            <p className="mt-4 text-[14.5px] text-[#A8A29E] max-w-[560px] mx-auto leading-[1.7]">
               The same convenience you expect, without the trade-offs.
             </p>
           </motion.div>
@@ -461,7 +453,7 @@ export function Landing() {
 
           <motion.p
             {...inView(0.24)}
-            className="mt-4 sm:mt-5 text-[11.5px] sm:text-[12px] text-[#6B6259] text-center px-2"
+            className="mt-5 text-[12px] text-[#6B6259] text-center"
           >
             Comparisons reflect the default behavior of mainstream messaging
             apps. Specifics vary by product.
@@ -474,7 +466,7 @@ export function Landing() {
       {/* ═══════════════════════════════════════════════════ */}
       <section
         id="docs"
-        className="relative px-5 sm:px-6 py-14 sm:py-20 lg:py-24 border-t border-white/[0.06] overflow-hidden"
+        className="relative px-6 py-20 sm:py-24 border-t border-white/[0.06] overflow-hidden"
       >
         <div
           aria-hidden
@@ -488,20 +480,20 @@ export function Landing() {
         />
 
         <div className="relative max-w-6xl mx-auto">
-          <motion.div {...inView(0)} className="mb-10 sm:mb-12 text-center">
+          <motion.div {...inView(0)} className="mb-12 text-center">
             <div className="text-[11px] uppercase tracking-[0.32em] text-[#D97706] mb-3">
               Product
             </div>
-            <h2 className="text-[26px] sm:text-[36px] lg:text-[42px] leading-[1.15] sm:leading-[1.1] tracking-[-0.03em] text-[#EDE5D4]">
+            <h2 className="text-[32px] sm:text-[42px] leading-[1.1] tracking-[-0.03em] text-[#EDE5D4]">
               Private messaging that works.
             </h2>
-            <p className="mt-3 sm:mt-4 text-[14px] sm:text-[14.5px] text-[#A8A29E] max-w-[520px] mx-auto leading-[1.7]">
+            <p className="mt-4 text-[14.5px] text-[#A8A29E] max-w-[520px] mx-auto leading-[1.7]">
               Encryption you don't have to think about, on top of the
               features you actually use.
             </p>
           </motion.div>
 
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 sm:gap-5">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
             <ProductCard
               image={FEATURE_MESSAGES_IMAGE}
               icon={<MessagesSquare className="w-4 h-4" />}
@@ -535,7 +527,7 @@ export function Landing() {
       {/* ═══════════════════════════════════════════════════ */}
       <section
         ref={ctaRef}
-        className="relative px-5 sm:px-6 py-20 sm:py-24 lg:py-28 overflow-hidden"
+        className="relative px-6 py-24 sm:py-28 overflow-hidden"
       >
         <motion.div
           aria-hidden
@@ -545,7 +537,6 @@ export function Landing() {
           <img
             src={CTA_IMAGE}
             alt=""
-            loading="lazy"
             className="absolute inset-0 w-full h-[130%] -top-[15%] object-cover"
           />
         </motion.div>
@@ -584,26 +575,26 @@ export function Landing() {
         >
           <motion.div
             {...inView(0.08)}
-            className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-white/[0.05] backdrop-blur-md border border-white/[0.10] mb-6 sm:mb-7"
+            className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-white/[0.05] backdrop-blur-md border border-white/[0.10] mb-7"
           >
             <Shield className="w-3 h-3 text-[#D97706]" />
-            <span className="text-[10.5px] sm:text-[11px] uppercase tracking-[0.24em] text-[#A8A29E]">
+            <span className="text-[11px] uppercase tracking-[0.24em] text-[#A8A29E]">
               Your data stays yours
             </span>
           </motion.div>
 
-          <h2 className="text-[30px] sm:text-[44px] lg:text-[56px] leading-[1.08] sm:leading-[1.02] tracking-[-0.04em] text-[#EDE5D4]">
+          <h2 className="text-[36px] sm:text-[56px] leading-[1.02] tracking-[-0.04em] text-[#EDE5D4]">
             Start private.
             <br />
             Stay private.
           </h2>
-          <p className="mt-4 sm:mt-5 text-[14px] sm:text-[14.5px] text-[#A8A29E] max-w-[440px] mx-auto leading-[1.7] px-2">
+          <p className="mt-5 text-[14.5px] text-[#A8A29E] max-w-[440px] mx-auto leading-[1.7]">
             Create your account in under a minute.
             No credit card, no newsletter, no tracking.
           </p>
           <Link
             to="/register"
-            className="group relative mt-8 sm:mt-9 inline-flex items-center h-11 px-9 rounded-xl bg-[#D97706] hover:bg-[#B45309] text-[#0F0D0A] text-sm font-medium transition-all duration-200 active:scale-[0.97] shadow-[0_8px_28px_-8px_rgba(217,119,6,0.7)] hover:shadow-[0_12px_40px_-8px_rgba(217,119,6,0.95)]"
+            className="group relative mt-9 inline-flex items-center h-11 px-9 rounded-xl bg-[#D97706] hover:bg-[#B45309] text-[#0F0D0A] text-sm font-medium transition-all duration-200 active:scale-[0.97] shadow-[0_8px_28px_-8px_rgba(217,119,6,0.7)] hover:shadow-[0_12px_40px_-8px_rgba(217,119,6,0.95)]"
           >
             <span
               aria-hidden
@@ -627,7 +618,7 @@ export function Landing() {
 
 function TrustChip({ icon, label }: { icon: React.ReactNode; label: string }) {
   return (
-    <span className="inline-flex items-center gap-1.5 text-[#6B6259] whitespace-nowrap">
+    <span className="inline-flex items-center gap-1.5 text-[#6B6259]">
       <span className="text-[#D97706]">{icon}</span>
       {label}
     </span>
@@ -711,7 +702,7 @@ function ComparisonRow({
       whileInView={reduceMotion ? undefined : { opacity: 1, y: 0 }}
       viewport={{ once: true, margin: '-40px' }}
       transition={{ ...SPRING, delay }}
-      className={`grid grid-cols-1 md:grid-cols-[2fr_1fr_1fr] gap-3 md:gap-4 px-5 sm:px-6 py-4 items-center hover:bg-white/[0.02] transition-colors ${
+      className={`grid grid-cols-1 md:grid-cols-[2fr_1fr_1fr] gap-3 md:gap-4 px-6 py-4 items-center hover:bg-white/[0.02] transition-colors ${
         last ? '' : 'border-b border-white/[0.06]'
       }`}
     >
