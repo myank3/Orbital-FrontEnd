@@ -35,7 +35,7 @@ export const API_BASE_URL: string =
   (import.meta.env.VITE_API_BASE as string | undefined) ?? 'https://orbital.runasp.net';
 
 export const TOKEN_KEY = 'orbital.token';
-export const MAX_FILE_SIZE = 25 * 1024 * 1024;
+export const MAX_FILE_SIZE = 5 * 1024 * 1024; // 5 MB
 
 export function getAccessToken(): string | null {
   if (typeof window === 'undefined') return null;
@@ -119,8 +119,11 @@ export function extractErrorMessage(
 }
 
 export function validateFileSize(file: File): { valid: boolean; error?: string; mediaType: number } {
+  if (file.size <= 0) {
+    return { valid: false, error: 'File is empty.', mediaType: 0 };
+  }
   if (file.size > MAX_FILE_SIZE) {
-    return { valid: false, error: 'File size exceeds 25 MB limit.', mediaType: 0 };
+    return { valid: false, error: 'File size exceeds 5 MB limit.', mediaType: 0 };
   }
   let mediaType = 4;
   if (file.type.startsWith('image/')) mediaType = 1;
@@ -193,14 +196,23 @@ async function request<T>(endpoint: string, config: RequestConfig = {}): Promise
       }
     }
 
-    // Refresh failed — genuinely logged out
+    // Refresh failed — genuinely logged out.
+    // Read the body ONCE as text, then try to parse as JSON. Never
+    // call .json() and .text() on the same Response.
     if (typeof window !== 'undefined') {
       let reason: string | null = null;
       try {
-        const body = (await response.clone().json()) as { message?: string };
-        reason = body?.message ?? null;
+        const raw = await response.text();
+        if (raw) {
+          try {
+            const body = JSON.parse(raw) as { message?: string };
+            reason = body?.message ?? null;
+          } catch {
+            /* body wasn't JSON — skip the reason */
+          }
+        }
       } catch {
-        /* body isn't JSON — ignore */
+        /* body already consumed or unavailable — skip */
       }
       if (reason) {
         sessionStorage.setItem('orbital.auth.reason', reason);
@@ -214,35 +226,40 @@ async function request<T>(endpoint: string, config: RequestConfig = {}): Promise
     return undefined as unknown as T;
   }
 
-  const contentType = response.headers.get('content-type');
-  const isJson = contentType && contentType.includes('application/json');
+  // ── Read the body exactly ONCE. ────────────────────────────────────
+  //
+  // Both the error path and the success path share this single read.
+  // We deliberately do NOT branch on content-type: some servers return
+  // JSON on success but plain text (or an HTML error page) on failure,
+  // and some return text/html on success too. Reading once and trying
+  // to parse covers every combination without ever hitting the
+  // "body stream already read" error.
+  const raw = await response.text();
+
+  let parsed: unknown = null;
+  if (raw) {
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      parsed = null; // body wasn't JSON — keep raw for callers
+    }
+  }
 
   if (!response.ok) {
-    let errorDetail: unknown;
-    if (isJson) {
-      try {
-        errorDetail = await response.json();
-      } catch {
-        errorDetail = await response.text();
-      }
-    } else {
-      errorDetail = await response.text();
-    }
+    const errorDetail = parsed ?? raw;
     const message =
-      extractErrorMessage(errorDetail) || `Request failed with status ${response.status}`;
+      extractErrorMessage(errorDetail) ||
+      `Request failed with status ${response.status}`;
     throw new Error(message);
   }
 
-  if (isJson) {
-    return (await response.json()) as T;
+  // Successful response
+  if (parsed !== null) {
+    return parsed as T;
   }
 
-  const textData = await response.text();
-  try {
-    return JSON.parse(textData) as T;
-  } catch {
-    return textData as unknown as T;
-  }
+  // Success but body wasn't JSON — return the raw text (or empty string).
+  return raw as unknown as T;
 }
 
 const apiService = {
