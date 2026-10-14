@@ -24,11 +24,7 @@ import {
   getPublicKeyFor,
 } from '../services/cryptoService';
 import { compressImage } from '../services/imageCompress';
-import {
-  playReceive,
-  playSend,
-  unlockSounds,
-} from '../services/sounds';
+import { playReceive, playSend, unlockSounds } from '../services/sounds';
 import {
   useDmTypingEmitter,
   useDmTypingReceiver,
@@ -73,7 +69,27 @@ import {
   Eraser,
   Flag,
   ZoomIn,
+  MoreHorizontal,
 } from 'lucide-react';
+
+/* ────────────────────────────────────────────────────────── */
+/* Theme tokens                                               */
+/* ────────────────────────────────────────────────────────── */
+
+const T = {
+  bg: 'bg-[#0A0908]',
+  surface: 'bg-[#14120F]',
+  surfaceRaised: 'bg-[#1C1A17]',
+  bubbleSent: 'bg-gradient-to-br from-[#E58E1E] to-[#C96A05]',
+  bubbleReceived: 'bg-[#1C1A17] border border-white/[0.05]',
+  textOnSent: 'text-[#171106]',
+  textOnReceived: 'text-[#F2EDE4]',
+  muted: 'text-[#7A6F65]',
+  subtle: 'text-[#5A524A]',
+  accent: 'text-[#D97706]',
+  border: 'border-white/[0.06]',
+  borderSubtle: 'border-white/[0.04]',
+} as const;
 
 /* ────────────────────────────────────────────────────────── */
 /* Date / time helpers — always interpret server dates as UTC */
@@ -212,15 +228,15 @@ function ImageViewer({ images, startIndex, onClose }: ImageViewerProps) {
       animate={{ opacity: 1 }}
       exit={reduceMotion ? undefined : { opacity: 0 }}
       transition={{ duration: 0.18 }}
-      className="fixed inset-0 z-[200] bg-black/95 backdrop-blur-sm flex items-center justify-center"
+      className="fixed inset-0 z-[200] bg-black/95 backdrop-blur-md flex items-center justify-center"
       onClick={onClose}
     >
-      <div className="absolute top-0 left-0 right-0 flex items-center justify-between px-4 py-3 bg-gradient-to-b from-black/80 to-transparent z-10">
+      <div className="absolute top-0 left-0 right-0 flex items-center justify-between px-4 py-3.5 bg-gradient-to-b from-black/90 via-black/40 to-transparent z-10">
         <div className="min-w-0">
-          <p className="text-[13.5px] font-medium text-white truncate">
+          <p className="text-[13.5px] font-semibold text-white truncate tracking-tight">
             {current.senderName}
           </p>
-          <p className="text-[11px] text-white/60 tabular-nums">
+          <p className="text-[11px] text-white/50 tabular-nums mt-0.5">
             {formatTime(current.sentAt)}
             {images.length > 1 ? ` · ${index + 1} / ${images.length}` : ''}
           </p>
@@ -234,7 +250,7 @@ function ImageViewer({ images, startIndex, onClose }: ImageViewerProps) {
             title="Download"
             aria-label="Download image"
           >
-            <Download className="w-5 h-5" />
+            <Download className="w-[18px] h-[18px]" />
           </a>
           <button
             type="button"
@@ -246,7 +262,7 @@ function ImageViewer({ images, startIndex, onClose }: ImageViewerProps) {
             aria-label="Close"
             title="Close"
           >
-            <X className="w-5 h-5" />
+            <X className="w-[18px] h-[18px]" />
           </button>
         </div>
       </div>
@@ -258,7 +274,7 @@ function ImageViewer({ images, startIndex, onClose }: ImageViewerProps) {
             e.stopPropagation();
             setIndex((i) => Math.max(0, i - 1));
           }}
-          className="absolute left-3 top-1/2 -translate-y-1/2 w-11 h-11 rounded-full bg-black/60 hover:bg-black/80 text-white flex items-center justify-center z-10 transition-colors"
+          className="absolute left-4 top-1/2 -translate-y-1/2 w-11 h-11 rounded-full bg-white/[0.08] hover:bg-white/[0.16] backdrop-blur text-white flex items-center justify-center z-10 transition-colors"
           aria-label="Previous"
         >
           <ChevronLeft className="w-6 h-6" />
@@ -272,7 +288,7 @@ function ImageViewer({ images, startIndex, onClose }: ImageViewerProps) {
             e.stopPropagation();
             setIndex((i) => Math.min(images.length - 1, i + 1));
           }}
-          className="absolute right-3 top-1/2 -translate-y-1/2 w-11 h-11 rounded-full bg-black/60 hover:bg-black/80 text-white flex items-center justify-center z-10 transition-colors"
+          className="absolute right-4 top-1/2 -translate-y-1/2 w-11 h-11 rounded-full bg-white/[0.08] hover:bg-white/[0.16] backdrop-blur text-white flex items-center justify-center z-10 transition-colors"
           aria-label="Next"
         >
           <ChevronRight className="w-6 h-6" />
@@ -287,14 +303,14 @@ function ImageViewer({ images, startIndex, onClose }: ImageViewerProps) {
         src={current.url}
         alt=""
         onClick={(e) => e.stopPropagation()}
-        className="max-w-[95vw] max-h-[88vh] object-contain select-none"
+        className="max-w-[95vw] max-h-[88vh] object-contain select-none rounded-lg"
       />
     </motion.div>
   );
 }
 
 /* ────────────────────────────────────────────────────────── */
-/* Message row                                                */
+/* Message row — iMessage-style bubbles                       */
 /* ────────────────────────────────────────────────────────── */
 
 interface MessageRowProps {
@@ -350,10 +366,17 @@ const MessageRow = React.memo(function MessageRow({
   const hasMedia = Boolean(message.mediaUrl);
   const displayText = message.plaintext ?? message.content ?? '';
 
+  // iMessage tail hint: last of group gets a squared-off corner toward the sender.
+  const tailClass = isLastOfGroup
+    ? isMe
+      ? 'rounded-br-[6px]'
+      : 'rounded-bl-[6px]'
+    : '';
+
   return (
     <div
-      className={`relative flex gap-3 px-1 ${
-        grouped ? 'mt-0.5' : 'mt-4'
+      className={`group/row relative flex gap-3 px-1 ${
+        grouped ? 'mt-[3px]' : 'mt-3.5'
       } ${isMe ? 'flex-row-reverse' : 'flex-row'}`}
       onTouchStart={onTouchStart}
       onTouchEnd={onTouchEnd}
@@ -362,15 +385,13 @@ const MessageRow = React.memo(function MessageRow({
         setMenuOpen(true);
       }}
     >
-      <div className="w-9 shrink-0 pt-0.5">
-        {!grouped ? (
+      {/* Avatar column — only show on received messages */}
+      <div className="w-8 shrink-0 pt-0.5">
+        {!grouped && !isMe ? (
           <button
             type="button"
-            onClick={() => {
-              if (isMe) return;
-              onRequestProfile(message.senderId);
-            }}
-            className="rounded-full focus:outline-none focus-visible:ring-2 focus-visible:ring-[#D97706]/50"
+            onClick={() => onRequestProfile(message.senderId)}
+            className="rounded-full focus:outline-none focus-visible:ring-2 focus-visible:ring-[#D97706]/50 transition-transform hover:scale-[1.05]"
             aria-label={`View ${senderName}'s profile`}
           >
             <Avatar name={senderName} src={senderAvatar} size="sm" />
@@ -381,31 +402,44 @@ const MessageRow = React.memo(function MessageRow({
       </div>
 
       <div
-        className={`flex flex-col min-w-0 max-w-[85%] sm:max-w-[75%] md:max-w-[70%] ${
+        className={`flex flex-col min-w-0 max-w-[85%] sm:max-w-[72%] md:max-w-[65%] ${
           isMe ? 'items-end' : 'items-start'
         }`}
       >
+        {/* Sender + time on top — only when a new group starts */}
         {!grouped && (
-          <div className="flex items-baseline gap-2 mb-0.5 px-1">
-            <span className="text-[12.5px] font-semibold text-[#EDE5D4] tracking-tight">
+          <div className="flex items-baseline gap-2 mb-1 px-2">
+            <span className="text-[12px] font-semibold text-[#A8A29E] tracking-tight">
               {isMe ? 'You' : senderName}
             </span>
-            <span className="text-[10.5px] text-[#6B6259] tabular-nums">
+            <span className="text-[10.5px] text-[#5A524A] tabular-nums">
               {formatTime(message.sentAt)}
             </span>
           </div>
         )}
 
         <div className="relative inline-flex items-end gap-1 max-w-full">
+          {/* Hover-revealed menu trigger (desktop) */}
+          <button
+            type="button"
+            onClick={() => setMenuOpen((v) => !v)}
+            className={`hidden sm:flex absolute top-1/2 -translate-y-1/2 ${
+              isMe ? '-left-8' : '-right-8'
+            } w-6 h-6 rounded-full items-center justify-center text-[#5A524A] hover:text-[#EDE5D4] hover:bg-white/[0.06] opacity-0 group-hover/row:opacity-100 transition-opacity`}
+            aria-label="Message options"
+          >
+            <MoreHorizontal className="w-4 h-4" />
+          </button>
+
           <div
-            className={`inline-block max-w-full px-3 py-1.5 text-[13.5px] leading-[1.55] break-words rounded-2xl ${
+            className={`inline-block max-w-full text-[14px] leading-[1.45] break-words rounded-[20px] ${tailClass} ${
               isMe
-                ? 'bg-[#D97706] text-[#0F0D0A] rounded-br-md'
-                : 'bg-[#1A1816] text-[#EDE5D4] rounded-bl-md'
-            }`}
+                ? `${T.bubbleSent} ${T.textOnSent} shadow-[0_1px_2px_rgba(0,0,0,0.35)]`
+                : `${T.bubbleReceived} ${T.textOnReceived}`
+            } ${hasMedia ? 'p-1.5' : 'px-3.5 py-2'}`}
           >
             {hasMedia && (
-              <div className="mb-2 -mx-1">
+              <div className={displayText ? 'mb-1' : ''}>
                 {message.mediaType === MediaType.Image && (
                   <button
                     type="button"
@@ -413,7 +447,7 @@ const MessageRow = React.memo(function MessageRow({
                       e.stopPropagation();
                       onOpenImage(message, senderName);
                     }}
-                    className="relative group cursor-zoom-in rounded-xl overflow-hidden block"
+                    className="relative group/img cursor-zoom-in rounded-[14px] overflow-hidden block"
                     aria-label="View full image"
                   >
                     <img
@@ -421,9 +455,9 @@ const MessageRow = React.memo(function MessageRow({
                       alt=""
                       loading="lazy"
                       decoding="async"
-                      className="rounded-xl max-h-72 w-auto object-cover"
+                      className="rounded-[14px] max-h-80 w-auto object-cover"
                     />
-                    <span className="absolute top-2 right-2 w-7 h-7 rounded-full bg-black/50 text-white flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
+                    <span className="absolute top-2 right-2 w-7 h-7 rounded-full bg-black/50 text-white flex items-center justify-center opacity-0 group-hover/img:opacity-100 transition-opacity pointer-events-none">
                       <ZoomIn className="w-3.5 h-3.5" />
                     </span>
                   </button>
@@ -433,7 +467,7 @@ const MessageRow = React.memo(function MessageRow({
                     src={message.mediaUrl ?? undefined}
                     controls
                     preload="metadata"
-                    className="rounded-xl max-h-72 w-full bg-black"
+                    className="rounded-[14px] max-h-80 w-full bg-black"
                   />
                 )}
                 {message.mediaType === MediaType.Audio && (
@@ -441,7 +475,7 @@ const MessageRow = React.memo(function MessageRow({
                     src={message.mediaUrl ?? undefined}
                     controls
                     preload="metadata"
-                    className="w-full my-1"
+                    className="w-full my-0.5"
                   />
                 )}
                 {message.mediaType === MediaType.File && (
@@ -450,22 +484,24 @@ const MessageRow = React.memo(function MessageRow({
                     target="_blank"
                     rel="noreferrer"
                     download
-                    className={`inline-flex items-center gap-2 px-2.5 py-2 rounded-lg border text-[12px] ${
+                    className={`inline-flex items-center gap-2 px-3 py-2.5 rounded-[14px] text-[12.5px] ${
                       isMe
-                        ? 'bg-black/10 border-black/15 text-[#0F0D0A]'
-                        : 'bg-white/[0.04] border-white/[0.08] text-[#EDE5D4]'
+                        ? 'bg-black/[0.14] text-[#171106]'
+                        : 'bg-white/[0.04] text-[#F2EDE4]'
                     }`}
                   >
-                    <FileText className="w-4 h-4 shrink-0" />
+                    <FileText className="w-4 h-4 shrink-0 opacity-70" />
                     <span className="truncate max-w-[180px]">Attached file</span>
-                    <Download className="w-3.5 h-3.5 shrink-0 ml-1" />
+                    <Download className="w-3.5 h-3.5 shrink-0 ml-1 opacity-70" />
                   </a>
                 )}
               </div>
             )}
 
             {displayText && (
-              <p className="whitespace-pre-wrap">{displayText}</p>
+              <p className={`whitespace-pre-wrap ${hasMedia ? 'px-1.5 pb-1 pt-0' : ''}`}>
+                {displayText}
+              </p>
             )}
           </div>
 
@@ -477,18 +513,18 @@ const MessageRow = React.memo(function MessageRow({
                 animate={{ opacity: 1, scale: 1, y: 0 }}
                 exit={{ opacity: 0, scale: 0.94, y: -4 }}
                 transition={{ duration: 0.14 }}
-                className={`absolute z-40 top-full mt-1 ${
+                className={`absolute z-40 top-full mt-1.5 ${
                   isMe ? 'right-0' : 'left-0'
-                } min-w-[190px] rounded-xl bg-[#1A1816] border border-white/[0.08] shadow-[0_16px_40px_-10px_rgba(0,0,0,0.9)] overflow-hidden`}
+                } min-w-[190px] rounded-2xl bg-[#1C1A17] border border-white/[0.08] shadow-[0_24px_48px_-12px_rgba(0,0,0,0.9)] overflow-hidden backdrop-blur-md`}
               >
                 <button
                   onClick={() => {
                     setMenuOpen(false);
                     onDeleteForMe(message);
                   }}
-                  className="w-full flex items-center gap-2.5 px-3 py-2.5 text-[12.5px] text-[#EDE5D4] hover:bg-white/[0.05] transition-colors"
+                  className="w-full flex items-center gap-2.5 px-3.5 py-2.5 text-[12.5px] text-[#EDE5D4] hover:bg-white/[0.05] transition-colors"
                 >
-                  <EyeOff className="w-3.5 h-3.5" />
+                  <EyeOff className="w-3.5 h-3.5 opacity-70" />
                   <span>Delete for me</span>
                 </button>
 
@@ -498,7 +534,7 @@ const MessageRow = React.memo(function MessageRow({
                       setMenuOpen(false);
                       onDeleteForEveryone(message);
                     }}
-                    className="w-full flex items-center gap-2.5 px-3 py-2.5 text-[12.5px] text-[#F87171] hover:bg-[#B91C1C]/[0.10] transition-colors border-t border-white/[0.04]"
+                    className="w-full flex items-center gap-2.5 px-3.5 py-2.5 text-[12.5px] text-[#F87171] hover:bg-[#B91C1C]/[0.10] transition-colors border-t border-white/[0.04]"
                   >
                     <Trash2 className="w-3.5 h-3.5" />
                     <span>Delete for everyone</span>
@@ -509,16 +545,17 @@ const MessageRow = React.memo(function MessageRow({
           </AnimatePresence>
         </div>
 
+        {/* Read receipt — only on last sent message of a group */}
         {isMe && isLastOfGroup && (
-          <div
-            className="flex items-center mt-0.5 px-1"
-            aria-label={message.isRead ? 'Read' : 'Delivered'}
-          >
+          <div className="flex items-center gap-1.5 mt-1 px-2">
             <CheckCheck
-              className={`w-3.5 h-3.5 transition-colors ${
-                message.isRead ? 'text-[#4ADE80]' : 'text-[#6B6259]'
+              className={`w-3 h-3 transition-colors ${
+                message.isRead ? 'text-[#4ADE80]' : 'text-[#5A524A]'
               }`}
             />
+            <span className="text-[10px] text-[#5A524A] tabular-nums">
+              {message.isRead ? 'Read' : 'Sent'}
+            </span>
           </div>
         )}
       </div>
@@ -580,7 +617,10 @@ function InfoModal({
     }
   };
 
-  const confirmCopy: Record<NonNullable<InfoAction>, { title: string; body: string; cta: string }> = {
+  const confirmCopy: Record<
+    NonNullable<InfoAction>,
+    { title: string; body: string; cta: string }
+  > = {
     unfriend: {
       title: 'Unfriend?',
       body: `You will no longer be friends with ${targetUser.displayName}. You can send a new friend request later.`,
@@ -610,19 +650,23 @@ function InfoModal({
             exit={{ scale: 0.96, opacity: 0, y: 6 }}
             transition={{ type: 'spring', stiffness: 340, damping: 28 }}
             onClick={(e) => e.stopPropagation()}
-            className="w-full max-w-sm rounded-2xl bg-[#1A1816] border border-white/[0.08] shadow-[0_24px_60px_-12px_rgba(0,0,0,0.95)] overflow-hidden"
+            className="w-full max-w-sm rounded-[22px] bg-[#1C1A17] border border-white/[0.08] shadow-[0_24px_60px_-12px_rgba(0,0,0,0.95)] overflow-hidden"
           >
-            <div className="p-5 flex flex-col items-center text-center border-b border-white/[0.06]">
-              <Avatar
-                name={targetUser.displayName}
-                src={targetUser.avatarUrl}
-                size="xl"
-                isOnline={presenceStore.isOnline(targetUser.id)}
-              />
-              <p className="mt-3 text-[15px] font-semibold text-[#EDE5D4] tracking-tight">
+            <div className="p-6 flex flex-col items-center text-center border-b border-white/[0.06]">
+              <div className="p-[3px] rounded-full bg-gradient-to-tr from-[#D97706]/50 via-[#D97706]/20 to-transparent">
+                <div className="p-[3px] rounded-full bg-[#1C1A17]">
+                  <Avatar
+                    name={targetUser.displayName}
+                    src={targetUser.avatarUrl}
+                    size="xl"
+                    isOnline={presenceStore.isOnline(targetUser.id)}
+                  />
+                </div>
+              </div>
+              <p className="mt-4 text-[15.5px] font-semibold text-[#EDE5D4] tracking-tight">
                 {targetUser.displayName}
               </p>
-              <p className="text-[12px] text-[#6B6259] mt-0.5">
+              <p className="text-[12px] text-[#7A6F65] mt-0.5">
                 @{targetUser.userHandle}
               </p>
             </div>
@@ -645,7 +689,7 @@ function InfoModal({
                   <Eraser className="w-4 h-4 text-[#A8A29E] shrink-0" />
                   <span>Clear this chat</span>
                 </button>
-                <div className="w-full flex items-center gap-3 px-5 py-3.5 text-[13px] text-[#6B6259] cursor-not-allowed">
+                <div className="w-full flex items-center gap-3 px-5 py-3.5 text-[13px] text-[#5A524A] cursor-not-allowed">
                   <Flag className="w-4 h-4 shrink-0" />
                   <span>Report (coming soon)</span>
                 </div>
@@ -668,27 +712,30 @@ function InfoModal({
               </div>
             )}
 
-            <div className="px-5 py-3 border-t border-white/[0.06] flex items-center justify-end gap-2">
+            <div className="px-5 py-3.5 border-t border-white/[0.06] flex items-center justify-end gap-2">
               {!confirmAction ? (
                 <button
                   onClick={handleClose}
-                  className="h-9 px-4 rounded-lg bg-white/[0.04] hover:bg-white/[0.08] text-[12.5px] text-[#EDE5D4] transition-colors"
+                  className="h-9 px-4 rounded-xl bg-white/[0.04] hover:bg-white/[0.08] text-[12.5px] text-[#EDE5D4] transition-colors"
                 >
                   Close
                 </button>
               ) : (
                 <>
                   <button
-                    onClick={() => { setConfirmAction(null); setError(null); }}
+                    onClick={() => {
+                      setConfirmAction(null);
+                      setError(null);
+                    }}
                     disabled={busy}
-                    className="h-9 px-4 rounded-lg bg-white/[0.04] hover:bg-white/[0.08] disabled:opacity-40 text-[12.5px] text-[#EDE5D4] transition-colors"
+                    className="h-9 px-4 rounded-xl bg-white/[0.04] hover:bg-white/[0.08] disabled:opacity-40 text-[12.5px] text-[#EDE5D4] transition-colors"
                   >
                     Back
                   </button>
                   <button
                     onClick={() => void runAction(confirmAction)}
                     disabled={busy}
-                    className="h-9 px-4 rounded-lg bg-[#B91C1C] hover:bg-[#991B1B] disabled:opacity-50 text-white text-[12.5px] font-medium transition-colors inline-flex items-center gap-1.5"
+                    className="h-9 px-4 rounded-xl bg-[#B91C1C] hover:bg-[#991B1B] disabled:opacity-50 text-white text-[12.5px] font-medium transition-colors inline-flex items-center gap-1.5"
                   >
                     {busy && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
                     <span>{busy ? 'Working…' : confirmCopy[confirmAction].cta}</span>
@@ -804,11 +851,15 @@ function DirectMessagePane(): React.JSX.Element {
     }
   }, []);
 
-  useEffect(() => { void loadFriends(); }, [loadFriends]);
+  useEffect(() => {
+    void loadFriends();
+  }, [loadFriends]);
 
   useEffect(() => {
     const unsub = presenceStore.subscribe(() => setPresenceTick((v) => v + 1));
-    return () => { unsub(); };
+    return () => {
+      unsub();
+    };
   }, []);
 
   /* Seed sidebar previews on mount — 1 message per friend */
@@ -846,7 +897,9 @@ function DirectMessagePane(): React.JSX.Element {
     };
 
     void seedPreviews();
-    return () => { active = false; };
+    return () => {
+      active = false;
+    };
   }, [friends, user?.id]);
 
   const isConfirmedFriend = useMemo(() => {
@@ -884,7 +937,7 @@ function DirectMessagePane(): React.JSX.Element {
         .filter((m) => m.mediaType === MediaType.Image && m.mediaUrl)
         .map((m) => ({
           url: m.mediaUrl as string,
-          senderName: m.senderId === user?.id ? 'You' : (targetUser?.displayName ?? 'Them'),
+          senderName: m.senderId === user?.id ? 'You' : targetUser?.displayName ?? 'Them',
           sentAt: m.sentAt,
         })),
     [messages, user?.id, targetUser?.displayName],
@@ -899,7 +952,11 @@ function DirectMessagePane(): React.JSX.Element {
   );
 
   useEffect(() => {
-    if (!userId) { setTargetUser(null); setMessages([]); return; }
+    if (!userId) {
+      setTargetUser(null);
+      setMessages([]);
+      return;
+    }
     let active = true;
 
     const loadTarget = async () => {
@@ -931,7 +988,9 @@ function DirectMessagePane(): React.JSX.Element {
       }
     };
     void loadTarget();
-    return () => { active = false; };
+    return () => {
+      active = false;
+    };
   }, [userId, friends]);
 
   useEffect(() => {
@@ -984,7 +1043,9 @@ function DirectMessagePane(): React.JSX.Element {
       }
     };
     void fetchHistory();
-    return () => { active = false; };
+    return () => {
+      active = false;
+    };
   }, [userId, user?.id]);
 
   const handleLoadEarlier = async () => {
@@ -1049,7 +1110,9 @@ function DirectMessagePane(): React.JSX.Element {
         }));
       }
     });
-    return () => { unsub(); };
+    return () => {
+      unsub();
+    };
   }, [userId, user?.id]);
 
   useEffect(() => {
@@ -1069,8 +1132,6 @@ function DirectMessagePane(): React.JSX.Element {
 
     const accepted: File[] = [];
     for (const file of files) {
-      // Hard 5 MB cap — enforced before compression too, so a 50 MB video
-      // doesn't even start a canvas decode.
       const validation = validateFileSize(file);
       if (!validation.valid) {
         setFileError(validation.error ?? `${file.name}: file too large.`);
@@ -1084,8 +1145,6 @@ function DirectMessagePane(): React.JSX.Element {
         } catch {
           toSend = file;
         }
-        // Re-check after compression. A 5 MB PNG can still exceed
-        // the limit if compression made it bigger, so guard again.
         if (toSend.size > MAX_FILE_SIZE) {
           setFileError(
             `${file.name}: still ${formatFileSize(toSend.size)} after compression — max is ${formatFileSize(MAX_FILE_SIZE)}.`,
@@ -1126,10 +1185,6 @@ function DirectMessagePane(): React.JSX.Element {
         for (let i = 0; i < filesToSend.length; i++) {
           const file = filesToSend[i];
 
-          // ── THE KEY CHANGE ─────────────────────────────────────
-          // Upload the file to the server and store only the returned
-          // short URL in MediaUrl. Previously we base64-encoded the
-          // entire file into the DB (a 26 MB video → 26 MB row).
           const { mediaUrl, mediaType } = await uploadAttachment(file);
 
           const includeText = i === 0 && text.length > 0;
@@ -1167,7 +1222,6 @@ function DirectMessagePane(): React.JSX.Element {
         playSend();
       }
 
-      // Clear the composer only after the send succeeds
       setInputContent('');
       setPendingFiles([]);
       if (fileInputRef.current) fileInputRef.current.value = '';
@@ -1352,40 +1406,40 @@ function DirectMessagePane(): React.JSX.Element {
   const hasActiveChat = Boolean(userId && targetUser);
 
   return (
-    <div className="flex h-full w-full bg-[#0B0A08] text-[#EDE5D4] overflow-hidden">
+    <div className="flex h-full w-full bg-[#0A0908] text-[#EDE5D4] overflow-hidden">
       {/* LEFT: conversation list */}
       <div
         className={`${
           hasActiveChat ? 'hidden md:flex' : 'flex'
-        } w-full md:w-[300px] md:shrink-0 border-r border-white/[0.05] bg-[#0F0D0A] flex-col h-full`}
+        } w-full md:w-[320px] md:shrink-0 border-r border-white/[0.05] bg-[#0D0C0A] flex-col h-full`}
       >
-        <div className="h-16 px-4 flex items-center justify-between shrink-0">
+        <div className="h-[68px] px-5 flex items-center justify-between shrink-0">
           <div className="flex items-baseline gap-2">
-            <h2 className="text-[18px] font-semibold text-[#EDE5D4] tracking-tight">
-              Messages
+            <h2 className="text-[20px] font-semibold text-[#EDE5D4] tracking-tight">
+              Chats
             </h2>
-            <span className="text-[11.5px] text-[#6B6259] tabular-nums">
+            <span className="text-[11.5px] text-[#5A524A] tabular-nums">
               {friends.length}
             </span>
           </div>
         </div>
 
-        <div className="px-3 pb-3">
+        <div className="px-4 pb-3">
           <div className="relative">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-[#6B6259] pointer-events-none" />
+            <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-[#5A524A] pointer-events-none" />
             <input
               type="text"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               placeholder="Search conversations"
-              className="w-full h-10 pl-9 pr-3 rounded-xl bg-white/[0.03] border border-white/[0.05] text-[13px] text-[#EDE5D4] placeholder:text-[#6B6259] focus:outline-none focus:border-[#D97706]/40 focus:bg-white/[0.05] transition-colors"
+              className="w-full h-10 pl-10 pr-3 rounded-xl bg-white/[0.03] border border-white/[0.05] text-[13px] text-[#EDE5D4] placeholder:text-[#5A524A] focus:outline-none focus:border-[#D97706]/40 focus:bg-white/[0.05] transition-colors"
             />
           </div>
         </div>
 
-        <div className="flex-1 overflow-y-auto px-2 pb-2 space-y-0.5">
+        <div className="flex-1 overflow-y-auto px-2.5 pb-2 space-y-0.5">
           {filteredFriends.length === 0 ? (
-            <div className="p-8 text-center text-[12.5px] text-[#6B6259]">
+            <div className="p-8 text-center text-[12.5px] text-[#5A524A]">
               {friends.length === 0 ? 'No contacts yet.' : 'No matches.'}
             </div>
           ) : (
@@ -1401,10 +1455,10 @@ function DirectMessagePane(): React.JSX.Element {
                 <button
                   key={friend.friendshipId}
                   onClick={() => navigate(`/app/dm/${friend.userId}`)}
-                  className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-left transition-all duration-150 ${
+                  className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-2xl text-left transition-all duration-150 ${
                     isSelected
-                      ? 'bg-[#D97706]/[0.10] ring-1 ring-inset ring-[#D97706]/20'
-                      : 'hover:bg-white/[0.035]'
+                      ? 'bg-white/[0.06] ring-1 ring-inset ring-white/[0.06]'
+                      : 'hover:bg-white/[0.03]'
                   }`}
                 >
                   <Avatar
@@ -1415,13 +1469,13 @@ function DirectMessagePane(): React.JSX.Element {
                   />
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center justify-between gap-2">
-                      <p className="text-[13.5px] font-medium text-[#EDE5D4] truncate">
+                      <p className="text-[13.5px] font-semibold text-[#EDE5D4] truncate tracking-tight">
                         {friend.displayName}
                       </p>
                       {preview && (
                         <span
                           className={`shrink-0 text-[10.5px] tabular-nums ${
-                            unread > 0 ? 'text-[#D97706]' : 'text-[#6B6259]'
+                            unread > 0 ? 'text-[#D97706]' : 'text-[#5A524A]'
                           }`}
                         >
                           {formatRelativeShort(preview.sentAt)}
@@ -1431,9 +1485,7 @@ function DirectMessagePane(): React.JSX.Element {
                     <div className="flex items-center justify-between gap-2 mt-0.5">
                       <p
                         className={`text-[11.5px] truncate ${
-                          unread > 0
-                            ? 'text-[#EDE5D4] font-medium'
-                            : 'text-[#6B6259]'
+                          unread > 0 ? 'text-[#EDE5D4] font-medium' : 'text-[#7A6F65]'
                         }`}
                       >
                         {preview
@@ -1441,7 +1493,7 @@ function DirectMessagePane(): React.JSX.Element {
                           : `@${friend.handle}`}
                       </p>
                       {unread > 0 && (
-                        <span className="shrink-0 min-w-[18px] h-[18px] px-1.5 rounded-full bg-[#D97706] text-[#0F0D0A] text-[10px] font-bold tabular-nums flex items-center justify-center">
+                        <span className="shrink-0 min-w-[18px] h-[18px] px-1.5 rounded-full bg-[#D97706] text-[#171106] text-[10px] font-bold tabular-nums flex items-center justify-center">
                           {unread > 99 ? '99+' : unread}
                         </span>
                       )}
@@ -1458,11 +1510,12 @@ function DirectMessagePane(): React.JSX.Element {
       <div
         className={`${
           hasActiveChat ? 'flex' : 'hidden md:flex'
-        } flex-1 flex-col h-full min-w-0 bg-[#0B0A08] relative`}
+        } flex-1 flex-col h-full min-w-0 bg-[#0A0908] relative`}
       >
         {userId && targetUser ? (
           <>
-            <div className="h-16 px-3 sm:px-5 border-b border-white/[0.05] flex items-center justify-between shrink-0 gap-2">
+            {/* Header — glassy with subtle border */}
+            <div className="h-[68px] px-3 sm:px-5 border-b border-white/[0.05] bg-[#0A0908]/80 backdrop-blur-xl flex items-center justify-between shrink-0 gap-2 z-10">
               <div className="flex items-center gap-2 sm:gap-3 min-w-0">
                 <button
                   onClick={() => navigate('/app/dm')}
@@ -1475,7 +1528,7 @@ function DirectMessagePane(): React.JSX.Element {
                 <button
                   type="button"
                   onClick={() => setProfileModalUserId(targetUser.id)}
-                  className="shrink-0 rounded-full focus:outline-none focus-visible:ring-2 focus-visible:ring-[#D97706]/50"
+                  className="shrink-0 rounded-full focus:outline-none focus-visible:ring-2 focus-visible:ring-[#D97706]/50 transition-transform hover:scale-[1.03]"
                   aria-label={`View ${targetUser.displayName}'s profile`}
                 >
                   <Avatar
@@ -1487,19 +1540,21 @@ function DirectMessagePane(): React.JSX.Element {
                 </button>
 
                 <div className="min-w-0">
-                  <h3 className="text-[14px] sm:text-[14.5px] font-semibold text-[#EDE5D4] truncate tracking-tight">
+                  <h3 className="text-[14.5px] font-semibold text-[#EDE5D4] truncate tracking-tight">
                     {targetUser.displayName}
                   </h3>
-                  <p className="text-[11px] sm:text-[11.5px] text-[#6B6259] truncate mt-0.5 flex items-center gap-1.5">
+                  <p className="text-[11px] text-[#7A6F65] truncate mt-0.5 flex items-center gap-1.5">
                     <span
                       className={`w-1.5 h-1.5 rounded-full shrink-0 ${
-                        isTargetOnline ? 'bg-[#15803D]' : 'bg-[#6B6259]'
+                        isTargetOnline ? 'bg-[#22C55E] shadow-[0_0_6px_rgba(34,197,94,0.6)]' : 'bg-[#5A524A]'
                       }`}
                     />
-                    <span className="hidden sm:inline">
-                      {isTargetOnline ? 'Online' : 'Offline'} ·
+                    <span>
+                      {isTargetOnline ? 'Active now' : 'Offline'}
+                      <span className="text-[#5A524A] hidden sm:inline">
+                        {' '}· @{targetUser.userHandle}
+                      </span>
                     </span>
-                    <span>@{targetUser.userHandle}</span>
                   </p>
                 </div>
               </div>
@@ -1531,18 +1586,18 @@ function DirectMessagePane(): React.JSX.Element {
             </div>
 
             {!isConfirmedFriend && (
-              <div className="shrink-0 px-4 sm:px-5 py-3 bg-[#D97706]/[0.06] border-b border-[#D97706]/20 flex flex-wrap items-center justify-between gap-3 text-[12.5px]">
+              <div className="shrink-0 px-4 sm:px-5 py-2.5 bg-[#D97706]/[0.06] border-b border-[#D97706]/20 flex flex-wrap items-center justify-between gap-3 text-[12.5px]">
                 <div className="flex items-center gap-2 text-[#A8A29E] min-w-0">
                   <AlertCircle className="w-4 h-4 text-[#D97706] shrink-0" />
                   <span className="truncate">You're not friends yet — messaging is limited.</span>
                 </div>
                 <div className="flex items-center gap-2 shrink-0">
                   {friendRequestStatus && (
-                    <span className="text-[11.5px] text-[#15803D]">{friendRequestStatus}</span>
+                    <span className="text-[11.5px] text-[#4ADE80]">{friendRequestStatus}</span>
                   )}
                   <button
                     onClick={() => void handleSendFriendRequest()}
-                    className="h-7 px-3 rounded-md bg-[#D97706] hover:bg-[#B45309] text-[#0F0D0A] text-[11.5px] font-medium inline-flex items-center gap-1.5 transition-colors"
+                    className="h-7 px-3 rounded-lg bg-[#D97706] hover:bg-[#B45309] text-[#171106] text-[11.5px] font-semibold inline-flex items-center gap-1.5 transition-colors"
                   >
                     <UserPlus className="w-3 h-3" />
                     Add friend
@@ -1554,16 +1609,16 @@ function DirectMessagePane(): React.JSX.Element {
             <div
               ref={messagesContainerRef}
               onScroll={handleMessagesScroll}
-              className="flex-1 overflow-y-auto px-3 sm:px-6 py-3 sm:py-4"
+              className="flex-1 overflow-y-auto px-3 sm:px-6 py-3 sm:py-5"
             >
               {hasMore && !loadingHistory && (
                 <div className="text-center pb-4">
                   <button
                     onClick={() => void handleLoadEarlier()}
                     disabled={loadingMore}
-                    className="px-3 py-1.5 rounded-full bg-white/[0.035] border border-white/[0.06] text-[11.5px] text-[#A8A29E] hover:text-[#EDE5D4] hover:bg-white/[0.06] disabled:opacity-50 transition-colors"
+                    className="px-3.5 py-1.5 rounded-full bg-white/[0.035] border border-white/[0.06] text-[11.5px] text-[#A8A29E] hover:text-[#EDE5D4] hover:bg-white/[0.06] disabled:opacity-50 transition-colors"
                   >
-                    {loadingMore ? 'Loading…' : 'Load earlier'}
+                    {loadingMore ? 'Loading…' : 'Load earlier messages'}
                   </button>
                 </div>
               )}
@@ -1585,26 +1640,29 @@ function DirectMessagePane(): React.JSX.Element {
                   </div>
                   <button
                     onClick={() => {
-                      // Trigger the effect again by re-navigating to same user
                       const current = userId;
                       navigate('/app/dm');
                       setTimeout(() => navigate(`/app/dm/${current}`), 10);
                     }}
-                    className="h-9 px-4 rounded-lg bg-[#D97706] hover:bg-[#B45309] text-[#0F0D0A] text-[12.5px] font-medium transition-colors"
+                    className="h-9 px-4 rounded-xl bg-[#D97706] hover:bg-[#B45309] text-[#171106] text-[12.5px] font-semibold transition-colors"
                   >
                     Retry
                   </button>
                 </div>
               ) : messages.length === 0 ? (
                 <div className="h-full flex flex-col items-center justify-center text-center gap-3 py-12">
-                  <div className="w-16 h-16 rounded-2xl bg-white/[0.03] border border-white/[0.06] flex items-center justify-center">
-                    <User className="w-7 h-7 text-[#6B6259]" />
+                  <div className="relative">
+                    <div className="w-20 h-20 rounded-full bg-gradient-to-br from-[#D97706]/20 to-transparent flex items-center justify-center">
+                      <div className="w-14 h-14 rounded-full bg-white/[0.04] border border-white/[0.08] flex items-center justify-center">
+                        <User className="w-6 h-6 text-[#7A6F65]" />
+                      </div>
+                    </div>
                   </div>
                   <div>
-                    <p className="text-[14.5px] text-[#EDE5D4] font-semibold tracking-tight">
+                    <p className="text-[15px] text-[#EDE5D4] font-semibold tracking-tight">
                       No messages yet
                     </p>
-                    <p className="text-[12.5px] text-[#6B6259] mt-1">
+                    <p className="text-[12.5px] text-[#7A6F65] mt-1">
                       Say hi to {targetUser.displayName}.
                     </p>
                   </div>
@@ -1613,12 +1671,10 @@ function DirectMessagePane(): React.JSX.Element {
                 grouped.map((item) => {
                   if (item.type === 'date') {
                     return (
-                      <div key={item.key} className="flex items-center gap-4 my-6">
-                        <div className="flex-1 h-px bg-white/[0.05]" />
-                        <span className="text-[10.5px] uppercase tracking-[0.22em] text-[#6B6259] font-medium">
+                      <div key={item.key} className="flex justify-center my-5">
+                        <span className="px-3 py-1 rounded-full bg-white/[0.035] border border-white/[0.05] text-[10.5px] uppercase tracking-[0.14em] text-[#7A6F65] font-medium">
                           {item.label}
                         </span>
-                        <div className="flex-1 h-px bg-white/[0.05]" />
                       </div>
                     );
                   }
@@ -1642,6 +1698,7 @@ function DirectMessagePane(): React.JSX.Element {
                 })
               )}
 
+              {/* Typing indicator — WhatsApp/iMessage style */}
               <AnimatePresence>
                 {isPeerTyping && (
                   <motion.div
@@ -1651,17 +1708,17 @@ function DirectMessagePane(): React.JSX.Element {
                     transition={{ duration: 0.16 }}
                     className="flex items-end gap-3 px-1 mt-3"
                   >
-                    <div className="w-9 shrink-0">
+                    <div className="w-8 shrink-0">
                       <Avatar
                         name={targetUser.displayName}
                         src={targetUser.avatarUrl}
                         size="sm"
                       />
                     </div>
-                    <div className="inline-flex items-center gap-1.5 px-3.5 py-2.5 rounded-2xl rounded-bl-md bg-[#1A1816] border border-white/[0.05]">
-                      <span className="w-1.5 h-1.5 rounded-full bg-[#D97706] animate-bounce [animation-delay:-0.32s]" />
-                      <span className="w-1.5 h-1.5 rounded-full bg-[#D97706] animate-bounce [animation-delay:-0.16s]" />
-                      <span className="w-1.5 h-1.5 rounded-full bg-[#D97706] animate-bounce" />
+                    <div className="inline-flex items-center gap-1.5 px-4 py-3 rounded-[20px] rounded-bl-[6px] bg-[#1C1A17] border border-white/[0.05]">
+                      <span className="w-1.5 h-1.5 rounded-full bg-[#A8A29E] animate-bounce [animation-delay:-0.32s]" />
+                      <span className="w-1.5 h-1.5 rounded-full bg-[#A8A29E] animate-bounce [animation-delay:-0.16s]" />
+                      <span className="w-1.5 h-1.5 rounded-full bg-[#A8A29E] animate-bounce" />
                     </div>
                   </motion.div>
                 )}
@@ -1679,7 +1736,7 @@ function DirectMessagePane(): React.JSX.Element {
                   exit={reduceMotion ? undefined : { opacity: 0, y: 8, scale: 0.9 }}
                   transition={{ type: 'spring', stiffness: 400, damping: 30 }}
                   onClick={handleJumpToLatest}
-                  className="absolute bottom-24 right-6 z-30 w-10 h-10 rounded-full bg-[#D97706] hover:bg-[#B45309] text-[#0F0D0A] shadow-[0_8px_24px_-6px_rgba(217,119,6,0.5)] flex items-center justify-center transition-colors"
+                  className="absolute bottom-24 right-6 z-30 w-10 h-10 rounded-full bg-[#D97706] hover:bg-[#B45309] text-[#171106] shadow-[0_8px_24px_-6px_rgba(217,119,6,0.5)] flex items-center justify-center transition-colors"
                   title="Jump to latest"
                   aria-label="Jump to latest"
                 >
@@ -1698,7 +1755,7 @@ function DirectMessagePane(): React.JSX.Element {
               transition={{ type: 'spring', stiffness: 380, damping: 34 }}
               className="shrink-0 overflow-hidden"
             >
-              <div className="border-t border-white/[0.05] bg-[#0B0A08] px-2 sm:px-4 py-2 sm:py-3">
+              <div className="border-t border-white/[0.05] bg-[#0A0908]/80 backdrop-blur-xl px-2 sm:px-4 py-2.5 sm:py-3.5">
                 <AnimatePresence>
                   {pendingFiles.length > 0 && (
                     <motion.div
@@ -1715,7 +1772,7 @@ function DirectMessagePane(): React.JSX.Element {
                           return (
                             <div
                               key={`${file.name}-${index}`}
-                              className="relative shrink-0 w-20 h-20 rounded-lg overflow-hidden bg-white/[0.035] border border-white/[0.06]"
+                              className="relative shrink-0 w-20 h-20 rounded-xl overflow-hidden bg-white/[0.035] border border-white/[0.06]"
                             >
                               {isImage && previewUrl ? (
                                 <img
@@ -1727,7 +1784,7 @@ function DirectMessagePane(): React.JSX.Element {
                               ) : (
                                 <div className="w-full h-full flex flex-col items-center justify-center px-1 text-center">
                                   <FileText className="w-5 h-5 text-[#D97706]" />
-                                  <span className="text-[9px] text-[#6B6259] truncate w-full mt-1">
+                                  <span className="text-[9px] text-[#7A6F65] truncate w-full mt-1">
                                     {file.name}
                                   </span>
                                 </div>
@@ -1735,7 +1792,7 @@ function DirectMessagePane(): React.JSX.Element {
                               <button
                                 type="button"
                                 onClick={() => removePendingFile(index)}
-                                className="absolute top-0.5 right-0.5 w-5 h-5 rounded-full bg-black/70 hover:bg-[#B91C1C] text-white flex items-center justify-center transition-colors"
+                                className="absolute top-1 right-1 w-5 h-5 rounded-full bg-black/70 hover:bg-[#B91C1C] text-white flex items-center justify-center transition-colors"
                                 aria-label={`Remove ${file.name}`}
                               >
                                 <X className="w-3 h-3" />
@@ -1744,7 +1801,7 @@ function DirectMessagePane(): React.JSX.Element {
                           );
                         })}
                       </div>
-                      <p className="text-[11px] text-[#6B6259] mt-1.5">
+                      <p className="text-[11px] text-[#7A6F65] mt-1.5">
                         {pendingFiles.length} file{pendingFiles.length === 1 ? '' : 's'} ready to send
                       </p>
                     </motion.div>
@@ -1760,7 +1817,7 @@ function DirectMessagePane(): React.JSX.Element {
                       transition={{ duration: 0.15 }}
                       className="pb-2 sm:pb-3"
                     >
-                      <div className="flex items-center gap-1.5 text-[12px] text-[#F87171]">
+                      <div className="flex items-center gap-1.5 text-[12px] text-[#F87171] px-2">
                         <AlertCircle className="w-3.5 h-3.5 shrink-0" />
                         <span>{fileError}</span>
                       </div>
@@ -1768,10 +1825,7 @@ function DirectMessagePane(): React.JSX.Element {
                   )}
                 </AnimatePresence>
 
-                <form
-                  onSubmit={handleSendMessage}
-                  className="flex items-end gap-2"
-                >
+                <form onSubmit={handleSendMessage} className="flex items-end gap-2">
                   <input
                     type="file"
                     ref={fileInputRef}
@@ -1790,29 +1844,31 @@ function DirectMessagePane(): React.JSX.Element {
                     <Paperclip className="w-[18px] h-[18px]" />
                   </button>
 
-                  <textarea
-                    ref={composerRef}
-                    value={inputContent}
-                    onChange={(e) => {
-                      setInputContent(e.target.value);
-                      autoGrow(e.currentTarget);
-                      if (!composerVisible) setComposerVisible(true);
-                      if (e.target.value.trim().length > 0) {
-                        onType();
-                      } else {
-                        stopTyping();
-                      }
-                    }}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter' && !e.shiftKey) {
-                        e.preventDefault();
-                        void handleSendMessage(e as unknown as React.FormEvent);
-                      }
-                    }}
-                    placeholder={`Message ${targetUser.displayName}`}
-                    rows={1}
-                    className="flex-1 min-w-0 resize-none px-4 py-2.5 text-[13.5px] text-[#EDE5D4] placeholder:text-[#6B6259] focus:outline-none leading-[1.5] max-h-[140px] overflow-y-auto rounded-2xl bg-white/[0.035] border border-white/[0.05]"
-                  />
+                  <div className="flex-1 min-w-0 relative">
+                    <textarea
+                      ref={composerRef}
+                      value={inputContent}
+                      onChange={(e) => {
+                        setInputContent(e.target.value);
+                        autoGrow(e.currentTarget);
+                        if (!composerVisible) setComposerVisible(true);
+                        if (e.target.value.trim().length > 0) {
+                          onType();
+                        } else {
+                          stopTyping();
+                        }
+                      }}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' && !e.shiftKey) {
+                          e.preventDefault();
+                          void handleSendMessage(e as unknown as React.FormEvent);
+                        }
+                      }}
+                      placeholder={`Message ${targetUser.displayName}`}
+                      rows={1}
+                      className="w-full resize-none px-4 py-2.5 text-[14px] text-[#EDE5D4] placeholder:text-[#5A524A] focus:outline-none leading-[1.5] max-h-[140px] overflow-y-auto rounded-[22px] bg-white/[0.045] border border-white/[0.06] focus:border-[#D97706]/40 focus:bg-white/[0.06] transition-colors"
+                    />
+                  </div>
 
                   <AnimatePresence mode="popLayout" initial={false}>
                     {(inputContent.trim().length > 0 || pendingFiles.length > 0) && (
@@ -1824,7 +1880,7 @@ function DirectMessagePane(): React.JSX.Element {
                         animate={{ scale: 1, opacity: 1 }}
                         exit={reduceMotion ? undefined : { scale: 0.6, opacity: 0 }}
                         transition={{ type: 'spring', stiffness: 420, damping: 26 }}
-                        className="shrink-0 w-10 h-10 rounded-full bg-[#D97706] hover:bg-[#B45309] disabled:opacity-50 disabled:cursor-not-allowed text-[#0F0D0A] flex items-center justify-center"
+                        className="shrink-0 w-10 h-10 rounded-full bg-gradient-to-br from-[#E58E1E] to-[#C96A05] hover:brightness-110 disabled:opacity-50 disabled:cursor-not-allowed text-[#171106] flex items-center justify-center shadow-[0_4px_12px_-2px_rgba(217,119,6,0.4)]"
                         title="Send"
                         aria-label="Send"
                       >
@@ -1842,14 +1898,18 @@ function DirectMessagePane(): React.JSX.Element {
           </>
         ) : (
           <div className="h-full flex flex-col items-center justify-center text-center px-8">
-            <div className="w-16 h-16 rounded-2xl bg-white/[0.03] border border-white/[0.06] flex items-center justify-center mb-5">
-              <User className="w-7 h-7 text-[#6B6259]" />
+            <div className="relative mb-6">
+              <div className="w-24 h-24 rounded-full bg-gradient-to-br from-[#D97706]/15 to-transparent flex items-center justify-center">
+                <div className="w-16 h-16 rounded-full bg-white/[0.03] border border-white/[0.06] flex items-center justify-center">
+                  <User className="w-7 h-7 text-[#7A6F65]" />
+                </div>
+              </div>
             </div>
-            <h3 className="text-[16px] text-[#EDE5D4] font-semibold mb-2 tracking-tight">
-              Select a conversation
+            <h3 className="text-[17px] text-[#EDE5D4] font-semibold mb-2 tracking-tight">
+              Your messages
             </h3>
-            <p className="text-[13px] text-[#6B6259] max-w-[320px] leading-relaxed">
-              Pick someone from the list to start messaging.
+            <p className="text-[13px] text-[#7A6F65] max-w-[320px] leading-relaxed">
+              Pick a conversation from the list to start chatting.
             </p>
           </div>
         )}
@@ -1872,7 +1932,7 @@ function DirectMessagePane(): React.JSX.Element {
               exit={{ scale: 0.96, opacity: 0, y: 6 }}
               transition={{ type: 'spring', stiffness: 340, damping: 28 }}
               onClick={(e) => e.stopPropagation()}
-              className="w-full max-w-sm rounded-2xl bg-[#1A1816] border border-white/[0.08] shadow-[0_24px_60px_-12px_rgba(0,0,0,0.95)] overflow-hidden"
+              className="w-full max-w-sm rounded-[22px] bg-[#1C1A17] border border-white/[0.08] shadow-[0_24px_60px_-12px_rgba(0,0,0,0.95)] overflow-hidden"
             >
               <div className="p-5">
                 <h3 className="text-[14.5px] font-semibold text-[#EDE5D4] mb-1.5">
@@ -1883,16 +1943,16 @@ function DirectMessagePane(): React.JSX.Element {
                   {targetUser?.displayName ?? 'the other person'}. Cannot be undone.
                 </p>
               </div>
-              <div className="px-5 py-3 border-t border-white/[0.06] flex items-center justify-end gap-2">
+              <div className="px-5 py-3.5 border-t border-white/[0.06] flex items-center justify-end gap-2">
                 <button
                   onClick={() => setPendingDeleteEveryoneId(null)}
-                  className="h-9 px-4 rounded-lg bg-white/[0.04] hover:bg-white/[0.08] text-[12.5px] text-[#EDE5D4] transition-colors"
+                  className="h-9 px-4 rounded-xl bg-white/[0.04] hover:bg-white/[0.08] text-[12.5px] text-[#EDE5D4] transition-colors"
                 >
                   Cancel
                 </button>
                 <button
                   onClick={() => void handleConfirmDeleteForEveryone()}
-                  className="h-9 px-4 rounded-lg bg-[#B91C1C] hover:bg-[#991B1B] text-white text-[12.5px] font-medium transition-colors"
+                  className="h-9 px-4 rounded-xl bg-[#B91C1C] hover:bg-[#991B1B] text-white text-[12.5px] font-medium transition-colors"
                 >
                   Delete for everyone
                 </button>
