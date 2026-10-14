@@ -40,9 +40,7 @@ import { Avatar } from './Avatar';
 import { UserProfileModal } from './UserProfileModal';
 import MessageSkeleton from './MessageSkeleton';
 import {
-  validateFileSize,
   formatFileSize,
-  uploadAttachment,
   MAX_FILE_SIZE,
 } from '../services/upload';
 import {
@@ -71,25 +69,6 @@ import {
   ZoomIn,
   MoreHorizontal,
 } from 'lucide-react';
-
-/* ────────────────────────────────────────────────────────── */
-/* Theme tokens                                               */
-/* ────────────────────────────────────────────────────────── */
-
-const T = {
-  bg: 'bg-[#0A0908]',
-  surface: 'bg-[#14120F]',
-  surfaceRaised: 'bg-[#1C1A17]',
-  bubbleSent: 'bg-gradient-to-br from-[#E58E1E] to-[#C96A05]',
-  bubbleReceived: 'bg-[#1C1A17] border border-white/[0.05]',
-  textOnSent: 'text-[#171106]',
-  textOnReceived: 'text-[#F2EDE4]',
-  muted: 'text-[#7A6F65]',
-  subtle: 'text-[#5A524A]',
-  accent: 'text-[#D97706]',
-  border: 'border-white/[0.06]',
-  borderSubtle: 'border-white/[0.04]',
-} as const;
 
 /* ────────────────────────────────────────────────────────── */
 /* Date / time helpers — always interpret server dates as UTC */
@@ -310,7 +289,7 @@ function ImageViewer({ images, startIndex, onClose }: ImageViewerProps) {
 }
 
 /* ────────────────────────────────────────────────────────── */
-/* Message row — iMessage-style bubbles                       */
+/* Message row                                                */
 /* ────────────────────────────────────────────────────────── */
 
 interface MessageRowProps {
@@ -366,7 +345,6 @@ const MessageRow = React.memo(function MessageRow({
   const hasMedia = Boolean(message.mediaUrl);
   const displayText = message.plaintext ?? message.content ?? '';
 
-  // iMessage tail hint: last of group gets a squared-off corner toward the sender.
   const tailClass = isLastOfGroup
     ? isMe
       ? 'rounded-br-[6px]'
@@ -385,7 +363,6 @@ const MessageRow = React.memo(function MessageRow({
         setMenuOpen(true);
       }}
     >
-      {/* Avatar column — only show on received messages */}
       <div className="w-8 shrink-0 pt-0.5">
         {!grouped && !isMe ? (
           <button
@@ -406,7 +383,6 @@ const MessageRow = React.memo(function MessageRow({
           isMe ? 'items-end' : 'items-start'
         }`}
       >
-        {/* Sender + time on top — only when a new group starts */}
         {!grouped && (
           <div className="flex items-baseline gap-2 mb-1 px-2">
             <span className="text-[12px] font-semibold text-[#A8A29E] tracking-tight">
@@ -419,7 +395,6 @@ const MessageRow = React.memo(function MessageRow({
         )}
 
         <div className="relative inline-flex items-end gap-1 max-w-full">
-          {/* Hover-revealed menu trigger (desktop) */}
           <button
             type="button"
             onClick={() => setMenuOpen((v) => !v)}
@@ -434,8 +409,8 @@ const MessageRow = React.memo(function MessageRow({
           <div
             className={`inline-block max-w-full text-[14px] leading-[1.45] break-words rounded-[20px] ${tailClass} ${
               isMe
-                ? `${T.bubbleSent} ${T.textOnSent} shadow-[0_1px_2px_rgba(0,0,0,0.35)]`
-                : `${T.bubbleReceived} ${T.textOnReceived}`
+                ? 'bg-gradient-to-br from-[#E58E1E] to-[#C96A05] text-[#171106] shadow-[0_1px_2px_rgba(0,0,0,0.35)]'
+                : 'bg-[#1C1A17] border border-white/[0.05] text-[#F2EDE4]'
             } ${hasMedia ? 'p-1.5' : 'px-3.5 py-2'}`}
           >
             {hasMedia && (
@@ -545,7 +520,6 @@ const MessageRow = React.memo(function MessageRow({
           </AnimatePresence>
         </div>
 
-        {/* Read receipt — only on last sent message of a group */}
         {isMe && isLastOfGroup && (
           <div className="flex items-center gap-1.5 mt-1 px-2">
             <CheckCheck
@@ -862,7 +836,6 @@ function DirectMessagePane(): React.JSX.Element {
     };
   }, []);
 
-  /* Seed sidebar previews on mount — 1 message per friend */
   useEffect(() => {
     if (friends.length === 0 || !user?.id) return;
     let active = true;
@@ -1125,6 +1098,10 @@ function DirectMessagePane(): React.JSX.Element {
     }
   }, [isPeerTyping]);
 
+  /* ─────────────────────────────────────────────────────────
+     FILE PICKER — images only, 5 MB cap after compression
+     ───────────────────────────────────────────────────────── */
+
   const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
     setFileError(null);
     const files = Array.from(e.target.files ?? []);
@@ -1132,29 +1109,26 @@ function DirectMessagePane(): React.JSX.Element {
 
     const accepted: File[] = [];
     for (const file of files) {
-      const validation = validateFileSize(file);
-      if (!validation.valid) {
-        setFileError(validation.error ?? `${file.name}: file too large.`);
+      if (!file.type.startsWith('image/')) {
+        setFileError(`${file.name}: only images can be sent.`);
         continue;
       }
 
-      if (file.type.startsWith('image/')) {
-        let toSend = file;
-        try {
-          toSend = await compressImage(file);
-        } catch {
-          toSend = file;
-        }
-        if (toSend.size > MAX_FILE_SIZE) {
-          setFileError(
-            `${file.name}: still ${formatFileSize(toSend.size)} after compression — max is ${formatFileSize(MAX_FILE_SIZE)}.`,
-          );
-          continue;
-        }
-        accepted.push(toSend);
-      } else {
-        accepted.push(file);
+      let toSend = file;
+      try {
+        toSend = await compressImage(file);
+      } catch {
+        toSend = file;
       }
+
+      if (toSend.size > MAX_FILE_SIZE) {
+        setFileError(
+          `${file.name}: still ${formatFileSize(toSend.size)} after compression — max is ${formatFileSize(MAX_FILE_SIZE)}.`,
+        );
+        continue;
+      }
+
+      accepted.push(toSend);
     }
 
     if (accepted.length > 0) {
@@ -1167,6 +1141,10 @@ function DirectMessagePane(): React.JSX.Element {
   const removePendingFile = (index: number) => {
     setPendingFiles((prev) => prev.filter((_, i) => i !== index));
   };
+
+  /* ─────────────────────────────────────────────────────────
+     SEND — images as base64 data URLs (no upload endpoint)
+     ───────────────────────────────────────────────────────── */
 
   const handleSendMessage = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -1185,7 +1163,28 @@ function DirectMessagePane(): React.JSX.Element {
         for (let i = 0; i < filesToSend.length; i++) {
           const file = filesToSend[i];
 
-          const { mediaUrl, mediaType } = await uploadAttachment(file);
+          if (!file.type.startsWith('image/')) {
+            setFileError(`${file.name}: only images can be sent.`);
+            continue;
+          }
+
+          if (file.size > MAX_FILE_SIZE) {
+            setFileError(
+              `${file.name} is ${formatFileSize(file.size)} — max is ${formatFileSize(MAX_FILE_SIZE)}.`,
+            );
+            continue;
+          }
+
+          // Read as base64 data URL — matches the existing backend,
+          // which stores MediaUrl directly.
+          const reader = new FileReader();
+          const dataUrlPromise = new Promise<string>((resolve, reject) => {
+            reader.onload = () => resolve(reader.result as string);
+            reader.onerror = () => reject(new Error('Failed to read file'));
+          });
+          reader.readAsDataURL(file);
+          const mediaUrl = await dataUrlPromise;
+          const mediaType = MediaType.Image;
 
           const includeText = i === 0 && text.length > 0;
           let ciphertext = '';
@@ -1514,7 +1513,6 @@ function DirectMessagePane(): React.JSX.Element {
       >
         {userId && targetUser ? (
           <>
-            {/* Header — glassy with subtle border */}
             <div className="h-[68px] px-3 sm:px-5 border-b border-white/[0.05] bg-[#0A0908]/80 backdrop-blur-xl flex items-center justify-between shrink-0 gap-2 z-10">
               <div className="flex items-center gap-2 sm:gap-3 min-w-0">
                 <button
@@ -1698,7 +1696,6 @@ function DirectMessagePane(): React.JSX.Element {
                 })
               )}
 
-              {/* Typing indicator — WhatsApp/iMessage style */}
               <AnimatePresence>
                 {isPeerTyping && (
                   <motion.div
@@ -1830,6 +1827,7 @@ function DirectMessagePane(): React.JSX.Element {
                     type="file"
                     ref={fileInputRef}
                     onChange={handleFileSelect}
+                    accept="image/*"
                     className="hidden"
                     multiple
                   />
@@ -1838,8 +1836,8 @@ function DirectMessagePane(): React.JSX.Element {
                     type="button"
                     onClick={() => fileInputRef.current?.click()}
                     className="shrink-0 w-10 h-10 rounded-full flex items-center justify-center text-[#A8A29E] hover:text-[#EDE5D4] hover:bg-white/[0.05] transition-colors"
-                    title="Attach file"
-                    aria-label="Attach file"
+                    title="Attach image"
+                    aria-label="Attach image"
                   >
                     <Paperclip className="w-[18px] h-[18px]" />
                   </button>
@@ -1915,7 +1913,6 @@ function DirectMessagePane(): React.JSX.Element {
         )}
       </div>
 
-      {/* Delete-for-everyone confirmation modal */}
       <AnimatePresence>
         {pendingDeleteEveryoneId != null && (
           <motion.div

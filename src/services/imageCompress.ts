@@ -1,12 +1,17 @@
 /**
+ * @license
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+/**
  * Client-side image compression.
  *
  * Two entry points:
- *   compressImage()  — for chat attachments. 1600px, q0.85, target < 1 MB.
- *   compressAvatar() — for profile pictures. 256px, q0.82, target < 200 KB.
+ *   compressImage()  — chat attachments. 1600px, q0.85.
+ *   compressAvatar() — profile pictures. 256px, target < 200 KB.
  *
- * Both fall back to the original file on any error so the caller never
- * has to handle a rejected promise from compression.
+ * Both fall back to the original file on any error, so callers never
+ * have to catch a rejected promise from compression.
  */
 
 const IMAGE_MAX_DIMENSION = 1600;
@@ -18,8 +23,8 @@ const AVATAR_TARGET_BYTES = 200 * 1024;
 
 export async function compressImage(file: File): Promise<File> {
   if (!file.type.startsWith('image/')) return file;
-  if (file.type === 'image/gif') return file;
-  if (file.size < 100 * 1024) return file;
+  if (file.type === 'image/gif') return file; // preserve animation
+  if (file.size < 100 * 1024) return file;    // already small
 
   try {
     const img = await loadImage(file);

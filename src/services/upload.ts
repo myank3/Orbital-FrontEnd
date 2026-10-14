@@ -75,6 +75,31 @@ export function formatFileSize(bytes: number): string {
   return `${size.toFixed(1)} ${units[normalizedIndex]}`;
 }
 
+/**
+ * Safely read a Response body as text ONCE, then try to parse it as JSON.
+ *
+ * Never call .json() and .text() on the same Response — the second call
+ * throws "body stream already read". This helper avoids that entirely.
+ */
+async function readErrorBody(response: Response): Promise<unknown> {
+  let raw = '';
+  try {
+    raw = await response.text();
+  } catch {
+    return `HTTP ${response.status}`;
+  }
+
+  if (!raw) return `HTTP ${response.status}`;
+
+  try {
+    return JSON.parse(raw);
+  } catch {
+    // Body wasn't JSON. Return the raw text so extractErrorMessage can
+    // try to make sense of it (or fall back to it verbatim).
+    return raw;
+  }
+}
+
 export async function uploadAttachment(file: File): Promise<UploadResponse> {
   const validation = validateFileSize(file);
   if (!validation.valid) {
@@ -95,8 +120,7 @@ export async function uploadAttachment(file: File): Promise<UploadResponse> {
 
   const uploadEndpoint = `${API_BASE_URL.replace(/\/+$/, '')}/api/Upload`;
 
-  // 30 s timeout for uploads — bigger than the API default so slow
-  // connections don't fail spuriously, but still bounded.
+  // 30 s timeout for uploads — bounded but generous enough for slow links.
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 30_000);
 
@@ -126,18 +150,14 @@ export async function uploadAttachment(file: File): Promise<UploadResponse> {
   }
 
   if (!response.ok) {
-    let errorDetail: unknown;
-    try {
-      errorDetail = await response.json();
-    } catch {
-      errorDetail = await response.text();
-    }
+    const errorDetail = await readErrorBody(response);
     throw new Error(
       extractErrorMessage(errorDetail) || `Upload failed with status ${response.status}`,
     );
   }
 
-  const data = (await response.json()) as {
+  const raw = await response.text();
+  let data: {
     url?: string;
     mediaUrl?: string;
     fileUrl?: string;
@@ -145,6 +165,11 @@ export async function uploadAttachment(file: File): Promise<UploadResponse> {
     fileName?: string;
     fileSize?: number;
   };
+  try {
+    data = raw ? JSON.parse(raw) : {};
+  } catch {
+    throw new Error('Upload succeeded but server returned invalid JSON.');
+  }
 
   const finalUrl = data.mediaUrl ?? data.url ?? data.fileUrl ?? '';
   if (!finalUrl) {
