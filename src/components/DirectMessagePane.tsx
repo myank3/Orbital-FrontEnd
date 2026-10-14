@@ -69,31 +69,14 @@ import {
   Eraser,
   Flag,
   ZoomIn,
-  Clock,
 } from 'lucide-react';
-
-/* ────────────────────────────────────────────────────────── */
-/* Extended client-only message type                          */
-/* ────────────────────────────────────────────────────────── */
-
-interface ClientMessage extends DirectMessageDto {
-  pending?: boolean;   // optimistic send in-flight
-  failed?: boolean;    // optimistic send failed
-  clientId?: string;   // matches optimistic to server echo
-}
 
 /* ────────────────────────────────────────────────────────── */
 /* Date / time helpers — always interpret server dates as UTC */
 /* ────────────────────────────────────────────────────────── */
 
-/**
- * Server returns DateTime without a UTC suffix. JavaScript would
- * parse that as local time, showing the wrong hour. This forces
- * a UTC interpretation.
- */
 function parseUtc(dateStr: string): Date {
   if (!dateStr) return new Date();
-  // Already has timezone info → use as-is
   if (
     dateStr.endsWith('Z') ||
     /[+-]\d{2}:\d{2}$/.test(dateStr) ||
@@ -101,7 +84,6 @@ function parseUtc(dateStr: string): Date {
   ) {
     return new Date(dateStr);
   }
-  // ISO-like string without zone → treat as UTC
   return new Date(dateStr + 'Z');
 }
 
@@ -312,7 +294,7 @@ function ImageViewer({ images, startIndex, onClose }: ImageViewerProps) {
 /* ────────────────────────────────────────────────────────── */
 
 interface MessageRowProps {
-  message: ClientMessage;
+  message: DirectMessageDto;
   isMe: boolean;
   senderName: string;
   senderAvatar?: string | null;
@@ -363,11 +345,6 @@ const MessageRow = React.memo(function MessageRow({
 
   const hasMedia = Boolean(message.mediaUrl);
   const displayText = message.plaintext ?? message.content ?? '';
-  const isPending = message.pending === true;
-  const isFailed = message.failed === true;
-
-  // Dim optimistic messages slightly so they visually differ
-  const bubbleOpacity = isPending ? 'opacity-70' : isFailed ? 'opacity-90' : '';
 
   return (
     <div
@@ -417,7 +394,7 @@ const MessageRow = React.memo(function MessageRow({
 
         <div className="relative inline-flex items-end gap-1 max-w-full">
           <div
-            className={`inline-block max-w-full px-3 py-1.5 text-[13.5px] leading-[1.55] break-words rounded-2xl transition-opacity ${bubbleOpacity} ${
+            className={`inline-block max-w-full px-3 py-1.5 text-[13.5px] leading-[1.55] break-words rounded-2xl ${
               isMe
                 ? 'bg-[#D97706] text-[#0F0D0A] rounded-br-md'
                 : 'bg-[#1A1816] text-[#EDE5D4] rounded-bl-md'
@@ -430,12 +407,9 @@ const MessageRow = React.memo(function MessageRow({
                     type="button"
                     onClick={(e) => {
                       e.stopPropagation();
-                      if (isPending) return;
                       onOpenImage(message, senderName);
                     }}
-                    className={`relative group rounded-xl overflow-hidden block ${
-                      isPending ? 'cursor-wait' : 'cursor-zoom-in'
-                    }`}
+                    className="relative group cursor-zoom-in rounded-xl overflow-hidden block"
                     aria-label="View full image"
                   >
                     <img
@@ -443,16 +417,9 @@ const MessageRow = React.memo(function MessageRow({
                       alt=""
                       className="rounded-xl max-h-72 w-auto object-cover"
                     />
-                    {!isPending && (
-                      <span className="absolute top-2 right-2 w-7 h-7 rounded-full bg-black/50 text-white flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
-                        <ZoomIn className="w-3.5 h-3.5" />
-                      </span>
-                    )}
-                    {isPending && (
-                      <span className="absolute inset-0 bg-black/40 flex items-center justify-center">
-                        <Loader2 className="w-6 h-6 text-white animate-spin" />
-                      </span>
-                    )}
+                    <span className="absolute top-2 right-2 w-7 h-7 rounded-full bg-black/50 text-white flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
+                      <ZoomIn className="w-3.5 h-3.5" />
+                    </span>
                   </button>
                 )}
                 {message.mediaType === MediaType.Video && (
@@ -491,7 +458,7 @@ const MessageRow = React.memo(function MessageRow({
           </div>
 
           <AnimatePresence>
-            {menuOpen && !isPending && (
+            {menuOpen && (
               <motion.div
                 ref={menuRef}
                 initial={{ opacity: 0, scale: 0.94, y: -4 }}
@@ -513,7 +480,7 @@ const MessageRow = React.memo(function MessageRow({
                   <span>Delete for me</span>
                 </button>
 
-                {isMe && !isFailed && (
+                {isMe && (
                   <button
                     onClick={() => {
                       setMenuOpen(false);
@@ -530,29 +497,16 @@ const MessageRow = React.memo(function MessageRow({
           </AnimatePresence>
         </div>
 
-        {/* Status row: clock while sending, warning if failed, double check when sent */}
         {isMe && isLastOfGroup && (
-          <div className="flex items-center mt-0.5 px-1 gap-1">
-            {isPending && (
-              <Clock
-                className="w-3.5 h-3.5 text-[#6B6259] animate-pulse"
-                aria-label="Sending"
-              />
-            )}
-            {isFailed && (
-              <AlertCircle
-                className="w-3.5 h-3.5 text-[#F87171]"
-                aria-label="Failed to send"
-              />
-            )}
-            {!isPending && !isFailed && (
-              <CheckCheck
-                className={`w-3.5 h-3.5 transition-colors ${
-                  message.isRead ? 'text-[#4ADE80]' : 'text-[#6B6259]'
-                }`}
-                aria-label={message.isRead ? 'Read' : 'Delivered'}
-              />
-            )}
+          <div
+            className="flex items-center mt-0.5 px-1"
+            aria-label={message.isRead ? 'Read' : 'Delivered'}
+          >
+            <CheckCheck
+              className={`w-3.5 h-3.5 transition-colors ${
+                message.isRead ? 'text-[#4ADE80]' : 'text-[#6B6259]'
+              }`}
+            />
           </div>
         )}
       </div>
@@ -753,7 +707,7 @@ function DirectMessagePane(): React.JSX.Element {
 
   const [friends, setFriends] = useState<FriendDto[]>([]);
   const [targetUser, setTargetUser] = useState<UserProfileDto | null>(null);
-  const [messages, setMessages] = useState<ClientMessage[]>([]);
+  const [messages, setMessages] = useState<DirectMessageDto[]>([]);
   const [loadingHistory, setLoadingHistory] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
   const [hasMore, setHasMore] = useState(true);
@@ -844,10 +798,7 @@ function DirectMessagePane(): React.JSX.Element {
     return () => { unsub(); };
   }, []);
 
-  /* ──────────────────────────────────────────────────────── */
-  /* Seed sidebar previews on mount — 1 message per friend    */
-  /* ──────────────────────────────────────────────────────── */
-
+  /* Seed sidebar previews on mount — 1 message per friend */
   useEffect(() => {
     if (friends.length === 0 || !user?.id) return;
     let active = true;
@@ -873,11 +824,7 @@ function DirectMessagePane(): React.JSX.Element {
         for (const r of results) {
           if (!r) continue;
           const existing = next[r.userId];
-          // Only overwrite if this one is newer
-          if (
-            !existing ||
-            getMessageTime(r.msg) > getMessageTime(existing)
-          ) {
+          if (!existing || getMessageTime(r.msg) > getMessageTime(existing)) {
             next[r.userId] = r.msg;
           }
         }
@@ -921,7 +868,7 @@ function DirectMessagePane(): React.JSX.Element {
   const chatImages = useMemo(
     () =>
       messages
-        .filter((m) => m.mediaType === MediaType.Image && m.mediaUrl && !m.pending)
+        .filter((m) => m.mediaType === MediaType.Image && m.mediaUrl)
         .map((m) => ({
           url: m.mediaUrl as string,
           senderName: m.senderId === user?.id ? 'You' : (targetUser?.displayName ?? 'Them'),
@@ -1053,10 +1000,7 @@ function DirectMessagePane(): React.JSX.Element {
       if (otherId) {
         setLastMessages((prev) => {
           const existing = prev[otherId];
-          if (
-            existing &&
-            getMessageTime(existing) >= getMessageTime(decrypted)
-          ) {
+          if (existing && getMessageTime(existing) >= getMessageTime(decrypted)) {
             return prev;
           }
           return { ...prev, [otherId]: decrypted };
@@ -1070,18 +1014,6 @@ function DirectMessagePane(): React.JSX.Element {
       if (isCurrentChat) {
         setMessages((prev) => {
           if (prev.some((m) => m.id === msg.id)) return prev;
-
-          // Replace matching optimistic message if found
-          const clientId = (msg as ClientMessage).clientId;
-          if (clientId) {
-            const idx = prev.findIndex((m) => m.clientId === clientId);
-            if (idx >= 0) {
-              const next = [...prev];
-              next[idx] = { ...decrypted, clientId };
-              return next;
-            }
-          }
-
           return [...prev, decrypted];
         });
         if (msg.senderId === userId) {
@@ -1159,20 +1091,11 @@ function DirectMessagePane(): React.JSX.Element {
     const text = inputContent.trim();
     const filesToSend = [...pendingFiles];
 
-    // Clear the composer immediately
-    setInputContent('');
-    setPendingFiles([]);
-    if (fileInputRef.current) fileInputRef.current.value = '';
-    if (composerRef.current) composerRef.current.style.height = 'auto';
-    setComposerVisible(true);
-
     try {
       if (filesToSend.length > 0) {
         for (let i = 0; i < filesToSend.length; i++) {
           const file = filesToSend[i];
-          const clientId = crypto.randomUUID();
 
-          // Optimistic message shown immediately
           const reader = new FileReader();
           const dataUrlPromise = new Promise<string>((resolve, reject) => {
             reader.onload = () => resolve(reader.result as string);
@@ -1192,92 +1115,41 @@ function DirectMessagePane(): React.JSX.Element {
             nonce = enc.nonce;
           }
 
-          const optimistic: ClientMessage = {
-            id: -Date.now() - i, // temporary negative id
-            senderId: user?.id ?? '',
+          await signalRService.sendDirectMessage({
             recipientId: userId,
             ciphertext,
             nonce,
-            content: includeText ? text : null,
-            plaintext: includeText ? text : '',
             mediaUrl,
             mediaType,
-            isRead: false,
-            sentAt: new Date().toISOString(),
-            pending: true,
-            clientId,
-          };
-
-          setMessages((prev) => [...prev, optimistic]);
-          setTimeout(() => {
-            messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-          }, 30);
-
-          try {
-            await signalRService.sendDirectMessage({
-              recipientId: userId,
-              ciphertext,
-              nonce,
-              mediaUrl,
-              mediaType,
-            });
-
-            playSend();
-          } catch (err) {
-            // Mark the optimistic message as failed
-            setMessages((prev) =>
-              prev.map((m) =>
-                m.clientId === clientId ? { ...m, pending: false, failed: true } : m,
-              ),
-            );
-            throw err;
-          }
-        }
-      } else if (text.length > 0) {
-        const clientId = crypto.randomUUID();
-        const recipientPub = await getPublicKeyFor(userId);
-        const enc = await encryptFor(recipientPub, text);
-
-        const optimistic: ClientMessage = {
-          id: -Date.now(),
-          senderId: user?.id ?? '',
-          recipientId: userId,
-          ciphertext: enc.ciphertext,
-          nonce: enc.nonce,
-          content: text,
-          plaintext: text,
-          mediaUrl: undefined,
-          mediaType: undefined,
-          isRead: false,
-          sentAt: new Date().toISOString(),
-          pending: true,
-          clientId,
-        };
-
-        setMessages((prev) => [...prev, optimistic]);
-        setTimeout(() => {
-          messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-        }, 30);
-
-        try {
-          await signalRService.sendDirectMessage({
-            recipientId: userId,
-            ciphertext: enc.ciphertext,
-            nonce: enc.nonce,
-            mediaUrl: undefined,
-            mediaType: undefined,
           });
 
           playSend();
-        } catch (err) {
-          setMessages((prev) =>
-            prev.map((m) =>
-              m.clientId === clientId ? { ...m, pending: false, failed: true } : m,
-            ),
-          );
-          throw err;
         }
+      } else if (text.length > 0) {
+        const recipientPub = await getPublicKeyFor(userId);
+        const enc = await encryptFor(recipientPub, text);
+
+        await signalRService.sendDirectMessage({
+          recipientId: userId,
+          ciphertext: enc.ciphertext,
+          nonce: enc.nonce,
+          mediaUrl: undefined,
+          mediaType: undefined,
+        });
+
+        playSend();
       }
+
+      // Clear the composer only after the send succeeds
+      setInputContent('');
+      setPendingFiles([]);
+      if (fileInputRef.current) fileInputRef.current.value = '';
+      if (composerRef.current) composerRef.current.style.height = 'auto';
+      setComposerVisible(true);
+
+      setTimeout(() => {
+        messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+      }, 50);
     } catch (err) {
       setFileError(extractErrorMessage(err));
     } finally {
@@ -1408,7 +1280,7 @@ function DirectMessagePane(): React.JSX.Element {
   const grouped = useMemo(() => {
     type Item =
       | { type: 'date'; key: string; label: string }
-      | { type: 'msg'; key: string; message: ClientMessage; grouped: boolean };
+      | { type: 'msg'; key: string; message: DirectMessageDto; grouped: boolean };
 
     const out: Item[] = [];
 
@@ -1430,12 +1302,7 @@ function DirectMessagePane(): React.JSX.Element {
       const within = ts - lastTs < 7 * 60 * 1000;
       const isGrouped = sameSender && within;
 
-      out.push({
-        type: 'msg',
-        key: m.clientId ? `c-${m.clientId}` : String(m.id),
-        message: m,
-        grouped: isGrouped,
-      });
+      out.push({ type: 'msg', key: String(m.id), message: m, grouped: isGrouped });
       lastSenderId = m.senderId ?? '';
       lastTs = ts;
     }
