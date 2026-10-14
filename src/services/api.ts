@@ -48,6 +48,12 @@ export function setAccessToken(token: string | null): void {
   else localStorage.removeItem(TOKEN_KEY);
 }
 
+/**
+ * Refresh the access token if it's expired or about to expire.
+ * Uses the httpOnly refresh cookie set by /api/Auth/login.
+ * Safe to call on every request — returns the current token
+ * immediately if it has more than 60 seconds of life left.
+ */
 export async function refreshAuthToken(): Promise<string | null> {
   const current = getAccessToken();
   if (!current) return null;
@@ -134,10 +140,17 @@ export function formatFileSize(bytes: number): string {
 interface RequestConfig extends Omit<RequestInit, 'headers'> {
   headers?: Record<string, string>;
   skipAuth?: boolean;
+  _retry?: boolean;
 }
 
 async function request<T>(endpoint: string, config: RequestConfig = {}): Promise<T> {
-  const { headers = {}, skipAuth = false, ...customOptions } = config;
+  const { headers = {}, skipAuth = false, _retry = false, ...customOptions } = config;
+
+  // Pre-emptively refresh the access token if it's expired or near expiry.
+  // refreshAuthToken() is a no-op if the token has > 60s of life left.
+  if (!skipAuth) {
+    await refreshAuthToken();
+  }
 
   const url = endpoint.startsWith('http')
     ? endpoint
@@ -168,9 +181,20 @@ async function request<T>(endpoint: string, config: RequestConfig = {}): Promise
   });
 
   if (response.status === 401) {
+    // The token was rejected. Try refreshing once and retrying the request.
+    // This handles the case where the access token expired between our
+    // pre-emptive check and the actual server call.
+    if (!skipAuth && !_retry) {
+      const fresh = await refreshAuthToken();
+
+      if (fresh && fresh !== getAccessToken()) {
+        // Retry with the new token
+        return request<T>(endpoint, { ...config, _retry: true });
+      }
+    }
+
+    // Refresh failed — genuinely logged out
     if (typeof window !== 'undefined') {
-      // Capture the server's reason (e.g. "You signed in on another device")
-      // so the login page can show it after the redirect.
       let reason: string | null = null;
       try {
         const body = (await response.clone().json()) as { message?: string };
@@ -256,6 +280,7 @@ const apiService = {
     const result = await request<LoginResponseDto>('/api/Auth/refresh', {
       method: 'POST',
       body: JSON.stringify({ refreshToken }),
+      skipAuth: true,
     });
     if (result?.token) setAccessToken(result.token);
     return result;
