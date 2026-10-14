@@ -39,10 +39,7 @@ import {
 import { Avatar } from './Avatar';
 import { UserProfileModal } from './UserProfileModal';
 import MessageSkeleton from './MessageSkeleton';
-import {
-  formatFileSize,
-  MAX_FILE_SIZE,
-} from '../services/upload';
+import { formatFileSize, MAX_FILE_SIZE } from '../services/upload';
 import {
   Phone,
   Video,
@@ -56,6 +53,7 @@ import {
   User,
   UserPlus,
   CheckCheck,
+  Check,
   Search,
   ChevronLeft,
   ChevronDown,
@@ -71,7 +69,7 @@ import {
 } from 'lucide-react';
 
 /* ────────────────────────────────────────────────────────── */
-/* Date / time helpers — always interpret server dates as UTC */
+/* Date / time helpers                                        */
 /* ────────────────────────────────────────────────────────── */
 
 function parseUtc(dateStr: string): Date {
@@ -97,7 +95,11 @@ function formatDayDivider(dateStr: string): string {
     if (diffDays === 0) return 'Today';
     if (diffDays === 1) return 'Yesterday';
     if (diffDays < 7) return d.toLocaleDateString([], { weekday: 'long' });
-    return d.toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' });
+    return d.toLocaleDateString([], {
+      month: 'short',
+      day: 'numeric',
+      year: 'numeric',
+    });
   } catch {
     return '';
   }
@@ -140,7 +142,7 @@ function getMessageTime(msg: DirectMessageDto): number {
 }
 
 /* ────────────────────────────────────────────────────────── */
-/* Sidebar preview snippet                                    */
+/* Sidebar preview                                            */
 /* ────────────────────────────────────────────────────────── */
 
 interface LastMessagePreview {
@@ -289,7 +291,7 @@ function ImageViewer({ images, startIndex, onClose }: ImageViewerProps) {
 }
 
 /* ────────────────────────────────────────────────────────── */
-/* Message row                                                */
+/* Message row — bulletproof mobile alignment                 */
 /* ────────────────────────────────────────────────────────── */
 
 interface MessageRowProps {
@@ -305,237 +307,263 @@ interface MessageRowProps {
   onOpenImage: (m: DirectMessageDto, senderName: string) => void;
 }
 
-const MessageRow = React.memo(function MessageRow({
-  message,
-  isMe,
-  senderName,
-  senderAvatar,
-  grouped,
-  isLastOfGroup,
-  onDeleteForMe,
-  onDeleteForEveryone,
-  onRequestProfile,
-  onOpenImage,
-}: MessageRowProps) {
-  const [menuOpen, setMenuOpen] = useState(false);
-  const menuRef = useRef<HTMLDivElement | null>(null);
-  const longPressRef = useRef<number | null>(null);
+const MessageRow = React.memo(
+  function MessageRow({
+    message,
+    isMe,
+    senderName,
+    senderAvatar,
+    grouped,
+    isLastOfGroup,
+    onDeleteForMe,
+    onDeleteForEveryone,
+    onRequestProfile,
+    onOpenImage,
+  }: MessageRowProps) {
+    const [menuOpen, setMenuOpen] = useState(false);
+    const menuRef = useRef<HTMLDivElement | null>(null);
+    const longPressRef = useRef<number | null>(null);
 
-  useEffect(() => {
-    if (!menuOpen) return;
-    const onDoc = (e: MouseEvent) => {
-      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
-        setMenuOpen(false);
+    useEffect(() => {
+      if (!menuOpen) return;
+      const onDoc = (e: MouseEvent) => {
+        if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+          setMenuOpen(false);
+        }
+      };
+      window.addEventListener('mousedown', onDoc);
+      return () => window.removeEventListener('mousedown', onDoc);
+    }, [menuOpen]);
+
+    const onTouchStart = () => {
+      longPressRef.current = window.setTimeout(() => setMenuOpen(true), 500);
+    };
+    const onTouchEnd = () => {
+      if (longPressRef.current) {
+        window.clearTimeout(longPressRef.current);
+        longPressRef.current = null;
       }
     };
-    window.addEventListener('mousedown', onDoc);
-    return () => window.removeEventListener('mousedown', onDoc);
-  }, [menuOpen]);
 
-  const onTouchStart = () => {
-    longPressRef.current = window.setTimeout(() => setMenuOpen(true), 500);
-  };
-  const onTouchEnd = () => {
-    if (longPressRef.current) {
-      window.clearTimeout(longPressRef.current);
-      longPressRef.current = null;
-    }
-  };
+    const hasMedia = Boolean(message.mediaUrl);
+    const displayText = message.plaintext ?? message.content ?? '';
 
-  const hasMedia = Boolean(message.mediaUrl);
-  const displayText = message.plaintext ?? message.content ?? '';
+    const tail = isLastOfGroup
+      ? isMe
+        ? 'rounded-br-[6px]'
+        : 'rounded-bl-[6px]'
+      : '';
 
-  const tailClass = isLastOfGroup
-    ? isMe
-      ? 'rounded-br-[6px]'
-      : 'rounded-bl-[6px]'
-    : '';
-
-  return (
-    <div
-      className={`group/row relative flex gap-3 px-1 ${
-        grouped ? 'mt-[3px]' : 'mt-3.5'
-      } ${isMe ? 'flex-row-reverse' : 'flex-row'}`}
-      onTouchStart={onTouchStart}
-      onTouchEnd={onTouchEnd}
-      onContextMenu={(e) => {
-        e.preventDefault();
-        setMenuOpen(true);
-      }}
-    >
-      <div className="w-8 shrink-0 pt-0.5">
-        {!grouped && !isMe ? (
-          <button
-            type="button"
-            onClick={() => onRequestProfile(message.senderId)}
-            className="rounded-full focus:outline-none focus-visible:ring-2 focus-visible:ring-[#D97706]/50 transition-transform hover:scale-[1.05]"
-            aria-label={`View ${senderName}'s profile`}
-          >
-            <Avatar name={senderName} src={senderAvatar} size="sm" />
-          </button>
-        ) : (
-          <span className="block w-8 h-8" aria-hidden />
-        )}
-      </div>
-
+    return (
       <div
-        className={`flex flex-col min-w-0 max-w-[85%] sm:max-w-[72%] md:max-w-[65%] ${
-          isMe ? 'items-end' : 'items-start'
-        }`}
+        className={`group/row relative flex w-full ${
+          grouped ? 'mt-[2px]' : 'mt-3.5'
+        } ${isMe ? 'justify-end' : 'justify-start'}`}
+        onTouchStart={onTouchStart}
+        onTouchEnd={onTouchEnd}
+        onContextMenu={(e) => {
+          e.preventDefault();
+          setMenuOpen(true);
+        }}
       >
-        {!grouped && (
-          <div className="flex items-baseline gap-2 mb-1 px-2">
-            <span className="text-[12px] font-semibold text-[#A8A29E] tracking-tight">
-              {isMe ? 'You' : senderName}
-            </span>
-            <span className="text-[10.5px] text-[#5A524A] tabular-nums">
-              {formatTime(message.sentAt)}
-            </span>
+        {/* Avatar only on received messages, first of group */}
+        {!isMe && (
+          <div className="w-8 shrink-0 pt-0.5 mr-2.5">
+            {!grouped ? (
+              <button
+                type="button"
+                onClick={() => onRequestProfile(message.senderId)}
+                className="rounded-full focus:outline-none focus-visible:ring-2 focus-visible:ring-[#D97706]/50 transition-transform hover:scale-[1.05]"
+                aria-label={`View ${senderName}'s profile`}
+              >
+                <Avatar name={senderName} src={senderAvatar} size="sm" />
+              </button>
+            ) : (
+              <span className="block w-8 h-8" aria-hidden />
+            )}
           </div>
         )}
 
-        <div className="relative inline-flex items-end gap-1 max-w-full">
-          <button
-            type="button"
-            onClick={() => setMenuOpen((v) => !v)}
-            className={`hidden sm:flex absolute top-1/2 -translate-y-1/2 ${
-              isMe ? '-left-8' : '-right-8'
-            } w-6 h-6 rounded-full items-center justify-center text-[#5A524A] hover:text-[#EDE5D4] hover:bg-white/[0.06] opacity-0 group-hover/row:opacity-100 transition-opacity`}
-            aria-label="Message options"
-          >
-            <MoreHorizontal className="w-4 h-4" />
-          </button>
+        <div
+          className={`flex flex-col min-w-0 max-w-[78%] sm:max-w-[68%] md:max-w-[60%] ${
+            isMe ? 'items-end' : 'items-start'
+          }`}
+        >
+          {!grouped && !isMe && (
+            <div className="flex items-baseline gap-2 mb-1 px-1.5">
+              <span className="text-[12px] font-semibold text-[#A8A29E] tracking-tight">
+                {senderName}
+              </span>
+              <span className="text-[10.5px] text-[#5A524A] tabular-nums">
+                {formatTime(message.sentAt)}
+              </span>
+            </div>
+          )}
 
-          <div
-            className={`inline-block max-w-full text-[14px] leading-[1.45] break-words rounded-[20px] ${tailClass} ${
-              isMe
-                ? 'bg-gradient-to-br from-[#E58E1E] to-[#C96A05] text-[#171106] shadow-[0_1px_2px_rgba(0,0,0,0.35)]'
-                : 'bg-[#1C1A17] border border-white/[0.05] text-[#F2EDE4]'
-            } ${hasMedia ? 'p-1.5' : 'px-3.5 py-2'}`}
-          >
-            {hasMedia && (
-              <div className={displayText ? 'mb-1' : ''}>
-                {message.mediaType === MediaType.Image && (
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      onOpenImage(message, senderName);
-                    }}
-                    className="relative group/img cursor-zoom-in rounded-[14px] overflow-hidden block"
-                    aria-label="View full image"
-                  >
-                    <img
+          <div className="relative inline-flex items-end gap-1 max-w-full">
+            <button
+              type="button"
+              onClick={() => setMenuOpen((v) => !v)}
+              className={`hidden sm:flex absolute top-1/2 -translate-y-1/2 ${
+                isMe ? '-left-8' : '-right-8'
+              } w-6 h-6 rounded-full items-center justify-center text-[#5A524A] hover:text-[#EDE5D4] hover:bg-white/[0.06] opacity-0 group-hover/row:opacity-100 transition-opacity`}
+              aria-label="Message options"
+            >
+              <MoreHorizontal className="w-4 h-4" />
+            </button>
+
+            <div
+              className={`inline-block max-w-full text-[14.5px] leading-[1.4] break-words rounded-[19px] ${tail} ${
+                isMe
+                  ? 'bg-gradient-to-br from-[#E58E1E] to-[#C96A05] text-[#171106] shadow-[0_2px_6px_-2px_rgba(217,119,6,0.4)]'
+                  : 'bg-[#1F1D1A] border border-white/[0.05] text-[#F2EDE4] shadow-[0_1px_3px_rgba(0,0,0,0.25)]'
+              } ${hasMedia ? 'p-1.5' : 'px-3.5 py-[7px]'}`}
+            >
+              {hasMedia && (
+                <div className={displayText ? 'mb-1' : ''}>
+                  {message.mediaType === MediaType.Image && (
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onOpenImage(message, senderName);
+                      }}
+                      className="relative group/img cursor-zoom-in rounded-[14px] overflow-hidden block"
+                      aria-label="View full image"
+                    >
+                      <img
+                        src={message.mediaUrl ?? undefined}
+                        alt=""
+                        loading="lazy"
+                        decoding="async"
+                        className="rounded-[14px] max-h-80 w-auto object-cover"
+                      />
+                      <span className="absolute top-2 right-2 w-7 h-7 rounded-full bg-black/50 text-white flex items-center justify-center opacity-0 group-hover/img:opacity-100 transition-opacity pointer-events-none">
+                        <ZoomIn className="w-3.5 h-3.5" />
+                      </span>
+                    </button>
+                  )}
+                  {message.mediaType === MediaType.Video && (
+                    <video
                       src={message.mediaUrl ?? undefined}
-                      alt=""
-                      loading="lazy"
-                      decoding="async"
-                      className="rounded-[14px] max-h-80 w-auto object-cover"
+                      controls
+                      preload="metadata"
+                      className="rounded-[14px] max-h-80 w-full bg-black"
                     />
-                    <span className="absolute top-2 right-2 w-7 h-7 rounded-full bg-black/50 text-white flex items-center justify-center opacity-0 group-hover/img:opacity-100 transition-opacity pointer-events-none">
-                      <ZoomIn className="w-3.5 h-3.5" />
-                    </span>
-                  </button>
-                )}
-                {message.mediaType === MediaType.Video && (
-                  <video
-                    src={message.mediaUrl ?? undefined}
-                    controls
-                    preload="metadata"
-                    className="rounded-[14px] max-h-80 w-full bg-black"
-                  />
-                )}
-                {message.mediaType === MediaType.Audio && (
-                  <audio
-                    src={message.mediaUrl ?? undefined}
-                    controls
-                    preload="metadata"
-                    className="w-full my-0.5"
-                  />
-                )}
-                {message.mediaType === MediaType.File && (
-                  <a
-                    href={message.mediaUrl ?? undefined}
-                    target="_blank"
-                    rel="noreferrer"
-                    download
-                    className={`inline-flex items-center gap-2 px-3 py-2.5 rounded-[14px] text-[12.5px] ${
-                      isMe
-                        ? 'bg-black/[0.14] text-[#171106]'
-                        : 'bg-white/[0.04] text-[#F2EDE4]'
-                    }`}
-                  >
-                    <FileText className="w-4 h-4 shrink-0 opacity-70" />
-                    <span className="truncate max-w-[180px]">Attached file</span>
-                    <Download className="w-3.5 h-3.5 shrink-0 ml-1 opacity-70" />
-                  </a>
-                )}
-              </div>
-            )}
+                  )}
+                  {message.mediaType === MediaType.Audio && (
+                    <audio
+                      src={message.mediaUrl ?? undefined}
+                      controls
+                      preload="metadata"
+                      className="w-full my-0.5"
+                    />
+                  )}
+                  {message.mediaType === MediaType.File && (
+                    <a
+                      href={message.mediaUrl ?? undefined}
+                      target="_blank"
+                      rel="noreferrer"
+                      download
+                      className={`inline-flex items-center gap-2 px-3 py-2.5 rounded-[14px] text-[12.5px] ${
+                        isMe
+                          ? 'bg-black/[0.14] text-[#171106]'
+                          : 'bg-white/[0.04] text-[#F2EDE4]'
+                      }`}
+                    >
+                      <FileText className="w-4 h-4 shrink-0 opacity-70" />
+                      <span className="truncate max-w-[180px]">
+                        Attached file
+                      </span>
+                      <Download className="w-3.5 h-3.5 shrink-0 ml-1 opacity-70" />
+                    </a>
+                  )}
+                </div>
+              )}
 
-            {displayText && (
-              <p className={`whitespace-pre-wrap ${hasMedia ? 'px-1.5 pb-1 pt-0' : ''}`}>
-                {displayText}
-              </p>
-            )}
-          </div>
-
-          <AnimatePresence>
-            {menuOpen && (
-              <motion.div
-                ref={menuRef}
-                initial={{ opacity: 0, scale: 0.94, y: -4 }}
-                animate={{ opacity: 1, scale: 1, y: 0 }}
-                exit={{ opacity: 0, scale: 0.94, y: -4 }}
-                transition={{ duration: 0.14 }}
-                className={`absolute z-40 top-full mt-1.5 ${
-                  isMe ? 'right-0' : 'left-0'
-                } min-w-[190px] rounded-2xl bg-[#1C1A17] border border-white/[0.08] shadow-[0_24px_48px_-12px_rgba(0,0,0,0.9)] overflow-hidden backdrop-blur-md`}
-              >
-                <button
-                  onClick={() => {
-                    setMenuOpen(false);
-                    onDeleteForMe(message);
-                  }}
-                  className="w-full flex items-center gap-2.5 px-3.5 py-2.5 text-[12.5px] text-[#EDE5D4] hover:bg-white/[0.05] transition-colors"
+              {displayText && (
+                <p
+                  className={`whitespace-pre-wrap ${
+                    hasMedia ? 'px-1.5 pb-1 pt-0' : ''
+                  }`}
                 >
-                  <EyeOff className="w-3.5 h-3.5 opacity-70" />
-                  <span>Delete for me</span>
-                </button>
+                  {displayText}
+                </p>
+              )}
+            </div>
 
-                {isMe && (
+            <AnimatePresence>
+              {menuOpen && (
+                <motion.div
+                  ref={menuRef}
+                  initial={{ opacity: 0, scale: 0.94, y: -4 }}
+                  animate={{ opacity: 1, scale: 1, y: 0 }}
+                  exit={{ opacity: 0, scale: 0.94, y: -4 }}
+                  transition={{ duration: 0.14 }}
+                  className={`absolute z-40 top-full mt-1.5 ${
+                    isMe ? 'right-0' : 'left-0'
+                  } min-w-[190px] rounded-2xl bg-[#1F1D1A] border border-white/[0.08] shadow-[0_24px_48px_-12px_rgba(0,0,0,0.9)] overflow-hidden backdrop-blur-md`}
+                >
                   <button
                     onClick={() => {
                       setMenuOpen(false);
-                      onDeleteForEveryone(message);
+                      onDeleteForMe(message);
                     }}
-                    className="w-full flex items-center gap-2.5 px-3.5 py-2.5 text-[12.5px] text-[#F87171] hover:bg-[#B91C1C]/[0.10] transition-colors border-t border-white/[0.04]"
+                    className="w-full flex items-center gap-2.5 px-3.5 py-2.5 text-[12.5px] text-[#EDE5D4] hover:bg-white/[0.05] transition-colors"
                   >
-                    <Trash2 className="w-3.5 h-3.5" />
-                    <span>Delete for everyone</span>
+                    <EyeOff className="w-3.5 h-3.5 opacity-70" />
+                    <span>Delete for me</span>
                   </button>
-                )}
-              </motion.div>
-            )}
-          </AnimatePresence>
-        </div>
 
-        {isMe && isLastOfGroup && (
-          <div className="flex items-center gap-1.5 mt-1 px-2">
-            <CheckCheck
-              className={`w-3 h-3 transition-colors ${
-                message.isRead ? 'text-[#4ADE80]' : 'text-[#5A524A]'
-              }`}
-            />
-            <span className="text-[10px] text-[#5A524A] tabular-nums">
-              {message.isRead ? 'Read' : 'Sent'}
-            </span>
+                  {isMe && (
+                    <button
+                      onClick={() => {
+                        setMenuOpen(false);
+                        onDeleteForEveryone(message);
+                      }}
+                      className="w-full flex items-center gap-2.5 px-3.5 py-2.5 text-[12.5px] text-[#F87171] hover:bg-[#B91C1C]/[0.10] transition-colors border-t border-white/[0.04]"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                      <span>Delete for everyone</span>
+                    </button>
+                  )}
+                </motion.div>
+              )}
+            </AnimatePresence>
           </div>
-        )}
+
+          {isMe && isLastOfGroup && (
+            <div
+              className="flex items-center gap-1 mt-0.5 px-1.5"
+              aria-label={message.isRead ? 'Read' : 'Sent'}
+            >
+              {message.isRead ? (
+                <CheckCheck className="w-3.5 h-3.5 text-[#4ADE80]" />
+              ) : (
+                <Check className="w-3.5 h-3.5 text-[#5A524A]" />
+              )}
+            </div>
+          )}
+        </div>
       </div>
-    </div>
-  );
-});
+    );
+  },
+  (prev, next) => {
+    // Re-render only if something relevant changed.
+    return (
+      prev.message.id === next.message.id &&
+      prev.message.isRead === next.message.isRead &&
+      prev.message.mediaUrl === next.message.mediaUrl &&
+      prev.message.content === next.message.content &&
+      prev.message.plaintext === next.message.plaintext &&
+      prev.grouped === next.grouped &&
+      prev.isLastOfGroup === next.isLastOfGroup &&
+      prev.isMe === next.isMe &&
+      prev.senderName === next.senderName &&
+      prev.senderAvatar === next.senderAvatar
+    );
+  },
+);
 
 /* ────────────────────────────────────────────────────────── */
 /* Info modal                                                 */
@@ -712,7 +740,9 @@ function InfoModal({
                     className="h-9 px-4 rounded-xl bg-[#B91C1C] hover:bg-[#991B1B] disabled:opacity-50 text-white text-[12.5px] font-medium transition-colors inline-flex items-center gap-1.5"
                   >
                     {busy && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
-                    <span>{busy ? 'Working…' : confirmCopy[confirmAction].cta}</span>
+                    <span>
+                      {busy ? 'Working…' : confirmCopy[confirmAction].cta}
+                    </span>
                   </button>
                 </>
               )}
@@ -750,16 +780,22 @@ function DirectMessagePane(): React.JSX.Element {
   const [pendingFiles, setPendingFiles] = useState<File[]>([]);
   const [fileError, setFileError] = useState<string | null>(null);
   const [isSending, setIsSending] = useState(false);
-  const [friendRequestStatus, setFriendRequestStatus] = useState<string | null>(null);
+  const [friendRequestStatus, setFriendRequestStatus] = useState<string | null>(
+    null,
+  );
   const [searchQuery, setSearchQuery] = useState('');
 
-  const [lastMessages, setLastMessages] = useState<Record<string, DirectMessageDto>>({});
+  const [lastMessages, setLastMessages] = useState<
+    Record<string, DirectMessageDto>
+  >({});
 
   const [pendingDeleteEveryoneId, setPendingDeleteEveryoneId] = useState<
     string | number | null
   >(null);
   const [infoOpen, setInfoOpen] = useState(false);
-  const [profileModalUserId, setProfileModalUserId] = useState<string | null>(null);
+  const [profileModalUserId, setProfileModalUserId] = useState<string | null>(
+    null,
+  );
 
   const [viewerOpenIndex, setViewerOpenIndex] = useState<number | null>(null);
 
@@ -767,15 +803,17 @@ function DirectMessagePane(): React.JSX.Element {
   const [showJumpToLatest, setShowJumpToLatest] = useState(false);
 
   const UNREAD_KEY = `orbital.unreadDms.${user?.id ?? 'anon'}`;
-  const [unreadCounts, setUnreadCounts] = useState<Record<string, number>>(() => {
-    if (typeof window === 'undefined') return {};
-    try {
-      const raw = localStorage.getItem(`orbital.unreadDms.${user?.id ?? 'anon'}`);
-      return raw ? (JSON.parse(raw) as Record<string, number>) : {};
-    } catch {
-      return {};
-    }
-  });
+  const [unreadCounts, setUnreadCounts] = useState<Record<string, number>>(
+    () => {
+      if (typeof window === 'undefined') return {};
+      try {
+        const raw = localStorage.getItem(`orbital.unreadDms.${user?.id ?? 'anon'}`);
+        return raw ? (JSON.parse(raw) as Record<string, number>) : {};
+      } catch {
+        return {};
+      }
+    },
+  );
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -793,6 +831,16 @@ function DirectMessagePane(): React.JSX.Element {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const composerRef = useRef<HTMLTextAreaElement | null>(null);
   const lastScrollTopRef = useRef(0);
+  const userIdRef = useRef(userId);
+  const currentUserIdRef = useRef(user?.id);
+
+  useEffect(() => {
+    userIdRef.current = userId;
+  }, [userId]);
+
+  useEffect(() => {
+    currentUserIdRef.current = user?.id;
+  }, [user?.id]);
 
   const autoGrow = (el: HTMLTextAreaElement) => {
     el.style.height = 'auto';
@@ -836,6 +884,7 @@ function DirectMessagePane(): React.JSX.Element {
     };
   }, []);
 
+  /* Seed sidebar previews on mount */
   useEffect(() => {
     if (friends.length === 0 || !user?.id) return;
     let active = true;
@@ -910,7 +959,8 @@ function DirectMessagePane(): React.JSX.Element {
         .filter((m) => m.mediaType === MediaType.Image && m.mediaUrl)
         .map((m) => ({
           url: m.mediaUrl as string,
-          senderName: m.senderId === user?.id ? 'You' : targetUser?.displayName ?? 'Them',
+          senderName:
+            m.senderId === user?.id ? 'You' : targetUser?.displayName ?? 'Them',
           sentAt: m.sentAt,
         })),
     [messages, user?.id, targetUser?.displayName],
@@ -976,6 +1026,7 @@ function DirectMessagePane(): React.JSX.Element {
     });
   }, [userId]);
 
+  /* ── Initial history load ───────────────────────────────── */
   useEffect(() => {
     if (!userId) return;
     let active = true;
@@ -1021,6 +1072,79 @@ function DirectMessagePane(): React.JSX.Element {
     };
   }, [userId, user?.id]);
 
+  /* ── Background polling — propagates deletes + read receipts ──
+     Runs every 8s while the tab is visible and a chat is open.
+     Refetches the last 50 messages, compares against current state,
+     and only updates if IDs or isRead flags actually changed. */
+  useEffect(() => {
+    if (!userId || !user?.id) return;
+    let cancelled = false;
+    let inFlight = false;
+
+    const poll = async () => {
+      if (cancelled || inFlight || document.hidden) return;
+      inFlight = true;
+      try {
+        const history = await apiService.getDmHistory(userId, 50);
+        if (cancelled) return;
+
+        const sorted = [...history].sort(
+          (a, b) => getMessageTime(a) - getMessageTime(b),
+        );
+        const decrypted = await decryptBatch(sorted, user.id);
+        if (cancelled) return;
+
+        setMessages((prev) => {
+          const prevMap = new Map(prev.map((m) => [m.id, m]));
+
+          // Merge: preserve existing plaintext where possible (avoids
+          // expensive re-decryption visual churn), update isRead.
+          const merged: DirectMessageDto[] = decrypted.map((d) => {
+            const existing = prevMap.get(d.id);
+            if (!existing) return d;
+            return {
+              ...existing,
+              isRead: d.isRead,
+              // If content changed server-side (rare), take new
+              content: d.content ?? existing.content,
+              mediaUrl: d.mediaUrl ?? existing.mediaUrl,
+              mediaType: d.mediaType ?? existing.mediaType,
+            };
+          });
+
+          // Detect actual changes — if none, don't touch state
+          const sameLength = merged.length === prev.length;
+          const allSame =
+            sameLength &&
+            merged.every(
+              (m, i) =>
+                m.id === prev[i]?.id &&
+                m.isRead === prev[i]?.isRead &&
+                m.mediaUrl === prev[i]?.mediaUrl,
+            );
+
+          return allSame ? prev : merged;
+        });
+      } catch {
+        /* silent — polling failure is non-fatal */
+      } finally {
+        inFlight = false;
+      }
+    };
+
+    const interval = window.setInterval(poll, 8000);
+    const onVis = () => {
+      if (!document.hidden) void poll();
+    };
+    document.addEventListener('visibilitychange', onVis);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+      document.removeEventListener('visibilitychange', onVis);
+    };
+  }, [userId, user?.id]);
+
   const handleLoadEarlier = async () => {
     if (!userId || loadingMore || !hasMore || messages.length === 0) return;
     const oldestMessageId = messages[0].id;
@@ -1044,64 +1168,77 @@ function DirectMessagePane(): React.JSX.Element {
     }
   };
 
+  /* ── Real-time incoming messages ────────────────────────── */
   useEffect(() => {
-    const unsub = signalRService.onReceiveDirectMessage(async (msg: DirectMessageDto) => {
-      const decrypted = await decryptOne(msg, user?.id ?? '');
+    const unsub = signalRService.onReceiveDirectMessage(
+      async (msg: DirectMessageDto) => {
+        const decrypted = await decryptOne(msg, user?.id ?? '');
 
-      const otherId = msg.senderId === user?.id ? msg.recipientId : msg.senderId;
-      if (otherId) {
-        setLastMessages((prev) => {
-          const existing = prev[otherId];
-          if (existing && getMessageTime(existing) >= getMessageTime(decrypted)) {
-            return prev;
-          }
-          return { ...prev, [otherId]: decrypted };
-        });
-      }
-
-      const isCurrentChat =
-        (msg.senderId === userId && msg.recipientId === user?.id) ||
-        (msg.senderId === user?.id && msg.recipientId === userId);
-
-      if (isCurrentChat) {
-        setMessages((prev) => {
-          if (prev.some((m) => m.id === msg.id)) return prev;
-          return [...prev, decrypted];
-        });
-        if (msg.senderId === userId) {
-          playReceive();
-          void apiService.markDmRead(userId);
+        const otherId =
+          msg.senderId === user?.id ? msg.recipientId : msg.senderId;
+        if (otherId) {
+          setLastMessages((prev) => {
+            const existing = prev[otherId];
+            if (
+              existing &&
+              getMessageTime(existing) >= getMessageTime(decrypted)
+            ) {
+              return prev;
+            }
+            return { ...prev, [otherId]: decrypted };
+          });
         }
-        setTimeout(() => {
-          messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-        }, 50);
-      } else if (msg.recipientId === user?.id && msg.senderId !== user?.id) {
-        playReceive();
-        setUnreadCounts((prev) => ({
-          ...prev,
-          [msg.senderId]: (prev[msg.senderId] ?? 0) + 1,
-        }));
-      }
-    });
+
+        const isCurrentChat =
+          (msg.senderId === userIdRef.current &&
+            msg.recipientId === user?.id) ||
+          (msg.senderId === user?.id && msg.recipientId === userIdRef.current);
+
+        if (isCurrentChat) {
+          setMessages((prev) => {
+            if (prev.some((m) => m.id === msg.id)) return prev;
+            // Remove any temp optimistic copy
+            const withoutTemp = prev.filter(
+              (m) => !(typeof m.id === 'number' && m.id < 0),
+            );
+            return [...withoutTemp, decrypted];
+          });
+          if (msg.senderId === userIdRef.current) {
+            playReceive();
+            void apiService.markDmRead(userIdRef.current!);
+          }
+          setTimeout(() => {
+            messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+          }, 50);
+        } else if (
+          msg.recipientId === user?.id &&
+          msg.senderId !== user?.id
+        ) {
+          playReceive();
+          setUnreadCounts((prev) => ({
+            ...prev,
+            [msg.senderId]: (prev[msg.senderId] ?? 0) + 1,
+          }));
+        }
+      },
+    );
     return () => {
       unsub();
     };
-  }, [userId, user?.id]);
+  }, [user?.id]);
 
   useEffect(() => {
     if (isPeerTyping && messagesContainerRef.current) {
       const el = messagesContainerRef.current;
-      const isNearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 160;
+      const isNearBottom =
+        el.scrollHeight - el.scrollTop - el.clientHeight < 160;
       if (isNearBottom) {
         messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
       }
     }
   }, [isPeerTyping]);
 
-  /* ─────────────────────────────────────────────────────────
-     FILE PICKER — images only, 5 MB cap after compression
-     ───────────────────────────────────────────────────────── */
-
+  /* ── File picker — images only, 5 MB cap ─────────────────── */
   const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
     setFileError(null);
     const files = Array.from(e.target.files ?? []);
@@ -1142,13 +1279,10 @@ function DirectMessagePane(): React.JSX.Element {
     setPendingFiles((prev) => prev.filter((_, i) => i !== index));
   };
 
-  /* ─────────────────────────────────────────────────────────
-     SEND — images as base64 data URLs (no upload endpoint)
-     ───────────────────────────────────────────────────────── */
-
+  /* ── Send — optimistic + base64 data URL ─────────────────── */
   const handleSendMessage = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!userId) return;
+    if (!userId || !user?.id) return;
     if (!inputContent.trim() && pendingFiles.length === 0) return;
 
     stopTyping();
@@ -1175,8 +1309,6 @@ function DirectMessagePane(): React.JSX.Element {
             continue;
           }
 
-          // Read as base64 data URL — matches the existing backend,
-          // which stores MediaUrl directly.
           const reader = new FileReader();
           const dataUrlPromise = new Promise<string>((resolve, reject) => {
             reader.onload = () => resolve(reader.result as string);
@@ -1187,6 +1319,26 @@ function DirectMessagePane(): React.JSX.Element {
           const mediaType = MediaType.Image;
 
           const includeText = i === 0 && text.length > 0;
+
+          // Optimistic: show immediately
+          const tempId = -Date.now() - i;
+          setMessages((prev) => [
+            ...prev,
+            {
+              id: tempId,
+              senderId: user.id,
+              recipientId: userId,
+              ciphertext: null,
+              nonce: null,
+              content: includeText ? text : null,
+              plaintext: includeText ? text : undefined,
+              mediaUrl,
+              mediaType,
+              isRead: false,
+              sentAt: new Date().toISOString(),
+            },
+          ]);
+
           let ciphertext = '';
           let nonce = '';
           if (includeText) {
@@ -1207,6 +1359,23 @@ function DirectMessagePane(): React.JSX.Element {
           playSend();
         }
       } else if (text.length > 0) {
+        // Optimistic: show immediately
+        const tempId = -Date.now();
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: tempId,
+            senderId: user.id,
+            recipientId: userId,
+            ciphertext: null,
+            nonce: null,
+            content: text,
+            plaintext: text,
+            isRead: false,
+            sentAt: new Date().toISOString(),
+          },
+        ]);
+
         const recipientPub = await getPublicKeyFor(userId);
         const enc = await encryptFor(recipientPub, text);
 
@@ -1231,6 +1400,8 @@ function DirectMessagePane(): React.JSX.Element {
         messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
       }, 50);
     } catch (err) {
+      // Roll back temp messages on failure
+      setMessages((prev) => prev.filter((m) => m.id > 0));
       setFileError(extractErrorMessage(err));
     } finally {
       setIsSending(false);
@@ -1240,7 +1411,9 @@ function DirectMessagePane(): React.JSX.Element {
   const handleSendFriendRequest = async () => {
     if (!targetUser?.userHandle) return;
     try {
-      await apiService.sendFriendRequest({ targetIdentifier: targetUser.userHandle });
+      await apiService.sendFriendRequest({
+        targetIdentifier: targetUser.userHandle,
+      });
       setFriendRequestStatus('Request sent');
       setTimeout(() => setFriendRequestStatus(null), 3000);
     } catch (err) {
@@ -1286,19 +1459,27 @@ function DirectMessagePane(): React.JSX.Element {
     if (pendingDeleteEveryoneId == null) return;
     const targetId = pendingDeleteEveryoneId;
 
+    // Optimistic removal
     setMessages((prev) => prev.filter((x) => x.id !== targetId));
     setPendingDeleteEveryoneId(null);
 
     try {
       await apiService.deleteDmForEveryone(targetId);
     } catch (err) {
-      if (userId) {
+      // Refetch to recover
+      if (userIdRef.current) {
         try {
-          const history = await apiService.getDmHistory(userId, 50);
+          const history = await apiService.getDmHistory(
+            userIdRef.current,
+            50,
+          );
           const sorted = [...history].sort(
             (a, b) => getMessageTime(a) - getMessageTime(b),
           );
-          const decrypted = await decryptBatch(sorted, user?.id ?? '');
+          const decrypted = await decryptBatch(
+            sorted,
+            currentUserIdRef.current ?? '',
+          );
           setMessages(decrypted);
         } catch {
           /* ignore */
@@ -1306,7 +1487,7 @@ function DirectMessagePane(): React.JSX.Element {
       }
       alert(`Delete for everyone failed: ${extractErrorMessage(err)}`);
     }
-  }, [pendingDeleteEveryoneId, userId, user?.id]);
+  }, [pendingDeleteEveryoneId]);
 
   const handleUnfriend = async () => {
     if (!userId) return;
@@ -1360,7 +1541,12 @@ function DirectMessagePane(): React.JSX.Element {
   const grouped = useMemo(() => {
     type Item =
       | { type: 'date'; key: string; label: string }
-      | { type: 'msg'; key: string; message: DirectMessageDto; grouped: boolean };
+      | {
+          type: 'msg';
+          key: string;
+          message: DirectMessageDto;
+          grouped: boolean;
+        };
 
     const out: Item[] = [];
 
@@ -1371,7 +1557,11 @@ function DirectMessagePane(): React.JSX.Element {
     for (const m of messages) {
       const day = parseUtc(m.sentAt).toDateString();
       if (day !== lastDate) {
-        out.push({ type: 'date', key: `d-${day}`, label: formatDayDivider(m.sentAt) });
+        out.push({
+          type: 'date',
+          key: `d-${day}`,
+          label: formatDayDivider(m.sentAt),
+        });
         lastDate = day;
         lastSenderId = '';
         lastTs = 0;
@@ -1382,7 +1572,12 @@ function DirectMessagePane(): React.JSX.Element {
       const within = ts - lastTs < 7 * 60 * 1000;
       const isGrouped = sameSender && within;
 
-      out.push({ type: 'msg', key: String(m.id), message: m, grouped: isGrouped });
+      out.push({
+        type: 'msg',
+        key: String(m.id),
+        message: m,
+        grouped: isGrouped,
+      });
       lastSenderId = m.senderId ?? '';
       lastTs = ts;
     }
@@ -1396,7 +1591,9 @@ function DirectMessagePane(): React.JSX.Element {
       if (item.type !== 'msg') continue;
       const next = grouped[i + 1];
       const nextIsSameSender =
-        next && next.type === 'msg' && next.message.senderId === item.message.senderId;
+        next &&
+        next.type === 'msg' &&
+        next.message.senderId === item.message.senderId;
       map.set(item.key, !nextIsSameSender);
     }
     return map;
@@ -1484,7 +1681,9 @@ function DirectMessagePane(): React.JSX.Element {
                     <div className="flex items-center justify-between gap-2 mt-0.5">
                       <p
                         className={`text-[11.5px] truncate ${
-                          unread > 0 ? 'text-[#EDE5D4] font-medium' : 'text-[#7A6F65]'
+                          unread > 0
+                            ? 'text-[#EDE5D4] font-medium'
+                            : 'text-[#7A6F65]'
                         }`}
                       >
                         {preview
@@ -1513,7 +1712,7 @@ function DirectMessagePane(): React.JSX.Element {
       >
         {userId && targetUser ? (
           <>
-            <div className="h-[68px] px-3 sm:px-5 border-b border-white/[0.05] bg-[#0A0908]/80 backdrop-blur-xl flex items-center justify-between shrink-0 gap-2 z-10">
+            <div className="h-[68px] px-3 sm:px-5 border-b border-white/[0.05] bg-[#0A0908]/85 backdrop-blur-xl flex items-center justify-between shrink-0 gap-2 z-10">
               <div className="flex items-center gap-2 sm:gap-3 min-w-0">
                 <button
                   onClick={() => navigate('/app/dm')}
@@ -1544,13 +1743,16 @@ function DirectMessagePane(): React.JSX.Element {
                   <p className="text-[11px] text-[#7A6F65] truncate mt-0.5 flex items-center gap-1.5">
                     <span
                       className={`w-1.5 h-1.5 rounded-full shrink-0 ${
-                        isTargetOnline ? 'bg-[#22C55E] shadow-[0_0_6px_rgba(34,197,94,0.6)]' : 'bg-[#5A524A]'
+                        isTargetOnline
+                          ? 'bg-[#22C55E] shadow-[0_0_6px_rgba(34,197,94,0.6)]'
+                          : 'bg-[#5A524A]'
                       }`}
                     />
                     <span>
                       {isTargetOnline ? 'Active now' : 'Offline'}
                       <span className="text-[#5A524A] hidden sm:inline">
-                        {' '}· @{targetUser.userHandle}
+                        {' '}
+                        · @{targetUser.userHandle}
                       </span>
                     </span>
                   </p>
@@ -1587,11 +1789,15 @@ function DirectMessagePane(): React.JSX.Element {
               <div className="shrink-0 px-4 sm:px-5 py-2.5 bg-[#D97706]/[0.06] border-b border-[#D97706]/20 flex flex-wrap items-center justify-between gap-3 text-[12.5px]">
                 <div className="flex items-center gap-2 text-[#A8A29E] min-w-0">
                   <AlertCircle className="w-4 h-4 text-[#D97706] shrink-0" />
-                  <span className="truncate">You're not friends yet — messaging is limited.</span>
+                  <span className="truncate">
+                    You're not friends yet — messaging is limited.
+                  </span>
                 </div>
                 <div className="flex items-center gap-2 shrink-0">
                   {friendRequestStatus && (
-                    <span className="text-[11.5px] text-[#4ADE80]">{friendRequestStatus}</span>
+                    <span className="text-[11.5px] text-[#4ADE80]">
+                      {friendRequestStatus}
+                    </span>
                   )}
                   <button
                     onClick={() => void handleSendFriendRequest()}
@@ -1684,7 +1890,9 @@ function DirectMessagePane(): React.JSX.Element {
                       message={m}
                       isMe={isMe}
                       senderName={isMe ? 'You' : targetUser.displayName}
-                      senderAvatar={isMe ? user?.avatarUrl : targetUser.avatarUrl}
+                      senderAvatar={
+                        isMe ? user?.avatarUrl : targetUser.avatarUrl
+                      }
                       grouped={item.grouped}
                       isLastOfGroup={isLastOfGroup.get(item.key) ?? true}
                       onDeleteForMe={handleDeleteForMe}
@@ -1703,7 +1911,7 @@ function DirectMessagePane(): React.JSX.Element {
                     animate={{ opacity: 1, y: 0 }}
                     exit={reduceMotion ? undefined : { opacity: 0, y: 6 }}
                     transition={{ duration: 0.16 }}
-                    className="flex items-end gap-3 px-1 mt-3"
+                    className="flex items-end gap-2.5 mt-3 justify-start"
                   >
                     <div className="w-8 shrink-0">
                       <Avatar
@@ -1712,7 +1920,7 @@ function DirectMessagePane(): React.JSX.Element {
                         size="sm"
                       />
                     </div>
-                    <div className="inline-flex items-center gap-1.5 px-4 py-3 rounded-[20px] rounded-bl-[6px] bg-[#1C1A17] border border-white/[0.05]">
+                    <div className="inline-flex items-center gap-1.5 px-4 py-3 rounded-[19px] rounded-bl-[6px] bg-[#1F1D1A] border border-white/[0.05]">
                       <span className="w-1.5 h-1.5 rounded-full bg-[#A8A29E] animate-bounce [animation-delay:-0.32s]" />
                       <span className="w-1.5 h-1.5 rounded-full bg-[#A8A29E] animate-bounce [animation-delay:-0.16s]" />
                       <span className="w-1.5 h-1.5 rounded-full bg-[#A8A29E] animate-bounce" />
@@ -1728,9 +1936,13 @@ function DirectMessagePane(): React.JSX.Element {
               {showJumpToLatest && (
                 <motion.button
                   key="jump-btn"
-                  initial={reduceMotion ? false : { opacity: 0, y: 8, scale: 0.9 }}
+                  initial={
+                    reduceMotion ? false : { opacity: 0, y: 8, scale: 0.9 }
+                  }
                   animate={{ opacity: 1, y: 0, scale: 1 }}
-                  exit={reduceMotion ? undefined : { opacity: 0, y: 8, scale: 0.9 }}
+                  exit={
+                    reduceMotion ? undefined : { opacity: 0, y: 8, scale: 0.9 }
+                  }
                   transition={{ type: 'spring', stiffness: 400, damping: 30 }}
                   onClick={handleJumpToLatest}
                   className="absolute bottom-24 right-6 z-30 w-10 h-10 rounded-full bg-[#D97706] hover:bg-[#B45309] text-[#171106] shadow-[0_8px_24px_-6px_rgba(217,119,6,0.5)] flex items-center justify-center transition-colors"
@@ -1752,20 +1964,26 @@ function DirectMessagePane(): React.JSX.Element {
               transition={{ type: 'spring', stiffness: 380, damping: 34 }}
               className="shrink-0 overflow-hidden"
             >
-              <div className="border-t border-white/[0.05] bg-[#0A0908]/80 backdrop-blur-xl px-2 sm:px-4 py-2.5 sm:py-3.5">
+              <div className="border-t border-white/[0.05] bg-[#0A0908]/85 backdrop-blur-xl px-2 sm:px-4 py-2.5 sm:py-3.5">
                 <AnimatePresence>
                   {pendingFiles.length > 0 && (
                     <motion.div
-                      initial={reduceMotion ? false : { opacity: 0, y: 6, height: 0 }}
+                      initial={
+                        reduceMotion ? false : { opacity: 0, y: 6, height: 0 }
+                      }
                       animate={{ opacity: 1, y: 0, height: 'auto' }}
-                      exit={reduceMotion ? undefined : { opacity: 0, y: 6, height: 0 }}
+                      exit={
+                        reduceMotion ? undefined : { opacity: 0, y: 6, height: 0 }
+                      }
                       transition={{ duration: 0.18 }}
                       className="pb-2 sm:pb-3 overflow-hidden"
                     >
                       <div className="flex gap-2 overflow-x-auto pb-1">
                         {pendingFiles.map((file, index) => {
                           const isImage = file.type.startsWith('image/');
-                          const previewUrl = isImage ? URL.createObjectURL(file) : null;
+                          const previewUrl = isImage
+                            ? URL.createObjectURL(file)
+                            : null;
                           return (
                             <div
                               key={`${file.name}-${index}`}
@@ -1776,7 +1994,9 @@ function DirectMessagePane(): React.JSX.Element {
                                   src={previewUrl}
                                   alt={file.name}
                                   className="w-full h-full object-cover"
-                                  onLoad={() => URL.revokeObjectURL(previewUrl)}
+                                  onLoad={() =>
+                                    URL.revokeObjectURL(previewUrl)
+                                  }
                                 />
                               ) : (
                                 <div className="w-full h-full flex flex-col items-center justify-center px-1 text-center">
@@ -1799,7 +2019,8 @@ function DirectMessagePane(): React.JSX.Element {
                         })}
                       </div>
                       <p className="text-[11px] text-[#7A6F65] mt-1.5">
-                        {pendingFiles.length} file{pendingFiles.length === 1 ? '' : 's'} ready to send
+                        {pendingFiles.length} file
+                        {pendingFiles.length === 1 ? '' : 's'} ready to send
                       </p>
                     </motion.div>
                   )}
@@ -1822,7 +2043,10 @@ function DirectMessagePane(): React.JSX.Element {
                   )}
                 </AnimatePresence>
 
-                <form onSubmit={handleSendMessage} className="flex items-end gap-2">
+                <form
+                  onSubmit={handleSendMessage}
+                  className="flex items-end gap-2"
+                >
                   <input
                     type="file"
                     ref={fileInputRef}
@@ -1859,25 +2083,36 @@ function DirectMessagePane(): React.JSX.Element {
                       onKeyDown={(e) => {
                         if (e.key === 'Enter' && !e.shiftKey) {
                           e.preventDefault();
-                          void handleSendMessage(e as unknown as React.FormEvent);
+                          void handleSendMessage(
+                            e as unknown as React.FormEvent,
+                          );
                         }
                       }}
                       placeholder={`Message ${targetUser.displayName}`}
                       rows={1}
-                      className="w-full resize-none px-4 py-2.5 text-[14px] text-[#EDE5D4] placeholder:text-[#5A524A] focus:outline-none leading-[1.5] max-h-[140px] overflow-y-auto rounded-[22px] bg-white/[0.045] border border-white/[0.06] focus:border-[#D97706]/40 focus:bg-white/[0.06] transition-colors"
+                      className="w-full resize-none px-4 py-2.5 text-[14.5px] text-[#EDE5D4] placeholder:text-[#5A524A] focus:outline-none leading-[1.5] max-h-[140px] overflow-y-auto rounded-[22px] bg-white/[0.045] border border-white/[0.06] focus:border-[#D97706]/40 focus:bg-white/[0.06] transition-colors"
                     />
                   </div>
 
                   <AnimatePresence mode="popLayout" initial={false}>
-                    {(inputContent.trim().length > 0 || pendingFiles.length > 0) && (
+                    {(inputContent.trim().length > 0 ||
+                      pendingFiles.length > 0) && (
                       <motion.button
                         key="send-btn"
                         type="submit"
                         disabled={isSending}
-                        initial={reduceMotion ? false : { scale: 0.6, opacity: 0 }}
+                        initial={
+                          reduceMotion ? false : { scale: 0.6, opacity: 0 }
+                        }
                         animate={{ scale: 1, opacity: 1 }}
-                        exit={reduceMotion ? undefined : { scale: 0.6, opacity: 0 }}
-                        transition={{ type: 'spring', stiffness: 420, damping: 26 }}
+                        exit={
+                          reduceMotion ? undefined : { scale: 0.6, opacity: 0 }
+                        }
+                        transition={{
+                          type: 'spring',
+                          stiffness: 420,
+                          damping: 26,
+                        }}
                         className="shrink-0 w-10 h-10 rounded-full bg-gradient-to-br from-[#E58E1E] to-[#C96A05] hover:brightness-110 disabled:opacity-50 disabled:cursor-not-allowed text-[#171106] flex items-center justify-center shadow-[0_4px_12px_-2px_rgba(217,119,6,0.4)]"
                         title="Send"
                         aria-label="Send"
@@ -1937,7 +2172,8 @@ function DirectMessagePane(): React.JSX.Element {
                 </h3>
                 <p className="text-[12.5px] text-[#A8A29E] leading-relaxed">
                   This message will be removed for both you and{' '}
-                  {targetUser?.displayName ?? 'the other person'}. Cannot be undone.
+                  {targetUser?.displayName ?? 'the other person'}. Cannot be
+                  undone.
                 </p>
               </div>
               <div className="px-5 py-3.5 border-t border-white/[0.06] flex items-center justify-end gap-2">
