@@ -66,7 +66,189 @@ import {
   Flag,
   ZoomIn,
   MoreHorizontal,
+  Palette,
+  ExternalLink,
+  Play,
+  Link2,
 } from 'lucide-react';
+
+/* ────────────────────────────────────────────────────────── */
+/* Chat themes                                                */
+/* ────────────────────────────────────────────────────────── */
+
+type ChatThemeKey =
+  | 'midnight'
+  | 'aurora'
+  | 'sunset'
+  | 'forest'
+  | 'ocean'
+  | 'neon'
+  | 'mono';
+
+interface ChatTheme {
+  label: string;
+  swatch: string; // css gradient for picker
+  bg: string; // chat area background
+  sidebarBg: string;
+  sidebarActive: string;
+  bubbleSent: string;
+  bubbleSentText: string;
+  bubbleReceived: string;
+  bubbleReceivedText: string;
+  accent: string; // e.g. button bg
+  accentText: string;
+  composerBg: string;
+  glow: string; // hover shadow color
+  ambient: string; // decorative background layer (behind messages)
+}
+
+const CHAT_THEMES: Record<ChatThemeKey, ChatTheme> = {
+  midnight: {
+    label: 'Midnight',
+    swatch: 'linear-gradient(135deg, #E58E1E, #1F1D1A)',
+    bg: 'bg-[#0A0908]',
+    sidebarBg: 'bg-[#0D0C0A]',
+    sidebarActive: 'bg-white/[0.06] ring-white/[0.06]',
+    bubbleSent:
+      'bg-gradient-to-br from-[#E58E1E] to-[#C96A05] text-[#171106]',
+    bubbleSentText: 'text-[#171106]',
+    bubbleReceived: 'bg-[#1F1D1A] border border-white/[0.05] text-[#F2EDE4]',
+    bubbleReceivedText: 'text-[#F2EDE4]',
+    accent: 'bg-[#D97706] hover:bg-[#B45309] text-[#171106]',
+    accentText: 'text-[#D97706]',
+    composerBg: 'bg-[#0A0908]/85',
+    glow: 'shadow-[0_2px_6px_-2px_rgba(217,119,6,0.4)]',
+    ambient: '',
+  },
+  aurora: {
+    label: 'Aurora',
+    swatch: 'linear-gradient(135deg, #A78BFA, #22D3EE)',
+    bg: 'bg-[#070A0E]',
+    sidebarBg: 'bg-[#0A0E14]',
+    sidebarActive: 'bg-[#22D3EE]/[0.08] ring-[#22D3EE]/20',
+    bubbleSent:
+      'bg-gradient-to-br from-[#A78BFA] to-[#22D3EE] text-[#0A0E14]',
+    bubbleSentText: 'text-[#0A0E14]',
+    bubbleReceived: 'bg-white/[0.06] border border-white/[0.08] text-[#E5E7EB]',
+    bubbleReceivedText: 'text-[#E5E7EB]',
+    accent: 'bg-[#22D3EE] hover:bg-[#06B6D4] text-[#0A0E14]',
+    accentText: 'text-[#22D3EE]',
+    composerBg: 'bg-[#070A0E]/85',
+    glow: 'shadow-[0_2px_12px_-2px_rgba(34,211,238,0.4)]',
+    ambient:
+      'before:absolute before:inset-0 before:pointer-events-none before:bg-[radial-gradient(60%_50%_at_20%_0%,rgba(167,139,250,0.10),transparent_60%),radial-gradient(50%_60%_at_100%_100%,rgba(34,211,238,0.08),transparent_60%)]',
+  },
+  sunset: {
+    label: 'Sunset',
+    swatch: 'linear-gradient(135deg, #FB7185, #F59E0B)',
+    bg: 'bg-[#100705]',
+    sidebarBg: 'bg-[#150A07]',
+    sidebarActive: 'bg-[#FB7185]/[0.08] ring-[#FB7185]/20',
+    bubbleSent:
+      'bg-gradient-to-br from-[#FB7185] to-[#F59E0B] text-[#1A0A05]',
+    bubbleSentText: 'text-[#1A0A05]',
+    bubbleReceived: 'bg-[#251209] border border-white/[0.06] text-[#FCE7D2]',
+    bubbleReceivedText: 'text-[#FCE7D2]',
+    accent: 'bg-[#FB7185] hover:bg-[#E11D48] text-[#1A0A05]',
+    accentText: 'text-[#FB7185]',
+    composerBg: 'bg-[#100705]/85',
+    glow: 'shadow-[0_2px_12px_-2px_rgba(251,113,133,0.35)]',
+    ambient:
+      'before:absolute before:inset-0 before:pointer-events-none before:bg-[radial-gradient(60%_50%_at_80%_100%,rgba(251,113,133,0.10),transparent_60%)]',
+  },
+  forest: {
+    label: 'Forest',
+    swatch: 'linear-gradient(135deg, #34D399, #065F46)',
+    bg: 'bg-[#04100A]',
+    sidebarBg: 'bg-[#06160D]',
+    sidebarActive: 'bg-[#34D399]/[0.08] ring-[#34D399]/20',
+    bubbleSent:
+      'bg-gradient-to-br from-[#34D399] to-[#059669] text-[#03190E]',
+    bubbleSentText: 'text-[#03190E]',
+    bubbleReceived: 'bg-[#0E241A] border border-[#34D399]/[0.10] text-[#D1FAE5]',
+    bubbleReceivedText: 'text-[#D1FAE5]',
+    accent: 'bg-[#34D399] hover:bg-[#10B981] text-[#03190E]',
+    accentText: 'text-[#34D399]',
+    composerBg: 'bg-[#04100A]/85',
+    glow: 'shadow-[0_2px_12px_-2px_rgba(52,211,153,0.35)]',
+    ambient:
+      'before:absolute before:inset-0 before:pointer-events-none before:bg-[radial-gradient(60%_50%_at_50%_0%,rgba(52,211,153,0.08),transparent_60%)]',
+  },
+  ocean: {
+    label: 'Ocean',
+    swatch: 'linear-gradient(135deg, #38BDF8, #1E40AF)',
+    bg: 'bg-[#050A14]',
+    sidebarBg: 'bg-[#070E1A]',
+    sidebarActive: 'bg-[#38BDF8]/[0.08] ring-[#38BDF8]/20',
+    bubbleSent:
+      'bg-gradient-to-br from-[#38BDF8] to-[#1E40AF] text-[#021024]',
+    bubbleSentText: 'text-[#021024]',
+    bubbleReceived: 'bg-[#0D1626] border border-[#38BDF8]/[0.10] text-[#DBEAFE]',
+    bubbleReceivedText: 'text-[#DBEAFE]',
+    accent: 'bg-[#38BDF8] hover:bg-[#0EA5E9] text-[#021024]',
+    accentText: 'text-[#38BDF8]',
+    composerBg: 'bg-[#050A14]/85',
+    glow: 'shadow-[0_2px_12px_-2px_rgba(56,189,248,0.4)]',
+    ambient:
+      'before:absolute before:inset-0 before:pointer-events-none before:bg-[radial-gradient(70%_50%_at_50%_100%,rgba(56,189,248,0.09),transparent_60%)]',
+  },
+  neon: {
+    label: 'Neon',
+    swatch: 'linear-gradient(135deg, #22D3EE, #A78BFA, #F472B6)',
+    bg: 'bg-[#08050F]',
+    sidebarBg: 'bg-[#0D0817]',
+    sidebarActive: 'bg-[#A78BFA]/[0.10] ring-[#A78BFA]/30',
+    bubbleSent:
+      'bg-gradient-to-br from-[#22D3EE] via-[#A78BFA] to-[#F472B6] text-[#08050F]',
+    bubbleSentText: 'text-[#08050F]',
+    bubbleReceived:
+      'bg-[#160E24] border border-[#A78BFA]/[0.18] text-[#F5F3FF] shadow-[inset_0_0_20px_rgba(167,139,250,0.06)]',
+    bubbleReceivedText: 'text-[#F5F3FF]',
+    accent: 'bg-[#A78BFA] hover:bg-[#8B5CF6] text-[#08050F]',
+    accentText: 'text-[#A78BFA]',
+    composerBg: 'bg-[#08050F]/85',
+    glow: 'shadow-[0_2px_16px_-2px_rgba(167,139,250,0.5)]',
+    ambient:
+      'before:absolute before:inset-0 before:pointer-events-none before:bg-[radial-gradient(50%_40%_at_20%_0%,rgba(34,211,238,0.10),transparent_60%),radial-gradient(50%_40%_at_80%_100%,rgba(244,114,182,0.10),transparent_60%),radial-gradient(40%_40%_at_50%_50%,rgba(167,139,250,0.06),transparent_60%)]',
+  },
+  mono: {
+    label: 'Mono',
+    swatch: 'linear-gradient(135deg, #E5E7EB, #1F2937)',
+    bg: 'bg-[#0A0A0B]',
+    sidebarBg: 'bg-[#0F0F11]',
+    sidebarActive: 'bg-white/[0.06] ring-white/[0.08]',
+    bubbleSent:
+      'bg-gradient-to-br from-[#E5E7EB] to-[#9CA3AF] text-[#0A0A0B]',
+    bubbleSentText: 'text-[#0A0A0B]',
+    bubbleReceived: 'bg-[#1A1A1D] border border-white/[0.06] text-[#F3F4F6]',
+    bubbleReceivedText: 'text-[#F3F4F6]',
+    accent: 'bg-[#E5E7EB] hover:bg-[#D1D5DB] text-[#0A0A0B]',
+    accentText: 'text-[#E5E7EB]',
+    composerBg: 'bg-[#0A0A0B]/85',
+    glow: 'shadow-[0_2px_8px_-2px_rgba(255,255,255,0.15)]',
+    ambient: '',
+  },
+};
+
+function readThemeFor(peerId: string | undefined): ChatThemeKey {
+  if (!peerId || typeof window === 'undefined') return 'midnight';
+  try {
+    const raw = localStorage.getItem(`orbital.chatTheme.${peerId}`);
+    if (raw && raw in CHAT_THEMES) return raw as ChatThemeKey;
+  } catch {
+    /* ignore */
+  }
+  return 'midnight';
+}
+
+function writeThemeFor(peerId: string | undefined, key: ChatThemeKey) {
+  if (!peerId || typeof window === 'undefined') return;
+  try {
+    localStorage.setItem(`orbital.chatTheme.${peerId}`, key);
+  } catch {
+    /* quota */
+  }
+}
 
 /* ────────────────────────────────────────────────────────── */
 /* Date / time helpers                                        */
@@ -91,7 +273,6 @@ function formatDayDivider(dateStr: string): string {
     const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
     const that = new Date(d.getFullYear(), d.getMonth(), d.getDate());
     const diffDays = Math.round((today.getTime() - that.getTime()) / 86_400_000);
-
     if (diffDays === 0) return 'Today';
     if (diffDays === 1) return 'Yesterday';
     if (diffDays < 7) return d.toLocaleDateString([], { weekday: 'long' });
@@ -154,15 +335,231 @@ interface LastMessagePreview {
 function previewText(msg: DirectMessageDto, myUserId: string): LastMessagePreview {
   const isMe = msg.senderId === myUserId;
   const body = msg.plaintext ?? msg.content ?? '';
-
   let text: string;
   if (msg.mediaType === MediaType.Image) text = '📷 Photo';
   else if (msg.mediaType === MediaType.Video) text = '🎥 Video';
   else if (msg.mediaType === MediaType.Audio) text = '🎤 Audio';
   else if (msg.mediaType === MediaType.File) text = '📎 File';
   else text = body;
-
   return { text, sentAt: msg.sentAt, isMe };
+}
+
+/* ────────────────────────────────────────────────────────── */
+/* Link detection + previews                                  */
+/* ────────────────────────────────────────────────────────── */
+
+const URL_REGEX = /https?:\/\/[^\s<>"']+/gi;
+
+function extractUrls(text: string): string[] {
+  if (!text) return [];
+  const out: string[] = [];
+  const seen = new Set<string>();
+  let m: RegExpExecArray | null;
+  URL_REGEX.lastIndex = 0;
+  while ((m = URL_REGEX.exec(text)) !== null) {
+    const url = m[0];
+    if (!seen.has(url)) {
+      seen.add(url);
+      out.push(url);
+    }
+  }
+  return out;
+}
+
+function getYouTubeId(url: string): string | null {
+  const patterns = [
+    /(?:youtube\.com\/watch\?[^#]*v=|youtu\.be\/|youtube\.com\/embed\/|youtube\.com\/shorts\/)([a-zA-Z0-9_-]{11})/,
+  ];
+  for (const p of patterns) {
+    const m = url.match(p);
+    if (m) return m[1];
+  }
+  return null;
+}
+
+function getVimeoId(url: string): string | null {
+  const m = url.match(/vimeo\.com\/(?:video\/)?(\d+)/);
+  return m ? m[1] : null;
+}
+
+function getHostname(url: string): string {
+  try {
+    return new URL(url).hostname.replace(/^www\./, '');
+  } catch {
+    return url;
+  }
+}
+
+/**
+ * Render text with inline URLs (clickable). Non-YouTube URLs become a
+ * small card with favicon + domain. YouTube/Vimeo become inline embeds.
+ */
+function LinkifiedText({
+  text,
+  isMe,
+  theme,
+}: {
+  text: string;
+  isMe: boolean;
+  theme: ChatTheme;
+}) {
+  const parts = useMemo(() => {
+    if (!text) return [] as Array<{ type: 'text' | 'link'; value: string }>;
+    const out: Array<{ type: 'text' | 'link'; value: string }> = [];
+    let lastIdx = 0;
+    URL_REGEX.lastIndex = 0;
+    let m: RegExpExecArray | null;
+    while ((m = URL_REGEX.exec(text)) !== null) {
+      if (m.index > lastIdx) {
+        out.push({ type: 'text', value: text.slice(lastIdx, m.index) });
+      }
+      out.push({ type: 'link', value: m[0] });
+      lastIdx = m.index + m[0].length;
+    }
+    if (lastIdx < text.length) {
+      out.push({ type: 'text', value: text.slice(lastIdx) });
+    }
+    return out;
+  }, [text]);
+
+  const linkColor = isMe
+    ? 'text-black/70 underline decoration-black/30 hover:decoration-black/60'
+    : 'text-[#7DD3FC] underline decoration-[#7DD3FC]/30 hover:decoration-[#7DD3FC]/70';
+
+  return (
+    <p className="whitespace-pre-wrap">
+      {parts.map((p, i) =>
+        p.type === 'text' ? (
+          <React.Fragment key={i}>{p.value}</React.Fragment>
+        ) : (
+          <a
+            key={i}
+            href={p.value}
+            target="_blank"
+            rel="noreferrer"
+            onClick={(e) => e.stopPropagation()}
+            className={`${linkColor} break-all transition-colors`}
+          >
+            {p.value}
+          </a>
+        ),
+      )}
+    </p>
+  );
+}
+
+/**
+ * Rich preview cards (YouTube embed, Vimeo embed, generic site card).
+ * Rendered underneath the message text when URLs are present.
+ */
+function LinkPreviews({
+  text,
+  isMe,
+  theme,
+}: {
+  text: string;
+  isMe: boolean;
+  theme: ChatTheme;
+}) {
+  const urls = useMemo(() => extractUrls(text).slice(0, 3), [text]);
+  if (urls.length === 0) return null;
+
+  return (
+    <div className="mt-2 space-y-2">
+      {urls.map((url) => {
+        const yt = getYouTubeId(url);
+        if (yt) {
+          return (
+            <div
+              key={url}
+              className="rounded-[14px] overflow-hidden border border-white/[0.08] bg-black aspect-video w-full max-w-[420px]"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <iframe
+                src={`https://www.youtube.com/embed/${yt}`}
+                title="YouTube preview"
+                allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                allowFullScreen
+                loading="lazy"
+                className="w-full h-full"
+              />
+            </div>
+          );
+        }
+
+        const vimeo = getVimeoId(url);
+        if (vimeo) {
+          return (
+            <div
+              key={url}
+              className="rounded-[14px] overflow-hidden border border-white/[0.08] bg-black aspect-video w-full max-w-[420px]"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <iframe
+                src={`https://player.vimeo.com/video/${vimeo}`}
+                title="Vimeo preview"
+                allow="autoplay; fullscreen; picture-in-picture"
+                allowFullScreen
+                loading="lazy"
+                className="w-full h-full"
+              />
+            </div>
+          );
+        }
+
+        // Generic site card
+        const host = getHostname(url);
+        const favicon = `https://www.google.com/s2/favicons?domain=${encodeURIComponent(
+          host,
+        )}&sz=64`;
+
+        return (
+          <a
+            key={url}
+            href={url}
+            target="_blank"
+            rel="noreferrer"
+            onClick={(e) => e.stopPropagation()}
+            className={`flex items-stretch gap-2.5 rounded-[14px] border overflow-hidden transition-colors ${
+              isMe
+                ? 'bg-black/[0.10] border-black/[0.15] hover:bg-black/[0.15]'
+                : 'bg-white/[0.03] border-white/[0.08] hover:bg-white/[0.05]'
+            }`}
+          >
+            <div
+              className={`w-[68px] shrink-0 flex items-center justify-center ${
+                isMe ? 'bg-black/[0.10]' : 'bg-white/[0.02]'
+              }`}
+            >
+              <img
+                src={favicon}
+                alt=""
+                width={28}
+                height={28}
+                loading="lazy"
+                onError={(e) => {
+                  (e.currentTarget as HTMLImageElement).style.display = 'none';
+                }}
+                className="rounded"
+              />
+            </div>
+            <div className="flex-1 min-w-0 py-2 pr-3">
+              <div className="flex items-center gap-1.5">
+                <Link2 className="w-3 h-3 opacity-60 shrink-0" />
+                <span className="text-[11.5px] font-semibold truncate">
+                  {host}
+                </span>
+                <ExternalLink className="w-3 h-3 opacity-40 shrink-0" />
+              </div>
+              <p className="text-[11.5px] opacity-70 truncate mt-0.5">
+                {url}
+              </p>
+            </div>
+          </a>
+        );
+      })}
+    </div>
+  );
 }
 
 /* ────────────────────────────────────────────────────────── */
@@ -178,7 +575,6 @@ interface ImageViewerProps {
 function ImageViewer({ images, startIndex, onClose }: ImageViewerProps) {
   const [index, setIndex] = useState(startIndex);
   const reduceMotion = useReducedMotion();
-
   const current = images[index];
   const hasPrev = index > 0;
   const hasNext = index < images.length - 1;
@@ -241,7 +637,6 @@ function ImageViewer({ images, startIndex, onClose }: ImageViewerProps) {
             }}
             className="w-10 h-10 rounded-full flex items-center justify-center text-white/80 hover:text-white hover:bg-white/10 transition-colors"
             aria-label="Close"
-            title="Close"
           >
             <X className="w-[18px] h-[18px]" />
           </button>
@@ -291,7 +686,75 @@ function ImageViewer({ images, startIndex, onClose }: ImageViewerProps) {
 }
 
 /* ────────────────────────────────────────────────────────── */
-/* Message row — bulletproof mobile alignment                 */
+/* Theme picker popover                                       */
+/* ────────────────────────────────────────────────────────── */
+
+function ThemePicker({
+  current,
+  onSelect,
+  onClose,
+}: {
+  current: ChatThemeKey;
+  onSelect: (k: ChatThemeKey) => void;
+  onClose: () => void;
+}) {
+  const ref = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    const onDoc = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) onClose();
+    };
+    window.addEventListener('mousedown', onDoc);
+    return () => window.removeEventListener('mousedown', onDoc);
+  }, [onClose]);
+
+  return (
+    <motion.div
+      ref={ref}
+      initial={{ opacity: 0, scale: 0.94, y: -4 }}
+      animate={{ opacity: 1, scale: 1, y: 0 }}
+      exit={{ opacity: 0, scale: 0.94, y: -4 }}
+      transition={{ duration: 0.14 }}
+      className="absolute z-40 top-full right-0 mt-1.5 w-[220px] rounded-2xl bg-[#1F1D1A] border border-white/[0.08] shadow-[0_24px_48px_-12px_rgba(0,0,0,0.9)] overflow-hidden backdrop-blur-md p-1.5"
+    >
+      <div className="px-2.5 py-1.5 text-[10.5px] uppercase tracking-[0.14em] text-[#7A6F65] font-medium">
+        Chat theme
+      </div>
+      {(Object.keys(CHAT_THEMES) as ChatThemeKey[]).map((k) => {
+        const t = CHAT_THEMES[k];
+        const active = k === current;
+        return (
+          <button
+            key={k}
+            onClick={() => {
+              onSelect(k);
+              onClose();
+            }}
+            className={`w-full flex items-center gap-3 px-2.5 py-2 rounded-xl transition-colors ${
+              active
+                ? 'bg-white/[0.06] ring-1 ring-inset ring-white/[0.08]'
+                : 'hover:bg-white/[0.04]'
+            }`}
+          >
+            <span
+              className="w-6 h-6 rounded-full border border-white/[0.10] shrink-0"
+              style={{ background: t.swatch }}
+            />
+            <span className="text-[13px] text-[#EDE5D4] font-medium">
+              {t.label}
+            </span>
+            {active && (
+              <Check className="w-3.5 h-3.5 text-[#4ADE80] ml-auto" />
+            )}
+          </button>
+        );
+      })}
+    </motion.div>
+  );
+}
+
+/* ────────────────────────────────────────────────────────── */
+/* Message row                                                */
 /* ────────────────────────────────────────────────────────── */
 
 interface MessageRowProps {
@@ -301,6 +764,7 @@ interface MessageRowProps {
   senderAvatar?: string | null;
   grouped: boolean;
   isLastOfGroup: boolean;
+  theme: ChatTheme;
   onDeleteForMe: (m: DirectMessageDto) => void;
   onDeleteForEveryone: (m: DirectMessageDto) => void;
   onRequestProfile: (userId: string) => void;
@@ -315,6 +779,7 @@ const MessageRow = React.memo(
     senderAvatar,
     grouped,
     isLastOfGroup,
+    theme,
     onDeleteForMe,
     onDeleteForEveryone,
     onRequestProfile,
@@ -347,6 +812,7 @@ const MessageRow = React.memo(
 
     const hasMedia = Boolean(message.mediaUrl);
     const displayText = message.plaintext ?? message.content ?? '';
+    const isTemp = typeof message.id === 'number' && message.id < 0;
 
     const tail = isLastOfGroup
       ? isMe
@@ -358,7 +824,9 @@ const MessageRow = React.memo(
       <div
         className={`group/row relative flex w-full ${
           grouped ? 'mt-[2px]' : 'mt-3.5'
-        } ${isMe ? 'justify-end' : 'justify-start'}`}
+        } ${isMe ? 'justify-end' : 'justify-start'} ${
+          isTemp ? 'opacity-80' : ''
+        }`}
         onTouchStart={onTouchStart}
         onTouchEnd={onTouchEnd}
         onContextMenu={(e) => {
@@ -366,14 +834,13 @@ const MessageRow = React.memo(
           setMenuOpen(true);
         }}
       >
-        {/* Avatar only on received messages, first of group */}
         {!isMe && (
           <div className="w-8 shrink-0 pt-0.5 mr-2.5">
             {!grouped ? (
               <button
                 type="button"
                 onClick={() => onRequestProfile(message.senderId)}
-                className="rounded-full focus:outline-none focus-visible:ring-2 focus-visible:ring-[#D97706]/50 transition-transform hover:scale-[1.05]"
+                className={`rounded-full focus:outline-none focus-visible:ring-2 ${theme.accentText} transition-transform hover:scale-[1.05]`}
                 aria-label={`View ${senderName}'s profile`}
               >
                 <Avatar name={senderName} src={senderAvatar} size="sm" />
@@ -414,10 +881,12 @@ const MessageRow = React.memo(
 
             <div
               className={`inline-block max-w-full text-[14.5px] leading-[1.4] break-words rounded-[19px] ${tail} ${
-                isMe
-                  ? 'bg-gradient-to-br from-[#E58E1E] to-[#C96A05] text-[#171106] shadow-[0_2px_6px_-2px_rgba(217,119,6,0.4)]'
-                  : 'bg-[#1F1D1A] border border-white/[0.05] text-[#F2EDE4] shadow-[0_1px_3px_rgba(0,0,0,0.25)]'
-              } ${hasMedia ? 'p-1.5' : 'px-3.5 py-[7px]'}`}
+                isMe ? theme.bubbleSent : theme.bubbleReceived
+              } ${theme.glow} ${
+                hasMedia || extractUrls(displayText).length > 0
+                  ? 'p-2'
+                  : 'px-3.5 py-[7px]'
+              }`}
             >
               {hasMedia && (
                 <div className={displayText ? 'mb-1' : ''}>
@@ -467,8 +936,8 @@ const MessageRow = React.memo(
                       download
                       className={`inline-flex items-center gap-2 px-3 py-2.5 rounded-[14px] text-[12.5px] ${
                         isMe
-                          ? 'bg-black/[0.14] text-[#171106]'
-                          : 'bg-white/[0.04] text-[#F2EDE4]'
+                          ? 'bg-black/[0.14]'
+                          : 'bg-white/[0.04]'
                       }`}
                     >
                       <FileText className="w-4 h-4 shrink-0 opacity-70" />
@@ -482,13 +951,18 @@ const MessageRow = React.memo(
               )}
 
               {displayText && (
-                <p
-                  className={`whitespace-pre-wrap ${
-                    hasMedia ? 'px-1.5 pb-1 pt-0' : ''
-                  }`}
-                >
-                  {displayText}
-                </p>
+                <div className={hasMedia ? 'px-1.5 pb-0.5 pt-0' : ''}>
+                  <LinkifiedText
+                    text={displayText}
+                    isMe={isMe}
+                    theme={theme}
+                  />
+                  <LinkPreviews
+                    text={displayText}
+                    isMe={isMe}
+                    theme={theme}
+                  />
+                </div>
               )}
             </div>
 
@@ -537,7 +1011,9 @@ const MessageRow = React.memo(
               className="flex items-center gap-1 mt-0.5 px-1.5"
               aria-label={message.isRead ? 'Read' : 'Sent'}
             >
-              {message.isRead ? (
+              {isTemp ? (
+                <Loader2 className="w-3 h-3 text-[#5A524A] animate-spin" />
+              ) : message.isRead ? (
                 <CheckCheck className="w-3.5 h-3.5 text-[#4ADE80]" />
               ) : (
                 <Check className="w-3.5 h-3.5 text-[#5A524A]" />
@@ -549,7 +1025,6 @@ const MessageRow = React.memo(
     );
   },
   (prev, next) => {
-    // Re-render only if something relevant changed.
     return (
       prev.message.id === next.message.id &&
       prev.message.isRead === next.message.isRead &&
@@ -560,7 +1035,8 @@ const MessageRow = React.memo(
       prev.isLastOfGroup === next.isLastOfGroup &&
       prev.isMe === next.isMe &&
       prev.senderName === next.senderName &&
-      prev.senderAvatar === next.senderAvatar
+      prev.senderAvatar === next.senderAvatar &&
+      prev.theme === next.theme
     );
   },
 );
@@ -704,7 +1180,6 @@ function InfoModal({
                 <p className="text-[12.5px] text-[#A8A29E] leading-relaxed">
                   {confirmCopy[confirmAction].body}
                 </p>
-
                 {error && (
                   <p className="mt-3 text-[12px] text-[#F87171] flex items-center gap-1.5">
                     <AlertCircle className="w-3.5 h-3.5 shrink-0" />
@@ -798,6 +1273,22 @@ function DirectMessagePane(): React.JSX.Element {
   );
 
   const [viewerOpenIndex, setViewerOpenIndex] = useState<number | null>(null);
+  const [themePickerOpen, setThemePickerOpen] = useState(false);
+
+  /* Per-chat theme, persisted per peer */
+  const [chatThemeKey, setChatThemeKey] = useState<ChatThemeKey>(() =>
+    readThemeFor(userId),
+  );
+
+  useEffect(() => {
+    setChatThemeKey(readThemeFor(userId));
+  }, [userId]);
+
+  useEffect(() => {
+    writeThemeFor(userId, chatThemeKey);
+  }, [userId, chatThemeKey]);
+
+  const theme = CHAT_THEMES[chatThemeKey];
 
   const [composerVisible, setComposerVisible] = useState(true);
   const [showJumpToLatest, setShowJumpToLatest] = useState(false);
@@ -842,6 +1333,15 @@ function DirectMessagePane(): React.JSX.Element {
     currentUserIdRef.current = user?.id;
   }, [user?.id]);
 
+  /* ── Prefetch peer's public key for this chat ──────────────
+     Eliminates the first-send network wait. */
+  useEffect(() => {
+    if (!userId) return;
+    void getPublicKeyFor(userId).catch(() => {
+      /* ignore — will retry on send */
+    });
+  }, [userId]);
+
   const autoGrow = (el: HTMLTextAreaElement) => {
     el.style.height = 'auto';
     el.style.height = Math.min(el.scrollHeight, 140) + 'px';
@@ -884,7 +1384,6 @@ function DirectMessagePane(): React.JSX.Element {
     };
   }, []);
 
-  /* Seed sidebar previews on mount */
   useEffect(() => {
     if (friends.length === 0 || !user?.id) return;
     let active = true;
@@ -1026,7 +1525,7 @@ function DirectMessagePane(): React.JSX.Element {
     });
   }, [userId]);
 
-  /* ── Initial history load ───────────────────────────────── */
+  /* Initial history load */
   useEffect(() => {
     if (!userId) return;
     let active = true;
@@ -1072,10 +1571,7 @@ function DirectMessagePane(): React.JSX.Element {
     };
   }, [userId, user?.id]);
 
-  /* ── Background polling — propagates deletes + read receipts ──
-     Runs every 8s while the tab is visible and a chat is open.
-     Refetches the last 50 messages, compares against current state,
-     and only updates if IDs or isRead flags actually changed. */
+  /* Background polling — merges, never wipes optimistic messages. */
   useEffect(() => {
     if (!userId || !user?.id) return;
     let cancelled = false;
@@ -1095,38 +1591,56 @@ function DirectMessagePane(): React.JSX.Element {
         if (cancelled) return;
 
         setMessages((prev) => {
-          const prevMap = new Map(prev.map((m) => [m.id, m]));
+          const temps = prev.filter((m) => typeof m.id === 'number' && m.id < 0);
+          const prevMap = new Map(
+            prev.filter((m) => !(typeof m.id === 'number' && m.id < 0)).map((m) => [m.id, m]),
+          );
 
-          // Merge: preserve existing plaintext where possible (avoids
-          // expensive re-decryption visual churn), update isRead.
           const merged: DirectMessageDto[] = decrypted.map((d) => {
             const existing = prevMap.get(d.id);
             if (!existing) return d;
             return {
               ...existing,
               isRead: d.isRead,
-              // If content changed server-side (rare), take new
               content: d.content ?? existing.content,
               mediaUrl: d.mediaUrl ?? existing.mediaUrl,
               mediaType: d.mediaType ?? existing.mediaType,
             };
           });
 
-          // Detect actual changes — if none, don't touch state
-          const sameLength = merged.length === prev.length;
+          // Keep optimistic messages whose real counterpart hasn't arrived yet
+          const stillPending = temps.filter((t) => {
+            const tText = t.plaintext ?? t.content ?? '';
+            const tMedia = t.mediaUrl ?? '';
+            return !decrypted.some((d) => {
+              const dText = d.plaintext ?? d.content ?? '';
+              const dMedia = d.mediaUrl ?? '';
+              return (
+                d.senderId === t.senderId &&
+                dText === tText &&
+                dMedia === tMedia
+              );
+            });
+          });
+
+          const final = [...merged, ...stillPending].sort(
+            (a, b) => getMessageTime(a) - getMessageTime(b),
+          );
+
+          const sameLength = final.length === prev.length;
           const allSame =
             sameLength &&
-            merged.every(
+            final.every(
               (m, i) =>
                 m.id === prev[i]?.id &&
                 m.isRead === prev[i]?.isRead &&
                 m.mediaUrl === prev[i]?.mediaUrl,
             );
 
-          return allSame ? prev : merged;
+          return allSame ? prev : final;
         });
       } catch {
-        /* silent — polling failure is non-fatal */
+        /* silent */
       } finally {
         inFlight = false;
       }
@@ -1168,7 +1682,7 @@ function DirectMessagePane(): React.JSX.Element {
     }
   };
 
-  /* ── Real-time incoming messages ────────────────────────── */
+  /* Real-time incoming messages — replace matching temp, not all temps. */
   useEffect(() => {
     const unsub = signalRService.onReceiveDirectMessage(
       async (msg: DirectMessageDto) => {
@@ -1197,11 +1711,27 @@ function DirectMessagePane(): React.JSX.Element {
         if (isCurrentChat) {
           setMessages((prev) => {
             if (prev.some((m) => m.id === msg.id)) return prev;
-            // Remove any temp optimistic copy
-            const withoutTemp = prev.filter(
-              (m) => !(typeof m.id === 'number' && m.id < 0),
+
+            const newText = decrypted.plaintext ?? decrypted.content ?? '';
+            const newMedia = decrypted.mediaUrl ?? '';
+
+            // Replace the FIRST matching optimistic (temp) message if any
+            const tempIdx = prev.findIndex(
+              (m) =>
+                typeof m.id === 'number' &&
+                m.id < 0 &&
+                m.senderId === decrypted.senderId &&
+                (m.plaintext ?? m.content ?? '') === newText &&
+                (m.mediaUrl ?? '') === newMedia,
             );
-            return [...withoutTemp, decrypted];
+
+            if (tempIdx >= 0) {
+              const next = [...prev];
+              next[tempIdx] = decrypted;
+              return next;
+            }
+
+            return [...prev, decrypted];
           });
           if (msg.senderId === userIdRef.current) {
             playReceive();
@@ -1238,7 +1768,6 @@ function DirectMessagePane(): React.JSX.Element {
     }
   }, [isPeerTyping]);
 
-  /* ── File picker — images only, 5 MB cap ─────────────────── */
   const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
     setFileError(null);
     const files = Array.from(e.target.files ?? []);
@@ -1264,7 +1793,6 @@ function DirectMessagePane(): React.JSX.Element {
         );
         continue;
       }
-
       accepted.push(toSend);
     }
 
@@ -1279,7 +1807,7 @@ function DirectMessagePane(): React.JSX.Element {
     setPendingFiles((prev) => prev.filter((_, i) => i !== index));
   };
 
-  /* ── Send — optimistic + base64 data URL ─────────────────── */
+  /* Fast send: clear composer + insert optimistic BEFORE any await. */
   const handleSendMessage = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!userId || !user?.id) return;
@@ -1292,22 +1820,19 @@ function DirectMessagePane(): React.JSX.Element {
     const text = inputContent.trim();
     const filesToSend = [...pendingFiles];
 
+    // Clear the composer immediately — feels instant.
+    setInputContent('');
+    setPendingFiles([]);
+    if (fileInputRef.current) fileInputRef.current.value = '';
+    if (composerRef.current) composerRef.current.style.height = 'auto';
+    setComposerVisible(true);
+
     try {
       if (filesToSend.length > 0) {
         for (let i = 0; i < filesToSend.length; i++) {
           const file = filesToSend[i];
-
-          if (!file.type.startsWith('image/')) {
-            setFileError(`${file.name}: only images can be sent.`);
-            continue;
-          }
-
-          if (file.size > MAX_FILE_SIZE) {
-            setFileError(
-              `${file.name} is ${formatFileSize(file.size)} — max is ${formatFileSize(MAX_FILE_SIZE)}.`,
-            );
-            continue;
-          }
+          if (!file.type.startsWith('image/')) continue;
+          if (file.size > MAX_FILE_SIZE) continue;
 
           const reader = new FileReader();
           const dataUrlPromise = new Promise<string>((resolve, reject) => {
@@ -1317,10 +1842,8 @@ function DirectMessagePane(): React.JSX.Element {
           reader.readAsDataURL(file);
           const mediaUrl = await dataUrlPromise;
           const mediaType = MediaType.Image;
-
           const includeText = i === 0 && text.length > 0;
 
-          // Optimistic: show immediately
           const tempId = -Date.now() - i;
           setMessages((prev) => [
             ...prev,
@@ -1355,11 +1878,9 @@ function DirectMessagePane(): React.JSX.Element {
             mediaUrl,
             mediaType,
           });
-
           playSend();
         }
       } else if (text.length > 0) {
-        // Optimistic: show immediately
         const tempId = -Date.now();
         setMessages((prev) => [
           ...prev,
@@ -1386,21 +1907,13 @@ function DirectMessagePane(): React.JSX.Element {
           mediaUrl: undefined,
           mediaType: undefined,
         });
-
         playSend();
       }
-
-      setInputContent('');
-      setPendingFiles([]);
-      if (fileInputRef.current) fileInputRef.current.value = '';
-      if (composerRef.current) composerRef.current.style.height = 'auto';
-      setComposerVisible(true);
 
       setTimeout(() => {
         messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
       }, 50);
     } catch (err) {
-      // Roll back temp messages on failure
       setMessages((prev) => prev.filter((m) => m.id > 0));
       setFileError(extractErrorMessage(err));
     } finally {
@@ -1459,20 +1972,15 @@ function DirectMessagePane(): React.JSX.Element {
     if (pendingDeleteEveryoneId == null) return;
     const targetId = pendingDeleteEveryoneId;
 
-    // Optimistic removal
     setMessages((prev) => prev.filter((x) => x.id !== targetId));
     setPendingDeleteEveryoneId(null);
 
     try {
       await apiService.deleteDmForEveryone(targetId);
     } catch (err) {
-      // Refetch to recover
       if (userIdRef.current) {
         try {
-          const history = await apiService.getDmHistory(
-            userIdRef.current,
-            50,
-          );
+          const history = await apiService.getDmHistory(userIdRef.current, 50);
           const sorted = [...history].sort(
             (a, b) => getMessageTime(a) - getMessageTime(b),
           );
@@ -1511,7 +2019,6 @@ function DirectMessagePane(): React.JSX.Element {
     const el = e.currentTarget;
     const scrollTop = el.scrollTop;
     const lastScrollTop = lastScrollTopRef.current;
-
     const nearBottom = el.scrollHeight - scrollTop - el.clientHeight < 120;
 
     if (scrollTop < lastScrollTop - 6) {
@@ -1528,7 +2035,6 @@ function DirectMessagePane(): React.JSX.Element {
       setComposerVisible(true);
       setShowJumpToLatest(false);
     }
-
     lastScrollTopRef.current = scrollTop;
   };
 
@@ -1549,7 +2055,6 @@ function DirectMessagePane(): React.JSX.Element {
         };
 
     const out: Item[] = [];
-
     let lastDate = '';
     let lastSenderId = '';
     let lastTs = 0;
@@ -1566,12 +2071,10 @@ function DirectMessagePane(): React.JSX.Element {
         lastSenderId = '';
         lastTs = 0;
       }
-
       const ts = getMessageTime(m);
       const sameSender = m.senderId === lastSenderId;
       const within = ts - lastTs < 7 * 60 * 1000;
       const isGrouped = sameSender && within;
-
       out.push({
         type: 'msg',
         key: String(m.id),
@@ -1602,12 +2105,14 @@ function DirectMessagePane(): React.JSX.Element {
   const hasActiveChat = Boolean(userId && targetUser);
 
   return (
-    <div className="flex h-full w-full bg-[#0A0908] text-[#EDE5D4] overflow-hidden">
+    <div
+      className={`flex h-full w-full ${theme.bg} text-[#EDE5D4] overflow-hidden relative transition-colors duration-500`}
+    >
       {/* LEFT: conversation list */}
       <div
         className={`${
           hasActiveChat ? 'hidden md:flex' : 'flex'
-        } w-full md:w-[320px] md:shrink-0 border-r border-white/[0.05] bg-[#0D0C0A] flex-col h-full`}
+        } w-full md:w-[320px] md:shrink-0 border-r border-white/[0.05] ${theme.sidebarBg} flex-col h-full transition-colors duration-500`}
       >
         <div className="h-[68px] px-5 flex items-center justify-between shrink-0">
           <div className="flex items-baseline gap-2">
@@ -1628,7 +2133,7 @@ function DirectMessagePane(): React.JSX.Element {
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               placeholder="Search conversations"
-              className="w-full h-10 pl-10 pr-3 rounded-xl bg-white/[0.03] border border-white/[0.05] text-[13px] text-[#EDE5D4] placeholder:text-[#5A524A] focus:outline-none focus:border-[#D97706]/40 focus:bg-white/[0.05] transition-colors"
+              className="w-full h-10 pl-10 pr-3 rounded-xl bg-white/[0.03] border border-white/[0.05] text-[13px] text-[#EDE5D4] placeholder:text-[#5A524A] focus:outline-none focus:border-white/[0.12] focus:bg-white/[0.05] transition-colors"
             />
           </div>
         </div>
@@ -1653,7 +2158,7 @@ function DirectMessagePane(): React.JSX.Element {
                   onClick={() => navigate(`/app/dm/${friend.userId}`)}
                   className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-2xl text-left transition-all duration-150 ${
                     isSelected
-                      ? 'bg-white/[0.06] ring-1 ring-inset ring-white/[0.06]'
+                      ? theme.sidebarActive
                       : 'hover:bg-white/[0.03]'
                   }`}
                 >
@@ -1670,9 +2175,7 @@ function DirectMessagePane(): React.JSX.Element {
                       </p>
                       {preview && (
                         <span
-                          className={`shrink-0 text-[10.5px] tabular-nums ${
-                            unread > 0 ? 'text-[#D97706]' : 'text-[#5A524A]'
-                          }`}
+                          className={`shrink-0 text-[10.5px] tabular-nums ${theme.accentText}`}
                         >
                           {formatRelativeShort(preview.sentAt)}
                         </span>
@@ -1691,7 +2194,9 @@ function DirectMessagePane(): React.JSX.Element {
                           : `@${friend.handle}`}
                       </p>
                       {unread > 0 && (
-                        <span className="shrink-0 min-w-[18px] h-[18px] px-1.5 rounded-full bg-[#D97706] text-[#171106] text-[10px] font-bold tabular-nums flex items-center justify-center">
+                        <span
+                          className={`shrink-0 min-w-[18px] h-[18px] px-1.5 rounded-full ${theme.accent} text-[10px] font-bold tabular-nums flex items-center justify-center`}
+                        >
                           {unread > 99 ? '99+' : unread}
                         </span>
                       )}
@@ -1708,11 +2213,20 @@ function DirectMessagePane(): React.JSX.Element {
       <div
         className={`${
           hasActiveChat ? 'flex' : 'hidden md:flex'
-        } flex-1 flex-col h-full min-w-0 bg-[#0A0908] relative`}
+        } flex-1 flex-col h-full min-w-0 ${theme.bg} relative transition-colors duration-500`}
       >
+        {/* Ambient background glow */}
+        {theme.ambient && (
+          <div
+            className={`pointer-events-none absolute inset-0 ${theme.ambient}`}
+          />
+        )}
+
         {userId && targetUser ? (
           <>
-            <div className="h-[68px] px-3 sm:px-5 border-b border-white/[0.05] bg-[#0A0908]/85 backdrop-blur-xl flex items-center justify-between shrink-0 gap-2 z-10">
+            <div
+              className={`h-[68px] px-3 sm:px-5 border-b border-white/[0.05] ${theme.composerBg} backdrop-blur-xl flex items-center justify-between shrink-0 gap-2 z-20 relative`}
+            >
               <div className="flex items-center gap-2 sm:gap-3 min-w-0">
                 <button
                   onClick={() => navigate('/app/dm')}
@@ -1725,7 +2239,7 @@ function DirectMessagePane(): React.JSX.Element {
                 <button
                   type="button"
                   onClick={() => setProfileModalUserId(targetUser.id)}
-                  className="shrink-0 rounded-full focus:outline-none focus-visible:ring-2 focus-visible:ring-[#D97706]/50 transition-transform hover:scale-[1.03]"
+                  className="shrink-0 rounded-full focus:outline-none transition-transform hover:scale-[1.03]"
                   aria-label={`View ${targetUser.displayName}'s profile`}
                 >
                   <Avatar
@@ -1759,7 +2273,7 @@ function DirectMessagePane(): React.JSX.Element {
                 </div>
               </div>
 
-              <div className="flex items-center gap-0.5 sm:gap-1 shrink-0">
+              <div className="flex items-center gap-0.5 sm:gap-1 shrink-0 relative">
                 <button
                   onClick={() => void handleAudioCall()}
                   className="w-9 h-9 rounded-xl flex items-center justify-center text-[#A8A29E] hover:text-[#EDE5D4] hover:bg-white/[0.05] transition-colors"
@@ -1774,6 +2288,23 @@ function DirectMessagePane(): React.JSX.Element {
                 >
                   <Video className="w-[17px] h-[17px]" />
                 </button>
+                <button
+                  onClick={() => setThemePickerOpen((v) => !v)}
+                  className={`w-9 h-9 rounded-xl flex items-center justify-center hover:bg-white/[0.05] transition-colors ${theme.accentText}`}
+                  title="Chat theme"
+                  aria-label="Chat theme"
+                >
+                  <Palette className="w-[17px] h-[17px]" />
+                </button>
+                <AnimatePresence>
+                  {themePickerOpen && (
+                    <ThemePicker
+                      current={chatThemeKey}
+                      onSelect={setChatThemeKey}
+                      onClose={() => setThemePickerOpen(false)}
+                    />
+                  )}
+                </AnimatePresence>
                 <button
                   onClick={() => setInfoOpen(true)}
                   className="w-9 h-9 rounded-xl flex items-center justify-center text-[#A8A29E] hover:text-[#EDE5D4] hover:bg-white/[0.05] transition-colors"
@@ -1801,7 +2332,7 @@ function DirectMessagePane(): React.JSX.Element {
                   )}
                   <button
                     onClick={() => void handleSendFriendRequest()}
-                    className="h-7 px-3 rounded-lg bg-[#D97706] hover:bg-[#B45309] text-[#171106] text-[11.5px] font-semibold inline-flex items-center gap-1.5 transition-colors"
+                    className={`h-7 px-3 rounded-lg ${theme.accent} text-[11.5px] font-semibold inline-flex items-center gap-1.5 transition-colors`}
                   >
                     <UserPlus className="w-3 h-3" />
                     Add friend
@@ -1813,7 +2344,7 @@ function DirectMessagePane(): React.JSX.Element {
             <div
               ref={messagesContainerRef}
               onScroll={handleMessagesScroll}
-              className="flex-1 overflow-y-auto px-3 sm:px-6 py-3 sm:py-5"
+              className="flex-1 overflow-y-auto px-3 sm:px-6 py-3 sm:py-5 relative z-10"
             >
               {hasMore && !loadingHistory && (
                 <div className="text-center pb-4">
@@ -1848,7 +2379,7 @@ function DirectMessagePane(): React.JSX.Element {
                       navigate('/app/dm');
                       setTimeout(() => navigate(`/app/dm/${current}`), 10);
                     }}
-                    className="h-9 px-4 rounded-xl bg-[#D97706] hover:bg-[#B45309] text-[#171106] text-[12.5px] font-semibold transition-colors"
+                    className={`h-9 px-4 rounded-xl ${theme.accent} text-[12.5px] font-semibold transition-colors`}
                   >
                     Retry
                   </button>
@@ -1856,7 +2387,13 @@ function DirectMessagePane(): React.JSX.Element {
               ) : messages.length === 0 ? (
                 <div className="h-full flex flex-col items-center justify-center text-center gap-3 py-12">
                   <div className="relative">
-                    <div className="w-20 h-20 rounded-full bg-gradient-to-br from-[#D97706]/20 to-transparent flex items-center justify-center">
+                    <div
+                      className="w-20 h-20 rounded-full flex items-center justify-center"
+                      style={{
+                        background:
+                          'radial-gradient(circle, rgba(255,255,255,0.05), transparent 70%)',
+                      }}
+                    >
                       <div className="w-14 h-14 rounded-full bg-white/[0.04] border border-white/[0.08] flex items-center justify-center">
                         <User className="w-6 h-6 text-[#7A6F65]" />
                       </div>
@@ -1895,6 +2432,7 @@ function DirectMessagePane(): React.JSX.Element {
                       }
                       grouped={item.grouped}
                       isLastOfGroup={isLastOfGroup.get(item.key) ?? true}
+                      theme={theme}
                       onDeleteForMe={handleDeleteForMe}
                       onDeleteForEveryone={handleRequestDeleteForEveryone}
                       onRequestProfile={setProfileModalUserId}
@@ -1920,10 +2458,12 @@ function DirectMessagePane(): React.JSX.Element {
                         size="sm"
                       />
                     </div>
-                    <div className="inline-flex items-center gap-1.5 px-4 py-3 rounded-[19px] rounded-bl-[6px] bg-[#1F1D1A] border border-white/[0.05]">
-                      <span className="w-1.5 h-1.5 rounded-full bg-[#A8A29E] animate-bounce [animation-delay:-0.32s]" />
-                      <span className="w-1.5 h-1.5 rounded-full bg-[#A8A29E] animate-bounce [animation-delay:-0.16s]" />
-                      <span className="w-1.5 h-1.5 rounded-full bg-[#A8A29E] animate-bounce" />
+                    <div
+                      className={`inline-flex items-center gap-1.5 px-4 py-3 rounded-[19px] rounded-bl-[6px] ${theme.bubbleReceived}`}
+                    >
+                      <span className="w-1.5 h-1.5 rounded-full bg-current opacity-60 animate-bounce [animation-delay:-0.32s]" />
+                      <span className="w-1.5 h-1.5 rounded-full bg-current opacity-60 animate-bounce [animation-delay:-0.16s]" />
+                      <span className="w-1.5 h-1.5 rounded-full bg-current opacity-60 animate-bounce" />
                     </div>
                   </motion.div>
                 )}
@@ -1945,7 +2485,7 @@ function DirectMessagePane(): React.JSX.Element {
                   }
                   transition={{ type: 'spring', stiffness: 400, damping: 30 }}
                   onClick={handleJumpToLatest}
-                  className="absolute bottom-24 right-6 z-30 w-10 h-10 rounded-full bg-[#D97706] hover:bg-[#B45309] text-[#171106] shadow-[0_8px_24px_-6px_rgba(217,119,6,0.5)] flex items-center justify-center transition-colors"
+                  className={`absolute bottom-24 right-6 z-30 w-10 h-10 rounded-full ${theme.accent} shadow-lg flex items-center justify-center transition-colors`}
                   title="Jump to latest"
                   aria-label="Jump to latest"
                 >
@@ -1962,9 +2502,11 @@ function DirectMessagePane(): React.JSX.Element {
                 height: composerVisible ? 'auto' : 0,
               }}
               transition={{ type: 'spring', stiffness: 380, damping: 34 }}
-              className="shrink-0 overflow-hidden"
+              className="shrink-0 overflow-hidden relative z-20"
             >
-              <div className="border-t border-white/[0.05] bg-[#0A0908]/85 backdrop-blur-xl px-2 sm:px-4 py-2.5 sm:py-3.5">
+              <div
+                className={`border-t border-white/[0.05] ${theme.composerBg} backdrop-blur-xl px-2 sm:px-4 py-2.5 sm:py-3.5`}
+              >
                 <AnimatePresence>
                   {pendingFiles.length > 0 && (
                     <motion.div
@@ -2000,7 +2542,9 @@ function DirectMessagePane(): React.JSX.Element {
                                 />
                               ) : (
                                 <div className="w-full h-full flex flex-col items-center justify-center px-1 text-center">
-                                  <FileText className="w-5 h-5 text-[#D97706]" />
+                                  <FileText
+                                    className={`w-5 h-5 ${theme.accentText}`}
+                                  />
                                   <span className="text-[9px] text-[#7A6F65] truncate w-full mt-1">
                                     {file.name}
                                   </span>
@@ -2074,11 +2618,8 @@ function DirectMessagePane(): React.JSX.Element {
                         setInputContent(e.target.value);
                         autoGrow(e.currentTarget);
                         if (!composerVisible) setComposerVisible(true);
-                        if (e.target.value.trim().length > 0) {
-                          onType();
-                        } else {
-                          stopTyping();
-                        }
+                        if (e.target.value.trim().length > 0) onType();
+                        else stopTyping();
                       }}
                       onKeyDown={(e) => {
                         if (e.key === 'Enter' && !e.shiftKey) {
@@ -2090,7 +2631,7 @@ function DirectMessagePane(): React.JSX.Element {
                       }}
                       placeholder={`Message ${targetUser.displayName}`}
                       rows={1}
-                      className="w-full resize-none px-4 py-2.5 text-[14.5px] text-[#EDE5D4] placeholder:text-[#5A524A] focus:outline-none leading-[1.5] max-h-[140px] overflow-y-auto rounded-[22px] bg-white/[0.045] border border-white/[0.06] focus:border-[#D97706]/40 focus:bg-white/[0.06] transition-colors"
+                      className="w-full resize-none px-4 py-2.5 text-[14.5px] text-[#EDE5D4] placeholder:text-[#5A524A] focus:outline-none leading-[1.5] max-h-[140px] overflow-y-auto rounded-[22px] bg-white/[0.045] border border-white/[0.06] focus:bg-white/[0.06] transition-colors"
                     />
                   </div>
 
@@ -2113,7 +2654,7 @@ function DirectMessagePane(): React.JSX.Element {
                           stiffness: 420,
                           damping: 26,
                         }}
-                        className="shrink-0 w-10 h-10 rounded-full bg-gradient-to-br from-[#E58E1E] to-[#C96A05] hover:brightness-110 disabled:opacity-50 disabled:cursor-not-allowed text-[#171106] flex items-center justify-center shadow-[0_4px_12px_-2px_rgba(217,119,6,0.4)]"
+                        className={`shrink-0 w-10 h-10 rounded-full ${theme.accent} disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center ${theme.glow}`}
                         title="Send"
                         aria-label="Send"
                       >
@@ -2130,9 +2671,15 @@ function DirectMessagePane(): React.JSX.Element {
             </motion.div>
           </>
         ) : (
-          <div className="h-full flex flex-col items-center justify-center text-center px-8">
+          <div className="h-full flex flex-col items-center justify-center text-center px-8 relative z-10">
             <div className="relative mb-6">
-              <div className="w-24 h-24 rounded-full bg-gradient-to-br from-[#D97706]/15 to-transparent flex items-center justify-center">
+              <div
+                className="w-24 h-24 rounded-full flex items-center justify-center"
+                style={{
+                  background:
+                    'radial-gradient(circle, rgba(255,255,255,0.06), transparent 70%)',
+                }}
+              >
                 <div className="w-16 h-16 rounded-full bg-white/[0.03] border border-white/[0.06] flex items-center justify-center">
                   <User className="w-7 h-7 text-[#7A6F65]" />
                 </div>
