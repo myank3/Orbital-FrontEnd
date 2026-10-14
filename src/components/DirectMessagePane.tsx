@@ -75,7 +75,16 @@ import {
   Bell,
   BellOff,
   ShieldOff,
+  Camera,
+  Smile,
+  Mic,
 } from 'lucide-react';
+import {
+  EmojiPanel,
+  AttachmentSheet,
+  VoiceRecorder,
+  type VoiceRecording,
+} from './dm/ComposerToolkit';
 
 /* ────────────────────────────────────────────────────────── */
 /* Animated theme CSS                                         */
@@ -104,7 +113,7 @@ const THEME_ANIMATIONS = `
 `;
 
 /* ────────────────────────────────────────────────────────── */
-/* Theme system — surface tokens work for light AND dark      */
+/* Themes                                                     */
 /* ────────────────────────────────────────────────────────── */
 
 type ChatThemeKey =
@@ -121,28 +130,21 @@ interface ChatTheme {
   label: string;
   swatch: string;
   isLight: boolean;
-
   bg: string;
   sidebarBg: string;
   sidebarActive: string;
   composerBg: string;
-
   bubbleSent: string;
   bubbleReceived: string;
-
   accent: string;
   accentText: string;
   glow: string;
-
   textPrimary: string;
   textSecondary: string;
-
-  // Surface tokens — differ for light/dark themes
   subtleBg: string;
   subtleBgStrong: string;
   subtleBorder: string;
   hoverBg: string;
-
   ambientStyle?: React.CSSProperties;
   ambientClass?: string;
 }
@@ -359,17 +361,13 @@ const CHAT_THEMES: Record<ChatThemeKey, ChatTheme> = {
 };
 
 /* ────────────────────────────────────────────────────────── */
-/* Local message shape                                        */
+/* Local message + persistence                                */
 /* ────────────────────────────────────────────────────────── */
 
 type LocalMessage = DirectMessageDto & {
   viewOnce?: boolean;
   viewed?: boolean;
 };
-
-/* ────────────────────────────────────────────────────────── */
-/* Persistence                                                */
-/* ────────────────────────────────────────────────────────── */
 
 function lsGet<T>(key: string, fallback: T): T {
   if (typeof window === 'undefined') return fallback;
@@ -423,13 +421,11 @@ function writeThemeFor(
 function readV1Seen(userId: string | undefined): Set<number> {
   return new Set(lsGet<number[]>(v1SeenKey(userId), []));
 }
-
 function markV1Seen(userId: string | undefined, messageId: number) {
   const set = readV1Seen(userId);
   set.add(messageId);
   lsSet(v1SeenKey(userId), Array.from(set));
 }
-
 function readPinned(userId: string | undefined): Set<string> {
   return new Set(lsGet<string[]>(pinnedKey(userId), []));
 }
@@ -442,10 +438,6 @@ function readMuted(userId: string | undefined): Set<string> {
 function writeMuted(userId: string | undefined, set: Set<string>) {
   lsSet(mutedKey(userId), Array.from(set));
 }
-
-/* ────────────────────────────────────────────────────────── */
-/* View-once marker                                           */
-/* ────────────────────────────────────────────────────────── */
 
 const V1_RE = /^\[v1\]/;
 
@@ -527,6 +519,12 @@ function getMessageTime(msg: DirectMessageDto): number {
   return parseUtc(msg.sentAt).getTime();
 }
 
+function formatDuration(sec: number): string {
+  const m = Math.floor(sec / 60);
+  const s = Math.floor(sec % 60);
+  return `${m}:${s.toString().padStart(2, '0')}`;
+}
+
 /* ────────────────────────────────────────────────────────── */
 /* Sidebar preview                                            */
 /* ────────────────────────────────────────────────────────── */
@@ -543,14 +541,14 @@ function previewText(msg: DirectMessageDto, myUserId: string): LastMessagePrevie
   let text: string;
   if (msg.mediaType === MediaType.Image) text = '📷 Photo';
   else if (msg.mediaType === MediaType.Video) text = '🎥 Video';
-  else if (msg.mediaType === MediaType.Audio) text = '🎤 Audio';
+  else if (msg.mediaType === MediaType.Audio) text = '🎤 Voice message';
   else if (msg.mediaType === MediaType.File) text = '📎 File';
   else text = body;
   return { text, sentAt: msg.sentAt, isMe };
 }
 
 /* ────────────────────────────────────────────────────────── */
-/* Links                                                      */
+/* Link rendering                                             */
 /* ────────────────────────────────────────────────────────── */
 
 const URL_REGEX = /https?:\/\/[^\s<>"']+/gi;
@@ -851,7 +849,7 @@ function ImageViewer({ images, startIndex, onClose }: ImageViewerProps) {
 }
 
 /* ────────────────────────────────────────────────────────── */
-/* Chat sidebar context menu                                  */
+/* Sidebar context menu                                       */
 /* ────────────────────────────────────────────────────────── */
 
 function ChatContextMenu({
@@ -957,7 +955,6 @@ function ChatContextMenu({
             <X className="w-4 h-4" />
           </button>
         </div>
-
         <div className="py-1.5 max-h-[60vh] overflow-y-auto">
           {actions.map((a) => (
             <button
@@ -1031,6 +1028,115 @@ function ThemeGrid({
 }
 
 /* ────────────────────────────────────────────────────────── */
+/* Voice message bubble                                       */
+/* ────────────────────────────────────────────────────────── */
+
+function VoiceBubble({
+  url,
+  isMe,
+  theme,
+}: {
+  url: string;
+  isMe: boolean;
+  theme: ChatTheme;
+}) {
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const [playing, setPlaying] = useState(false);
+  const [progress, setProgress] = useState(0);
+  const [duration, setDuration] = useState(0);
+
+  useEffect(() => {
+    const a = audioRef.current;
+    if (!a) return;
+    const onTime = () => setProgress(a.currentTime);
+    const onMeta = () => setDuration(a.duration || 0);
+    const onEnd = () => {
+      setPlaying(false);
+      setProgress(0);
+    };
+    a.addEventListener('timeupdate', onTime);
+    a.addEventListener('loadedmetadata', onMeta);
+    a.addEventListener('ended', onEnd);
+    return () => {
+      a.removeEventListener('timeupdate', onTime);
+      a.removeEventListener('loadedmetadata', onMeta);
+      a.removeEventListener('ended', onEnd);
+    };
+  }, []);
+
+  const toggle = () => {
+    const a = audioRef.current;
+    if (!a) return;
+    if (playing) {
+      a.pause();
+      setPlaying(false);
+    } else {
+      void a.play();
+      setPlaying(true);
+    }
+  };
+
+  const pct = duration > 0 ? Math.min(100, (progress / duration) * 100) : 0;
+
+  return (
+    <div
+      className={`inline-flex items-center gap-3 px-3 py-2 rounded-[20px] ${
+        isMe ? theme.bubbleSent : theme.bubbleReceived
+      } min-w-[220px] max-w-[280px]`}
+    >
+      <button
+        type="button"
+        onClick={toggle}
+        className={`shrink-0 w-9 h-9 rounded-full flex items-center justify-center transition-colors ${
+          isMe ? 'bg-black/[0.15]' : 'bg-white/[0.06]'
+        }`}
+        aria-label={playing ? 'Pause' : 'Play'}
+      >
+        {playing ? (
+          <span className="flex gap-0.5">
+            <span className="w-[3px] h-3 rounded-sm bg-current" />
+            <span className="w-[3px] h-3 rounded-sm bg-current" />
+          </span>
+        ) : (
+          <span
+            className="w-0 h-0 border-y-[6px] border-y-transparent border-l-[9px] ml-0.5"
+            style={{ borderLeftColor: 'currentColor' }}
+          />
+        )}
+      </button>
+      <div className="flex-1 min-w-0">
+        <div className="flex items-end gap-0.5 h-6">
+          {Array.from({ length: 26 }).map((_, i) => {
+            const height = 20 + Math.sin(i * 0.7) * 12 + (i % 3) * 4;
+            const active = (i / 26) * 100 <= pct;
+            return (
+              <span
+                key={i}
+                className="w-[2.5px] rounded-full transition-colors"
+                style={{
+                  height: `${Math.max(4, Math.min(24, height))}px`,
+                  background: 'currentColor',
+                  opacity: active ? 1 : 0.28,
+                }}
+              />
+            );
+          })}
+        </div>
+        <div className="flex justify-between mt-1">
+          <span className="text-[10.5px] tabular-nums opacity-70">
+            {playing || progress > 0 ? formatDuration(progress) : '0:00'}
+          </span>
+          <span className="text-[10.5px] tabular-nums opacity-70">
+            {duration > 0 ? formatDuration(duration) : '–:––'}
+          </span>
+        </div>
+      </div>
+      <audio ref={audioRef} src={url} preload="metadata" />
+    </div>
+  );
+}
+
+/* ────────────────────────────────────────────────────────── */
 /* Message row                                                */
 /* ────────────────────────────────────────────────────────── */
 
@@ -1094,6 +1200,22 @@ const MessageRow = React.memo(
     const hasText = Boolean(displayText);
     const urls = useMemo(() => extractUrls(displayText), [displayText]);
 
+    // Emoji-only → render big without bubble
+    const isEmojiOnly = useMemo(() => {
+      if (!hasText) return false;
+      const stripped = displayText.replace(/\s/g, '');
+      if (stripped.length === 0 || stripped.length > 12) return false;
+      // Basic emoji-only detection without Unicode property escapes
+      // (some toolchains don't enable /u flag with \p{...})
+      const emojiCount = Array.from(stripped).filter((ch) => {
+        const code = ch.codePointAt(0) ?? 0;
+        return code >= 0x1f000 || (code >= 0x2600 && code <= 0x27bf);
+      }).length;
+      return emojiCount > 0 && emojiCount * 1.5 >= Array.from(stripped).length;
+    }, [displayText, hasText]);
+
+    const isVoice = message.mediaType === MediaType.Audio;
+
     const tail = isLastOfGroup
       ? isMe
         ? 'rounded-br-[6px]'
@@ -1103,10 +1225,6 @@ const MessageRow = React.memo(
     const mediaShadow = theme.isLight
       ? '0 4px 16px -8px rgba(0,0,0,0.18), 0 0 0 1px rgba(0,0,0,0.04)'
       : '0 6px 24px -10px rgba(0,0,0,0.55), 0 0 0 1px rgba(255,255,255,0.05)';
-
-    // Is this a view-once image the sender is sending? Then just show the image.
-    const renderViewOnce = isViewOnce && !isMe;
-    const renderSenderImageBadge = isViewOnce && isMe && !isTemp;
 
     return (
       <div
@@ -1159,10 +1277,11 @@ const MessageRow = React.memo(
             </div>
           )}
 
-          {/* Media — always outside bubble */}
-          {hasMedia && (
+          {/* Media blocks */}
+          {hasMedia && !isVoice && (
             <div className="relative group/media max-w-full">
-              {message.mediaType === MediaType.Image && !renderViewOnce && (
+              {/* Regular image */}
+              {message.mediaType === MediaType.Image && !isViewOnce && (
                 <button
                   type="button"
                   onClick={(e) => {
@@ -1183,15 +1302,34 @@ const MessageRow = React.memo(
                   <span className="absolute top-2 right-2 w-7 h-7 rounded-full bg-black/50 backdrop-blur text-white flex items-center justify-center opacity-0 group-hover/media:opacity-100 transition-opacity pointer-events-none">
                     <ZoomIn className="w-3.5 h-3.5" />
                   </span>
-                  {renderSenderImageBadge && (
-                    <span className="absolute top-2 left-2 px-2 py-0.5 rounded-full bg-gradient-to-r from-[#7C3AED] to-[#A855F7] text-white text-[10px] font-bold shadow-lg">
-                      1x
-                    </span>
-                  )}
                 </button>
               )}
 
-              {message.mediaType === MediaType.Image && renderViewOnce && (
+              {/* View-once — SENDER */}
+              {message.mediaType === MediaType.Image && isViewOnce && isMe && (
+                <div
+                  className={`inline-flex items-center gap-3 px-4 py-3.5 rounded-[20px] text-[13px] ${theme.subtleBg} border ${theme.subtleBorder}`}
+                >
+                  <span className="w-9 h-9 rounded-full bg-gradient-to-br from-[#7C3AED] to-[#A855F7] flex items-center justify-center shrink-0">
+                    <Eye className="w-4 h-4 text-white" />
+                  </span>
+                  <span className="text-left">
+                    <span
+                      className={`block font-semibold text-[13px] ${theme.textPrimary}`}
+                    >
+                      View-once photo sent
+                    </span>
+                    <span
+                      className={`block opacity-70 text-[11px] ${theme.textSecondary}`}
+                    >
+                      Only visible to recipient
+                    </span>
+                  </span>
+                </div>
+              )}
+
+              {/* View-once — RECEIVER */}
+              {message.mediaType === MediaType.Image && isViewOnce && !isMe && (
                 <button
                   type="button"
                   onClick={(e) => {
@@ -1245,15 +1383,6 @@ const MessageRow = React.memo(
                 />
               )}
 
-              {message.mediaType === MediaType.Audio && (
-                <audio
-                  src={message.mediaUrl ?? undefined}
-                  controls
-                  preload="metadata"
-                  className="w-full max-w-[360px] rounded-[20px]"
-                />
-              )}
-
               {message.mediaType === MediaType.File && (
                 <a
                   href={message.mediaUrl ?? undefined}
@@ -1268,6 +1397,11 @@ const MessageRow = React.memo(
                 </a>
               )}
             </div>
+          )}
+
+          {/* Voice message */}
+          {isVoice && message.mediaUrl && (
+            <VoiceBubble url={message.mediaUrl} isMe={isMe} theme={theme} />
           )}
 
           {/* Text bubble */}
@@ -1288,13 +1422,19 @@ const MessageRow = React.memo(
                 <MoreHorizontal className="w-4 h-4" />
               </button>
 
-              <div
-                className={`inline-block max-w-full text-[14.5px] leading-[1.45] break-words rounded-[19px] ${tail} px-3.5 py-[7.5px] ${
-                  isMe ? theme.bubbleSent : theme.bubbleReceived
-                }`}
-              >
-                <LinkifiedText text={displayText} isMe={isMe} />
-              </div>
+              {isEmojiOnly ? (
+                <div className="px-1 py-0.5 text-[42px] leading-[1.15] break-words max-w-full">
+                  {displayText}
+                </div>
+              ) : (
+                <div
+                  className={`inline-block max-w-full text-[14.5px] leading-[1.45] break-words rounded-[19px] ${tail} px-3.5 py-[7.5px] ${
+                    isMe ? theme.bubbleSent : theme.bubbleReceived
+                  }`}
+                >
+                  <LinkifiedText text={displayText} isMe={isMe} />
+                </div>
+              )}
 
               <AnimatePresence>
                 {menuOpen && (
@@ -1336,7 +1476,7 @@ const MessageRow = React.memo(
             </div>
           )}
 
-          {/* Media-only: allow long-press delete */}
+          {/* Long-press delete for media-only rows */}
           {!hasText && hasMedia && (
             <AnimatePresence>
               {menuOpen && (
@@ -1377,10 +1517,8 @@ const MessageRow = React.memo(
             </AnimatePresence>
           )}
 
-          {/* Link previews — outside bubble */}
           {urls.length > 0 && <LinkPreviews urls={urls} theme={theme} />}
 
-          {/* Meta row */}
           {isMe && isLastOfGroup && (
             <div className="flex items-center mt-1 px-1.5">
               {isTemp ? (
@@ -1667,6 +1805,14 @@ function DirectMessagePane(): React.JSX.Element {
   const [chatMenuFriend, setChatMenuFriend] = useState<FriendDto | null>(null);
   const sidebarLongPressRef = useRef<number | null>(null);
 
+  // Composer toolkit
+  const [emojiPanelOpen, setEmojiPanelOpen] = useState(false);
+  const [attachmentSheetOpen, setAttachmentSheetOpen] = useState(false);
+  const [voiceRecorderOpen, setVoiceRecorderOpen] = useState(false);
+  const cameraInputRef = useRef<HTMLInputElement | null>(null);
+  const documentInputRef = useRef<HTMLInputElement | null>(null);
+  const audioFileInputRef = useRef<HTMLInputElement | null>(null);
+
   const [pinnedIds, setPinnedIds] = useState<Set<string>>(() =>
     readPinned(user?.id),
   );
@@ -1785,7 +1931,6 @@ function DirectMessagePane(): React.JSX.Element {
         }),
       );
       if (!active) return;
-
       setLastMessages((prev) => {
         const next = { ...prev };
         for (const r of results) {
@@ -1854,9 +1999,7 @@ function DirectMessagePane(): React.JSX.Element {
   const handleOpenImage = useCallback(
     (m: LocalMessage, _senderName: string) => {
       if (m.viewOnce && typeof m.id === 'number' && m.id > 0) {
-        // Fullscreen single-view for view-once (not part of the carousel)
         setViewerOpenIndex(-1);
-        // Mark viewed + remove from list after closing
         markV1Seen(currentUserIdRef.current, m.id);
         setMessages((prev) =>
           prev.map((x) => (x.id === m.id ? { ...x, viewed: true } : x)),
@@ -1986,7 +2129,6 @@ function DirectMessagePane(): React.JSX.Element {
     };
   }, [userId, user?.id, decodeMessages]);
 
-  // Polling at 1.5s for near-instant read receipts + deletes
   useEffect(() => {
     if (!userId || !user?.id) return;
     let cancelled = false;
@@ -2124,10 +2266,7 @@ function DirectMessagePane(): React.JSX.Element {
         if (otherId) {
           setLastMessages((prev) => {
             const existing = prev[otherId];
-            if (
-              existing &&
-              getMessageTime(existing) >= getMessageTime(local)
-            ) {
+            if (existing && getMessageTime(existing) >= getMessageTime(local)) {
               return prev;
             }
             return { ...prev, [otherId]: local };
@@ -2144,7 +2283,6 @@ function DirectMessagePane(): React.JSX.Element {
             if (prev.some((m) => m.id === msg.id)) return prev;
             const newText = body;
             const newMedia = decrypted.mediaUrl ?? '';
-
             const tempIdx = prev.findIndex(
               (m) =>
                 typeof m.id === 'number' &&
@@ -2195,6 +2333,59 @@ function DirectMessagePane(): React.JSX.Element {
     }
   }, [isPeerTyping]);
 
+  /* ── Shared send helper for images/GIFs ─────────────────── */
+
+  const sendImageOrMedia = useCallback(
+    async (
+      mediaUrl: string,
+      mediaType: number,
+      extraText = '',
+      viewOnce = false,
+    ): Promise<void> => {
+      if (!userId || !user?.id) return;
+      const tempId = -Date.now();
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: tempId,
+          senderId: user.id,
+          recipientId: userId,
+          ciphertext: null,
+          nonce: null,
+          content: extraText || null,
+          plaintext: extraText || undefined,
+          mediaUrl,
+          mediaType,
+          isRead: false,
+          sentAt: new Date().toISOString(),
+          viewOnce,
+          viewed: false,
+        },
+      ]);
+      let ciphertext = '';
+      let nonce = '';
+      const payload = viewOnce ? `[v1]${extraText}` : extraText;
+      if (payload) {
+        const pub = await getPublicKeyFor(userId);
+        const enc = await encryptFor(pub, payload);
+        ciphertext = enc.ciphertext;
+        nonce = enc.nonce;
+      }
+      await signalRService.sendDirectMessage({
+        recipientId: userId,
+        ciphertext,
+        nonce,
+        mediaUrl,
+        mediaType,
+      });
+      playSend();
+      setTimeout(() => {
+        messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+      }, 50);
+    },
+    [userId, user?.id],
+  );
+
   const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
     setFileError(null);
     const files = Array.from(e.target.files ?? []);
@@ -2231,6 +2422,182 @@ function DirectMessagePane(): React.JSX.Element {
     setPendingFiles((prev) => prev.filter((_, i) => i !== index));
   };
 
+  /* ── Camera capture → send immediately ─────────────────── */
+
+  const handleCameraCapture = async (
+    e: React.ChangeEvent<HTMLInputElement>,
+  ) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setFileError(null);
+    try {
+      let toSend = file;
+      try {
+        toSend = await compressImage(file);
+      } catch {
+        toSend = file;
+      }
+      if (toSend.size > MAX_FILE_SIZE) {
+        setFileError(
+          `Photo too large after compression: ${formatFileSize(toSend.size)}`,
+        );
+        return;
+      }
+      const reader = new FileReader();
+      const url = await new Promise<string>((resolve, reject) => {
+        reader.onload = () => resolve(reader.result as string);
+        reader.onerror = () => reject(new Error('Read failed'));
+        reader.readAsDataURL(toSend);
+      });
+      await sendImageOrMedia(url, MediaType.Image);
+    } catch (err) {
+      setFileError(extractErrorMessage(err));
+    } finally {
+      if (cameraInputRef.current) cameraInputRef.current.value = '';
+    }
+  };
+
+  /* ── Document picker → send as File ────────────────────── */
+
+  const handleDocumentSelect = async (
+    e: React.ChangeEvent<HTMLInputElement>,
+  ) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setFileError(null);
+    if (file.size > MAX_FILE_SIZE) {
+      setFileError(
+        `File is ${formatFileSize(file.size)} — max is ${formatFileSize(MAX_FILE_SIZE)}.`,
+      );
+      if (documentInputRef.current) documentInputRef.current.value = '';
+      return;
+    }
+    try {
+      const reader = new FileReader();
+      const url = await new Promise<string>((resolve, reject) => {
+        reader.onload = () => resolve(reader.result as string);
+        reader.onerror = () => reject(new Error('Read failed'));
+        reader.readAsDataURL(file);
+      });
+      await sendImageOrMedia(url, MediaType.File);
+    } catch (err) {
+      setFileError(extractErrorMessage(err));
+    } finally {
+      if (documentInputRef.current) documentInputRef.current.value = '';
+    }
+  };
+
+  /* ── Audio file → send as Audio ────────────────────────── */
+
+  const handleAudioFileSelect = async (
+    e: React.ChangeEvent<HTMLInputElement>,
+  ) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setFileError(null);
+    if (file.size > MAX_FILE_SIZE) {
+      setFileError(
+        `Audio is ${formatFileSize(file.size)} — max is ${formatFileSize(MAX_FILE_SIZE)}.`,
+      );
+      if (audioFileInputRef.current) audioFileInputRef.current.value = '';
+      return;
+    }
+    try {
+      const reader = new FileReader();
+      const url = await new Promise<string>((resolve, reject) => {
+        reader.onload = () => resolve(reader.result as string);
+        reader.onerror = () => reject(new Error('Read failed'));
+        reader.readAsDataURL(file);
+      });
+      await sendImageOrMedia(url, MediaType.Audio);
+    } catch (err) {
+      setFileError(extractErrorMessage(err));
+    } finally {
+      if (audioFileInputRef.current) audioFileInputRef.current.value = '';
+    }
+  };
+
+  /* ── Voice recorder completion ─────────────────────────── */
+
+  const handleVoiceComplete = useCallback(
+    async (rec: VoiceRecording) => {
+      setVoiceRecorderOpen(false);
+      if (!userId) return;
+
+      const reader = new FileReader();
+      const dataUrlPromise = new Promise<string>((resolve, reject) => {
+        reader.onload = () => resolve(reader.result as string);
+        reader.onerror = () => reject(new Error('Failed to read audio'));
+      });
+      reader.readAsDataURL(rec.blob);
+      const mediaUrl = await dataUrlPromise;
+      await sendImageOrMedia(mediaUrl, MediaType.Audio);
+    },
+    [userId, sendImageOrMedia],
+  );
+
+  /* ── Emoji / GIF / sticker handlers ────────────────────── */
+
+  const handleEmojiPick = useCallback((emoji: string) => {
+    setInputContent((prev) => prev + emoji);
+    if (composerRef.current) {
+      composerRef.current.focus();
+      autoGrow(composerRef.current);
+    }
+  }, []);
+
+  const handleSendGif = useCallback(
+    (url: string) => {
+      void sendImageOrMedia(url, MediaType.Image);
+    },
+    [sendImageOrMedia],
+  );
+
+  const handleSendSticker = useCallback(
+    (emoji: string) => {
+      if (!userId || !user?.id) return;
+      const tempId = -Date.now();
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: tempId,
+          senderId: user.id,
+          recipientId: userId,
+          ciphertext: null,
+          nonce: null,
+          content: emoji,
+          plaintext: emoji,
+          isRead: false,
+          sentAt: new Date().toISOString(),
+          viewOnce: false,
+          viewed: false,
+        },
+      ]);
+      void (async () => {
+        try {
+          const pub = await getPublicKeyFor(userId);
+          const enc = await encryptFor(pub, emoji);
+          await signalRService.sendDirectMessage({
+            recipientId: userId,
+            ciphertext: enc.ciphertext,
+            nonce: enc.nonce,
+            mediaUrl: undefined,
+            mediaType: undefined,
+          });
+          playSend();
+        } catch (err) {
+          console.warn('Sticker send failed', err);
+        }
+      })();
+      setTimeout(() => {
+        messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+      }, 50);
+    },
+    [userId, user?.id],
+  );
+
+  /* ── Main text send ────────────────────────────────────── */
+
   const handleSendMessage = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!userId || !user?.id) return;
@@ -2247,6 +2614,7 @@ function DirectMessagePane(): React.JSX.Element {
     setInputContent('');
     setPendingFiles([]);
     setPendingViewOnce(false);
+    setEmojiPanelOpen(false);
     if (fileInputRef.current) fileInputRef.current.value = '';
     if (composerRef.current) composerRef.current.style.height = 'auto';
     setComposerVisible(true);
@@ -2561,6 +2929,7 @@ function DirectMessagePane(): React.JSX.Element {
   };
 
   const hasActiveChat = Boolean(userId && targetUser);
+  const canSend = inputContent.trim().length > 0 || pendingFiles.length > 0;
 
   return (
     <div
@@ -2980,6 +3349,7 @@ function DirectMessagePane(): React.JSX.Element {
               )}
             </AnimatePresence>
 
+            {/* ── Composer ─────────────────────────────────── */}
             <motion.div
               initial={false}
               animate={{
@@ -2991,187 +3361,299 @@ function DirectMessagePane(): React.JSX.Element {
               className="shrink-0 overflow-hidden relative z-20"
             >
               <div
-                className={`border-t ${theme.subtleBorder} ${theme.composerBg} backdrop-blur-xl px-2 sm:px-4 py-2.5 sm:py-3.5`}
+                className={`border-t ${theme.subtleBorder} ${theme.composerBg} backdrop-blur-xl`}
               >
+                {/* Emoji / GIF / sticker panel */}
                 <AnimatePresence>
-                  {pendingFiles.length > 0 && (
-                    <motion.div
-                      initial={
-                        reduceMotion ? false : { opacity: 0, y: 6, height: 0 }
-                      }
-                      animate={{ opacity: 1, y: 0, height: 'auto' }}
-                      exit={
-                        reduceMotion ? undefined : { opacity: 0, y: 6, height: 0 }
-                      }
-                      transition={{ duration: 0.18 }}
-                      className="pb-2 sm:pb-3 overflow-hidden"
-                    >
-                      <div className="flex gap-2 overflow-x-auto pb-1">
-                        {pendingFiles.map((file, index) => {
-                          const isImage = file.type.startsWith('image/');
-                          const previewUrl = isImage
-                            ? URL.createObjectURL(file)
-                            : null;
-                          return (
-                            <div
-                              key={`${file.name}-${index}`}
-                              className={`relative shrink-0 w-20 h-20 rounded-xl overflow-hidden ${theme.subtleBg} border ${theme.subtleBorder}`}
-                            >
-                              {isImage && previewUrl ? (
-                                <img
-                                  src={previewUrl}
-                                  alt={file.name}
-                                  className="w-full h-full object-cover"
-                                  onLoad={() =>
-                                    URL.revokeObjectURL(previewUrl)
-                                  }
-                                />
-                              ) : (
-                                <div className="w-full h-full flex flex-col items-center justify-center px-1 text-center">
-                                  <FileText
-                                    className={`w-5 h-5 ${theme.accentText}`}
-                                  />
-                                  <span
-                                    className={`text-[9px] truncate w-full mt-1 ${theme.textSecondary}`}
+                  {emojiPanelOpen && (
+                    <EmojiPanel
+                      onPickEmoji={handleEmojiPick}
+                      onSendGif={handleSendGif}
+                      onSendSticker={handleSendSticker}
+                      onClose={() => setEmojiPanelOpen(false)}
+                    />
+                  )}
+                </AnimatePresence>
+
+                {/* Composer row */}
+                <div className="px-2 sm:px-4 py-2.5 sm:py-3.5">
+                  {/* Voice recorder overlay */}
+                  {voiceRecorderOpen ? (
+                    <VoiceRecorder
+                      onComplete={(rec) => void handleVoiceComplete(rec)}
+                      onCancel={() => setVoiceRecorderOpen(false)}
+                    />
+                  ) : (
+                    <>
+                      {/* Pending files preview */}
+                      <AnimatePresence>
+                        {pendingFiles.length > 0 && (
+                          <motion.div
+                            initial={
+                              reduceMotion
+                                ? false
+                                : { opacity: 0, y: 6, height: 0 }
+                            }
+                            animate={{ opacity: 1, y: 0, height: 'auto' }}
+                            exit={
+                              reduceMotion
+                                ? undefined
+                                : { opacity: 0, y: 6, height: 0 }
+                            }
+                            transition={{ duration: 0.18 }}
+                            className="pb-2 sm:pb-3 overflow-hidden"
+                          >
+                            <div className="flex gap-2 overflow-x-auto pb-1">
+                              {pendingFiles.map((file, index) => {
+                                const isImage = file.type.startsWith('image/');
+                                const previewUrl = isImage
+                                  ? URL.createObjectURL(file)
+                                  : null;
+                                return (
+                                  <div
+                                    key={`${file.name}-${index}`}
+                                    className={`relative shrink-0 w-20 h-20 rounded-xl overflow-hidden ${theme.subtleBg} border ${theme.subtleBorder}`}
                                   >
-                                    {file.name}
-                                  </span>
-                                </div>
-                              )}
-                              {pendingViewOnce && index === 0 && (
-                                <span className="absolute bottom-1 left-1 px-1.5 py-0.5 rounded-full bg-gradient-to-r from-[#7C3AED] to-[#A855F7] text-white text-[9px] font-bold">
-                                  1x
-                                </span>
-                              )}
+                                    {isImage && previewUrl ? (
+                                      <img
+                                        src={previewUrl}
+                                        alt={file.name}
+                                        className="w-full h-full object-cover"
+                                        onLoad={() =>
+                                          URL.revokeObjectURL(previewUrl)
+                                        }
+                                      />
+                                    ) : (
+                                      <div className="w-full h-full flex flex-col items-center justify-center px-1 text-center">
+                                        <FileText
+                                          className={`w-5 h-5 ${theme.accentText}`}
+                                        />
+                                        <span
+                                          className={`text-[9px] truncate w-full mt-1 ${theme.textSecondary}`}
+                                        >
+                                          {file.name}
+                                        </span>
+                                      </div>
+                                    )}
+                                    {pendingViewOnce && index === 0 && (
+                                      <span className="absolute bottom-1 left-1 px-1.5 py-0.5 rounded-full bg-gradient-to-r from-[#7C3AED] to-[#A855F7] text-white text-[9px] font-bold">
+                                        1x
+                                      </span>
+                                    )}
+                                    <button
+                                      type="button"
+                                      onClick={() => removePendingFile(index)}
+                                      className="absolute top-1 right-1 w-5 h-5 rounded-full bg-black/70 hover:bg-[#B91C1C] text-white flex items-center justify-center transition-colors"
+                                      aria-label={`Remove ${file.name}`}
+                                    >
+                                      <X className="w-3 h-3" />
+                                    </button>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                            <div className="flex items-center justify-between gap-2 mt-1.5">
+                              <p
+                                className={`text-[11px] ${theme.textSecondary}`}
+                              >
+                                {pendingFiles.length} file
+                                {pendingFiles.length === 1 ? '' : 's'} ready
+                              </p>
                               <button
                                 type="button"
-                                onClick={() => removePendingFile(index)}
-                                className="absolute top-1 right-1 w-5 h-5 rounded-full bg-black/70 hover:bg-[#B91C1C] text-white flex items-center justify-center transition-colors"
-                                aria-label={`Remove ${file.name}`}
+                                onClick={() => setPendingViewOnce((v) => !v)}
+                                className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10.5px] font-semibold transition-colors ${
+                                  pendingViewOnce
+                                    ? 'bg-gradient-to-r from-[#7C3AED] to-[#A855F7] text-white'
+                                    : `${theme.subtleBg} border ${theme.subtleBorder} ${theme.textSecondary}`
+                                }`}
                               >
-                                <X className="w-3 h-3" />
+                                <Eye className="w-3 h-3" />
+                                View once
                               </button>
                             </div>
-                          );
-                        })}
-                      </div>
-                      <div className="flex items-center justify-between gap-2 mt-1.5">
-                        <p className={`text-[11px] ${theme.textSecondary}`}>
-                          {pendingFiles.length} file
-                          {pendingFiles.length === 1 ? '' : 's'} ready
-                        </p>
+                          </motion.div>
+                        )}
+                      </AnimatePresence>
+
+                      <AnimatePresence>
+                        {fileError && (
+                          <motion.div
+                            initial={
+                              reduceMotion ? false : { opacity: 0, y: 4 }
+                            }
+                            animate={{ opacity: 1, y: 0 }}
+                            exit={reduceMotion ? undefined : { opacity: 0, y: 4 }}
+                            transition={{ duration: 0.15 }}
+                            className="pb-2 sm:pb-3"
+                          >
+                            <div className="flex items-center gap-1.5 text-[12px] text-[#F87171] px-2">
+                              <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+                              <span>{fileError}</span>
+                            </div>
+                          </motion.div>
+                        )}
+                      </AnimatePresence>
+
+                      <form
+                        onSubmit={handleSendMessage}
+                        className="flex items-end gap-1.5 sm:gap-2"
+                      >
+                        {/* Hidden pickers */}
+                        <input
+                          type="file"
+                          ref={fileInputRef}
+                          onChange={handleFileSelect}
+                          accept="image/*"
+                          className="hidden"
+                          multiple
+                        />
+                        <input
+                          type="file"
+                          ref={cameraInputRef}
+                          onChange={(e) => void handleCameraCapture(e)}
+                          accept="image/*"
+                          capture="environment"
+                          className="hidden"
+                        />
+                        <input
+                          type="file"
+                          ref={documentInputRef}
+                          onChange={(e) => void handleDocumentSelect(e)}
+                          className="hidden"
+                        />
+                        <input
+                          type="file"
+                          ref={audioFileInputRef}
+                          onChange={(e) => void handleAudioFileSelect(e)}
+                          accept="audio/*"
+                          className="hidden"
+                        />
+
+                        {/* Emoji button */}
                         <button
                           type="button"
-                          onClick={() => setPendingViewOnce((v) => !v)}
-                          className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10.5px] font-semibold transition-colors ${
-                            pendingViewOnce
-                              ? 'bg-gradient-to-r from-[#7C3AED] to-[#A855F7] text-white'
-                              : `${theme.subtleBg} border ${theme.subtleBorder} ${theme.textSecondary}`
+                          onClick={() => setEmojiPanelOpen((v) => !v)}
+                          className={`shrink-0 w-10 h-10 rounded-full flex items-center justify-center transition-colors ${
+                            emojiPanelOpen
+                              ? `${theme.accentText} ${theme.subtleBgStrong}`
+                              : `${theme.textSecondary} ${theme.hoverBg}`
                           }`}
+                          title="Emoji, GIFs & stickers"
                         >
-                          <Eye className="w-3 h-3" />
-                          View once
+                          <Smile className="w-[19px] h-[19px]" />
                         </button>
-                      </div>
-                    </motion.div>
+
+                        {/* Attach */}
+                        <button
+                          type="button"
+                          onClick={() => setAttachmentSheetOpen(true)}
+                          className={`shrink-0 w-10 h-10 rounded-full flex items-center justify-center ${theme.textSecondary} ${theme.hoverBg} transition-colors`}
+                          title="Attach"
+                        >
+                          <Paperclip className="w-[18px] h-[18px]" />
+                        </button>
+
+                        {/* Camera shortcut */}
+                        <button
+                          type="button"
+                          onClick={() => cameraInputRef.current?.click()}
+                          className={`hidden sm:flex shrink-0 w-10 h-10 rounded-full items-center justify-center ${theme.textSecondary} ${theme.hoverBg} transition-colors`}
+                          title="Camera"
+                        >
+                          <Camera className="w-[18px] h-[18px]" />
+                        </button>
+
+                        {/* Text input */}
+                        <div className="flex-1 min-w-0 relative">
+                          <textarea
+                            ref={composerRef}
+                            value={inputContent}
+                            onChange={(e) => {
+                              setInputContent(e.target.value);
+                              autoGrow(e.currentTarget);
+                              if (!composerVisible) setComposerVisible(true);
+                              if (e.target.value.trim().length > 0) onType();
+                              else stopTyping();
+                            }}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter' && !e.shiftKey) {
+                                e.preventDefault();
+                                void handleSendMessage(
+                                  e as unknown as React.FormEvent,
+                                );
+                              }
+                            }}
+                            placeholder={`Message ${targetUser.displayName}`}
+                            rows={1}
+                            className={`w-full resize-none px-4 py-2.5 text-[14.5px] ${theme.textPrimary} focus:outline-none leading-[1.5] max-h-[140px] overflow-y-auto rounded-[22px] ${theme.subtleBgStrong} border ${theme.subtleBorder} transition-colors placeholder:opacity-60`}
+                          />
+                        </div>
+
+                        {/* Mic (empty) / Send (has content) */}
+                        <AnimatePresence mode="popLayout" initial={false}>
+                          {canSend ? (
+                            <motion.button
+                              key="send-btn"
+                              type="submit"
+                              disabled={isSending}
+                              initial={
+                                reduceMotion
+                                  ? false
+                                  : { scale: 0.6, opacity: 0 }
+                              }
+                              animate={{ scale: 1, opacity: 1 }}
+                              exit={
+                                reduceMotion
+                                  ? undefined
+                                  : { scale: 0.6, opacity: 0 }
+                              }
+                              transition={{
+                                type: 'spring',
+                                stiffness: 420,
+                                damping: 26,
+                              }}
+                              className={`shrink-0 w-10 h-10 rounded-full ${theme.accent} disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center`}
+                              aria-label="Send"
+                            >
+                              {isSending ? (
+                                <Loader2 className="w-[18px] h-[18px] animate-spin" />
+                              ) : (
+                                <Send className="w-[18px] h-[18px]" />
+                              )}
+                            </motion.button>
+                          ) : (
+                            <motion.button
+                              key="mic-btn"
+                              type="button"
+                              onClick={() => setVoiceRecorderOpen(true)}
+                              initial={
+                                reduceMotion
+                                  ? false
+                                  : { scale: 0.6, opacity: 0 }
+                              }
+                              animate={{ scale: 1, opacity: 1 }}
+                              exit={
+                                reduceMotion
+                                  ? undefined
+                                  : { scale: 0.6, opacity: 0 }
+                              }
+                              transition={{
+                                type: 'spring',
+                                stiffness: 420,
+                                damping: 26,
+                              }}
+                              className={`shrink-0 w-10 h-10 rounded-full ${theme.accent} flex items-center justify-center`}
+                              aria-label="Record voice message"
+                            >
+                              <Mic className="w-[18px] h-[18px]" />
+                            </motion.button>
+                          )}
+                        </AnimatePresence>
+                      </form>
+                    </>
                   )}
-                </AnimatePresence>
-
-                <AnimatePresence>
-                  {fileError && (
-                    <motion.div
-                      initial={reduceMotion ? false : { opacity: 0, y: 4 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      exit={reduceMotion ? undefined : { opacity: 0, y: 4 }}
-                      transition={{ duration: 0.15 }}
-                      className="pb-2 sm:pb-3"
-                    >
-                      <div className="flex items-center gap-1.5 text-[12px] text-[#F87171] px-2">
-                        <AlertCircle className="w-3.5 h-3.5 shrink-0" />
-                        <span>{fileError}</span>
-                      </div>
-                    </motion.div>
-                  )}
-                </AnimatePresence>
-
-                <form
-                  onSubmit={handleSendMessage}
-                  className="flex items-end gap-2"
-                >
-                  <input
-                    type="file"
-                    ref={fileInputRef}
-                    onChange={handleFileSelect}
-                    accept="image/*"
-                    className="hidden"
-                    multiple
-                  />
-
-                  <button
-                    type="button"
-                    onClick={() => fileInputRef.current?.click()}
-                    className={`shrink-0 w-10 h-10 rounded-full flex items-center justify-center ${theme.textSecondary} ${theme.hoverBg} transition-colors`}
-                    title="Attach image"
-                  >
-                    <Paperclip className="w-[18px] h-[18px]" />
-                  </button>
-
-                  <div className="flex-1 min-w-0 relative">
-                    <textarea
-                      ref={composerRef}
-                      value={inputContent}
-                      onChange={(e) => {
-                        setInputContent(e.target.value);
-                        autoGrow(e.currentTarget);
-                        if (!composerVisible) setComposerVisible(true);
-                        if (e.target.value.trim().length > 0) onType();
-                        else stopTyping();
-                      }}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter' && !e.shiftKey) {
-                          e.preventDefault();
-                          void handleSendMessage(
-                            e as unknown as React.FormEvent,
-                          );
-                        }
-                      }}
-                      placeholder={`Message ${targetUser.displayName}`}
-                      rows={1}
-                      className={`w-full resize-none px-4 py-2.5 text-[14.5px] ${theme.textPrimary} focus:outline-none leading-[1.5] max-h-[140px] overflow-y-auto rounded-[22px] ${theme.subtleBgStrong} border ${theme.subtleBorder} transition-colors placeholder:opacity-60`}
-                    />
-                  </div>
-
-                  <AnimatePresence mode="popLayout" initial={false}>
-                    {(inputContent.trim().length > 0 ||
-                      pendingFiles.length > 0) && (
-                      <motion.button
-                        key="send-btn"
-                        type="submit"
-                        disabled={isSending}
-                        initial={
-                          reduceMotion ? false : { scale: 0.6, opacity: 0 }
-                        }
-                        animate={{ scale: 1, opacity: 1 }}
-                        exit={
-                          reduceMotion ? undefined : { scale: 0.6, opacity: 0 }
-                        }
-                        transition={{
-                          type: 'spring',
-                          stiffness: 420,
-                          damping: 26,
-                        }}
-                        className={`shrink-0 w-10 h-10 rounded-full ${theme.accent} disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center`}
-                        aria-label="Send"
-                      >
-                        {isSending ? (
-                          <Loader2 className="w-[18px] h-[18px] animate-spin" />
-                        ) : (
-                          <Send className="w-[18px] h-[18px]" />
-                        )}
-                      </motion.button>
-                    )}
-                  </AnimatePresence>
-                </form>
+                </div>
               </div>
             </motion.div>
           </>
@@ -3204,7 +3686,17 @@ function DirectMessagePane(): React.JSX.Element {
         )}
       </div>
 
-      {/* Delete for everyone confirm */}
+      {/* Attachment sheet */}
+      <AttachmentSheet
+        open={attachmentSheetOpen}
+        onClose={() => setAttachmentSheetOpen(false)}
+        onPhoto={() => fileInputRef.current?.click()}
+        onCamera={() => cameraInputRef.current?.click()}
+        onDocument={() => documentInputRef.current?.click()}
+        onAudioFile={() => audioFileInputRef.current?.click()}
+      />
+
+      {/* Delete-for-everyone confirm */}
       <AnimatePresence>
         {pendingDeleteEveryoneId != null && (
           <motion.div
