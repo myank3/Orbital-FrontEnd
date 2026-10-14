@@ -75,9 +75,11 @@ import {
   Bell,
   BellOff,
   ShieldOff,
-  Camera,
   Smile,
   Mic,
+  Reply,
+  Copy,
+  CornerUpLeft,
 } from 'lucide-react';
 import {
   EmojiPanel,
@@ -106,6 +108,24 @@ const THEME_ANIMATIONS = `
 @keyframes theme-twinkle {
   0%, 100% { opacity: 0.5; transform: scale(1); }
   50% { opacity: 0.9; transform: scale(1.02); }
+}
+@keyframes theme-aurora {
+  0%, 100% { transform: translate3d(0, 0, 0) rotate(0deg); }
+  33% { transform: translate3d(3%, -2%, 0) rotate(120deg); }
+  66% { transform: translate3d(-2%, 3%, 0) rotate(240deg); }
+}
+@keyframes theme-pulse-glow {
+  0%, 100% { filter: blur(45px) brightness(1); }
+  50% { filter: blur(50px) brightness(1.3); }
+}
+@keyframes bubble-in {
+  from { opacity: 0; transform: translateY(8px) scale(0.95); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+@keyframes react-pop {
+  0% { transform: scale(0.4); opacity: 0; }
+  60% { transform: scale(1.15); }
+  100% { transform: scale(1); opacity: 1; }
 }
 @media (prefers-reduced-motion: reduce) {
   [class*="theme-anim-"] { animation: none !important; }
@@ -361,12 +381,82 @@ const CHAT_THEMES: Record<ChatThemeKey, ChatTheme> = {
 };
 
 /* ────────────────────────────────────────────────────────── */
+/* Reactions + replies — encoding layer                       */
+/* ────────────────────────────────────────────────────────── */
+
+const REACT_RE = /^\[react:(\d+):([^:\]]+)(?::(add|remove))?\]$/;
+const REPLY_RE = /^\[reply:(\d+)\]/;
+const V1_RE = /^\[v1\]/;
+
+export interface ReactionEntry {
+  emoji: string;
+  userId: string;
+}
+
+export interface DecodedMessage {
+  viewOnce: boolean;
+  body: string;
+  replyToId: number | null;
+  isReaction: false;
+}
+
+export interface DecodedReaction {
+  isReaction: true;
+  messageId: number;
+  emoji: string;
+  action: 'add' | 'remove';
+}
+
+export type Decoded =
+  | DecodedMessage
+  | DecodedReaction;
+
+export function decodeIncoming(text: string): Decoded {
+  const react = text.match(REACT_RE);
+  if (react) {
+    return {
+      isReaction: true,
+      messageId: parseInt(react[1], 10),
+      emoji: react[2],
+      action: (react[3] as 'add' | 'remove') ?? 'add',
+    };
+  }
+
+  let body = text;
+  let viewOnce = false;
+  let replyToId: number | null = null;
+
+  const v1 = body.match(V1_RE);
+  if (v1) {
+    viewOnce = true;
+    body = body.slice(v1[0].length);
+  }
+
+  const reply = body.match(REPLY_RE);
+  if (reply) {
+    replyToId = parseInt(reply[1], 10);
+    body = body.slice(reply[0].length);
+  }
+
+  return { viewOnce, body, replyToId, isReaction: false };
+}
+
+export function encodeReaction(messageId: number, emoji: string, action: 'add' | 'remove' = 'add'): string {
+  return `[react:${messageId}:${emoji}:${action}]`;
+}
+
+export function encodeReply(replyToId: number, text: string): string {
+  return `[reply:${replyToId}]${text}`;
+}
+
+/* ────────────────────────────────────────────────────────── */
 /* Local message + persistence                                */
 /* ────────────────────────────────────────────────────────── */
 
 type LocalMessage = DirectMessageDto & {
   viewOnce?: boolean;
   viewed?: boolean;
+  replyToId?: number | null;
 };
 
 function lsGet<T>(key: string, fallback: T): T {
@@ -399,6 +489,9 @@ function pinnedKey(userId: string | undefined) {
 }
 function mutedKey(userId: string | undefined) {
   return `orbital.muted.${userId ?? 'anon'}`;
+}
+function reactionsKey(userId: string | undefined, peerId: string | undefined) {
+  return `orbital.reactions.${userId ?? 'anon'}.${peerId ?? 'none'}`;
 }
 
 function readThemeFor(
@@ -438,17 +531,25 @@ function readMuted(userId: string | undefined): Set<string> {
 function writeMuted(userId: string | undefined, set: Set<string>) {
   lsSet(mutedKey(userId), Array.from(set));
 }
-
-const V1_RE = /^\[v1\]/;
-
-function decodeIncoming(text: string): { viewOnce: boolean; body: string } {
-  const v1 = text.match(V1_RE);
-  if (v1) return { viewOnce: true, body: text.slice(v1[0].length) };
-  return { viewOnce: false, body: text };
+function readReactions(
+  userId: string | undefined,
+  peerId: string | undefined,
+): Record<string, ReactionEntry[]> {
+  return lsGet<Record<string, ReactionEntry[]>>(
+    reactionsKey(userId, peerId),
+    {},
+  );
+}
+function writeReactions(
+  userId: string | undefined,
+  peerId: string | undefined,
+  data: Record<string, ReactionEntry[]>,
+) {
+  lsSet(reactionsKey(userId, peerId), data);
 }
 
 /* ────────────────────────────────────────────────────────── */
-/* Date / time                                                */
+/* Date / time helpers                                        */
 /* ────────────────────────────────────────────────────────── */
 
 function parseUtc(dateStr: string): Date {
@@ -539,12 +640,14 @@ interface LastMessagePreview {
 function previewText(msg: DirectMessageDto, myUserId: string): LastMessagePreview {
   const isMe = msg.senderId === myUserId;
   const body = msg.plaintext ?? msg.content ?? '';
+  const decoded = decodeIncoming(body);
   let text: string;
-  if (msg.mediaType === MediaType.Image) text = '📷 Photo';
+  if (decoded.isReaction) text = '👍 Reacted';
+  else if (msg.mediaType === MediaType.Image) text = '📷 Photo';
   else if (msg.mediaType === MediaType.Video) text = '🎥 Video';
   else if (msg.mediaType === MediaType.Audio) text = '🎤 Voice message';
   else if (msg.mediaType === MediaType.File) text = '📎 File';
-  else text = body;
+  else text = decoded.body;
   return { text, sentAt: msg.sentAt, isMe };
 }
 
@@ -638,7 +741,7 @@ function LinkPreviews({ urls, theme }: { urls: string[]; theme: ChatTheme }) {
 
   return (
     <div className="mt-2 space-y-2">
-      {urls.slice(0, 3).map((url) => {
+      {urls.slice(0, 2).map((url) => {
         const yt = getYouTubeId(url);
         if (yt) {
           return (
@@ -850,7 +953,7 @@ function ImageViewer({ images, startIndex, onClose }: ImageViewerProps) {
 }
 
 /* ────────────────────────────────────────────────────────── */
-/* View-once full-screen modal                                */
+/* View-once viewer                                           */
 /* ────────────────────────────────────────────────────────── */
 
 function ViewOnceViewerModal({
@@ -896,12 +999,10 @@ function ViewOnceViewerModal({
     >
       <div className="absolute top-0 left-0 right-0 flex items-center justify-between px-4 py-3.5 bg-gradient-to-b from-black/90 via-black/40 to-transparent z-10">
         <div className="min-w-0">
-          <div className="flex items-center gap-2">
-            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-gradient-to-r from-[#7C3AED] to-[#A855F7] text-white text-[10px] font-bold tracking-wide">
-              <Eye className="w-3 h-3" />
-              VIEW ONCE
-            </span>
-          </div>
+          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-gradient-to-r from-[#7C3AED] to-[#A855F7] text-white text-[10px] font-bold tracking-wide">
+            <Eye className="w-3 h-3" />
+            VIEW ONCE
+          </span>
           <p className="text-[12px] text-white/60 tabular-nums mt-1.5">
             {senderName} · {formatTime(sentAt)}
           </p>
@@ -931,12 +1032,164 @@ function ViewOnceViewerModal({
         onContextMenu={(e) => e.preventDefault()}
       />
 
-      <div className="absolute bottom-8 left-0 right-0 flex flex-col items-center gap-2 pointer-events-none">
-        <p className="text-[12px] text-white/50">
-          Tap anywhere to close · Photo will disappear
-        </p>
-      </div>
+      <p className="absolute bottom-8 text-[12px] text-white/50 pointer-events-none">
+        Tap anywhere to close · Photo will disappear
+      </p>
     </motion.div>
+  );
+}
+
+/* ────────────────────────────────────────────────────────── */
+/* Reaction picker + bar                                      */
+/* ────────────────────────────────────────────────────────── */
+
+const QUICK_REACTIONS = ['❤️', '😂', '👍', '😮', '😢', '🙏'];
+
+function ReactionPicker({
+  onPick,
+  onClose,
+  isMe,
+}: {
+  onPick: (emoji: string) => void;
+  onClose: () => void;
+  isMe: boolean;
+}) {
+  const ref = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    const onDoc = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) onClose();
+    };
+    window.addEventListener('mousedown', onDoc);
+    return () => window.removeEventListener('mousedown', onDoc);
+  }, [onClose]);
+
+  return (
+    <motion.div
+      ref={ref}
+      initial={{ opacity: 0, scale: 0.7, y: 10 }}
+      animate={{ opacity: 1, scale: 1, y: 0 }}
+      exit={{ opacity: 0, scale: 0.7, y: 10 }}
+      transition={{ type: 'spring', stiffness: 500, damping: 30 }}
+      className={`absolute z-50 bottom-full mb-2 ${
+        isMe ? 'right-0' : 'left-0'
+      } flex items-center gap-0.5 px-2 py-1.5 rounded-full bg-[#1F1D1A] border border-white/[0.10] shadow-[0_16px_40px_-8px_rgba(0,0,0,0.9)] backdrop-blur-md`}
+    >
+      {QUICK_REACTIONS.map((e, i) => (
+        <motion.button
+          key={e}
+          onClick={() => {
+            onPick(e);
+            onClose();
+          }}
+          initial={{ opacity: 0, scale: 0.3 }}
+          animate={{ opacity: 1, scale: 1 }}
+          transition={{ delay: i * 0.03, type: 'spring', stiffness: 500, damping: 22 }}
+          whileHover={{ scale: 1.35, y: -3 }}
+          whileTap={{ scale: 0.85 }}
+          className="w-9 h-9 rounded-full flex items-center justify-center text-[22px] hover:bg-white/[0.06] transition-colors"
+        >
+          {e}
+        </motion.button>
+      ))}
+    </motion.div>
+  );
+}
+
+function ReactionChips({
+  reactions,
+  currentUserId,
+  isMe,
+  onToggle,
+}: {
+  reactions: ReactionEntry[];
+  currentUserId: string | undefined;
+  isMe: boolean;
+  onToggle: (emoji: string) => void;
+}) {
+  const grouped = useMemo(() => {
+    const map = new Map<string, ReactionEntry[]>();
+    for (const r of reactions) {
+      const arr = map.get(r.emoji) ?? [];
+      arr.push(r);
+      map.set(r.emoji, arr);
+    }
+    return Array.from(map.entries());
+  }, [reactions]);
+
+  if (grouped.length === 0) return null;
+
+  return (
+    <div
+      className={`flex items-center gap-1 mt-1 px-1 flex-wrap ${
+        isMe ? 'justify-end' : 'justify-start'
+      }`}
+    >
+      {grouped.map(([emoji, entries]) => {
+        const mine = entries.some((e) => e.userId === currentUserId);
+        return (
+          <motion.button
+            key={emoji}
+            onClick={() => onToggle(emoji)}
+            initial={{ opacity: 0, scale: 0.4 }}
+            animate={{ opacity: 1, scale: 1 }}
+            whileHover={{ scale: 1.08 }}
+            whileTap={{ scale: 0.92 }}
+            transition={{ type: 'spring', stiffness: 500, damping: 25 }}
+            className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[12px] font-medium border transition-colors ${
+              mine
+                ? 'bg-[#D97706]/[0.15] border-[#D97706]/40 text-[#F59E0B]'
+                : 'bg-white/[0.06] border-white/[0.10] text-[#EDE5D4] hover:bg-white/[0.10]'
+            }`}
+            title={`${entries.length} reaction${entries.length > 1 ? 's' : ''}`}
+          >
+            <span className="text-[14px] leading-none">{emoji}</span>
+            {entries.length > 1 && (
+              <span className="tabular-nums text-[10.5px] opacity-90">
+                {entries.length}
+              </span>
+            )}
+          </motion.button>
+        );
+      })}
+    </div>
+  );
+}
+
+/* ────────────────────────────────────────────────────────── */
+/* Reply preview                                              */
+/* ────────────────────────────────────────────────────────── */
+
+function ReplyPreviewBubble({
+  replyTo,
+  isMe,
+  theme,
+}: {
+  replyTo: LocalMessage;
+  isMe: boolean;
+  theme: ChatTheme;
+}) {
+  const body =
+    replyTo.plaintext ??
+    replyTo.content ??
+    (replyTo.mediaType === MediaType.Image ? '📷 Photo' : '');
+  const senderLabel = replyTo.senderId === (isMe ? 'me' : 'them') ? 'You' : 'Them';
+  const display = body.length > 80 ? body.slice(0, 80) + '…' : body;
+
+  return (
+    <div
+      className={`mb-1.5 rounded-2xl border-l-[3px] pl-2.5 pr-2 py-1.5 text-[12px] ${
+        isMe
+          ? 'bg-black/[0.15] border-black/40 text-black/80'
+          : 'bg-white/[0.06] border-[#D97706]/60 text-[#EDE5D4]/80'
+      }`}
+    >
+      <div className="flex items-center gap-1 mb-0.5">
+        <CornerUpLeft className="w-3 h-3 opacity-60" />
+        <span className="font-semibold opacity-90">{senderLabel}</span>
+      </div>
+      <p className="line-clamp-2 opacity-80">{display}</p>
+    </div>
   );
 }
 
@@ -968,48 +1221,12 @@ function ChatContextMenu({
   onUnfriend: () => void;
 }) {
   const actions = [
-    {
-      key: 'pin',
-      label: isPinned ? 'Unpin chat' : 'Pin chat',
-      icon: isPinned ? <PinOff className="w-4 h-4" /> : <Pin className="w-4 h-4" />,
-      onClick: onPin,
-      danger: false,
-    },
-    {
-      key: 'mute',
-      label: isMuted ? 'Unmute notifications' : 'Mute notifications',
-      icon: isMuted ? <Bell className="w-4 h-4" /> : <BellOff className="w-4 h-4" />,
-      onClick: onMute,
-      danger: false,
-    },
-    {
-      key: 'read',
-      label: 'Mark as read',
-      icon: <CheckCheck className="w-4 h-4" />,
-      onClick: onMarkRead,
-      danger: false,
-    },
-    {
-      key: 'clear',
-      label: 'Clear chat',
-      icon: <Eraser className="w-4 h-4" />,
-      onClick: onClearChat,
-      danger: false,
-    },
-    {
-      key: 'block',
-      label: `Block @${friend.handle}`,
-      icon: <ShieldOff className="w-4 h-4" />,
-      onClick: onBlock,
-      danger: true,
-    },
-    {
-      key: 'unfriend',
-      label: `Unfriend @${friend.handle}`,
-      icon: <UserMinus className="w-4 h-4" />,
-      onClick: onUnfriend,
-      danger: true,
-    },
+    { key: 'pin', label: isPinned ? 'Unpin chat' : 'Pin chat', icon: isPinned ? <PinOff className="w-4 h-4" /> : <Pin className="w-4 h-4" />, onClick: onPin, danger: false },
+    { key: 'mute', label: isMuted ? 'Unmute notifications' : 'Mute notifications', icon: isMuted ? <Bell className="w-4 h-4" /> : <BellOff className="w-4 h-4" />, onClick: onMute, danger: false },
+    { key: 'read', label: 'Mark as read', icon: <CheckCheck className="w-4 h-4" />, onClick: onMarkRead, danger: false },
+    { key: 'clear', label: 'Clear chat', icon: <Eraser className="w-4 h-4" />, onClick: onClearChat, danger: false },
+    { key: 'block', label: `Block @${friend.handle}`, icon: <ShieldOff className="w-4 h-4" />, onClick: onBlock, danger: true },
+    { key: 'unfriend', label: `Unfriend @${friend.handle}`, icon: <UserMinus className="w-4 h-4" />, onClick: onUnfriend, danger: true },
   ];
 
   return (
@@ -1202,9 +1419,9 @@ function VoiceBubble({
       </button>
       <div className="flex-1 min-w-0">
         <div className="flex items-end gap-0.5 h-6">
-          {Array.from({ length: 26 }).map((_, i) => {
+          {Array.from({ length: 24 }).map((_, i) => {
             const height = 20 + Math.sin(i * 0.7) * 12 + (i % 3) * 4;
-            const active = (i / 26) * 100 <= pct;
+            const active = (i / 24) * 100 <= pct;
             return (
               <span
                 key={i}
@@ -1220,9 +1437,7 @@ function VoiceBubble({
         </div>
         <div className="flex justify-between mt-1">
           <span className="text-[10.5px] tabular-nums opacity-70">
-            {playing || progress > 0
-              ? formatDuration(progress)
-              : '0:00'}
+            {playing || progress > 0 ? formatDuration(progress) : '0:00'}
           </span>
           <span className="text-[10.5px] tabular-nums opacity-70">
             {duration > 0 ? formatDuration(duration) : '–:––'}
@@ -1246,10 +1461,16 @@ interface MessageRowProps {
   grouped: boolean;
   isLastOfGroup: boolean;
   theme: ChatTheme;
+  reactions: ReactionEntry[];
+  currentUserId: string | undefined;
+  replyTarget: LocalMessage | null;
   onDeleteForMe: (m: LocalMessage) => void;
   onDeleteForEveryone: (m: LocalMessage) => void;
   onRequestProfile: (userId: string) => void;
   onOpenImage: (m: LocalMessage, senderName: string) => void;
+  onReact: (messageId: number, emoji: string) => void;
+  onStartReply: (m: LocalMessage) => void;
+  onOpenMenu: (m: LocalMessage) => void;
 }
 
 const MessageRow = React.memo(
@@ -1261,34 +1482,71 @@ const MessageRow = React.memo(
     grouped,
     isLastOfGroup,
     theme,
+    reactions,
+    currentUserId,
+    replyTarget,
     onDeleteForMe,
     onDeleteForEveryone,
     onRequestProfile,
     onOpenImage,
+    onReact,
+    onStartReply,
+    onOpenMenu,
   }: MessageRowProps) {
-    const [menuOpen, setMenuOpen] = useState(false);
-    const menuRef = useRef<HTMLDivElement | null>(null);
+    const [pickerOpen, setPickerOpen] = useState(false);
+    const [swipeX, setSwipeX] = useState(0);
     const longPressRef = useRef<number | null>(null);
+    const touchStartRef = useRef<{ x: number; y: number } | null>(null);
+    const swipingRef = useRef(false);
 
-    useEffect(() => {
-      if (!menuOpen) return;
-      const onDoc = (e: MouseEvent) => {
-        if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
-          setMenuOpen(false);
+    const onTouchStart = (e: React.TouchEvent) => {
+      const t = e.touches[0];
+      touchStartRef.current = { x: t.clientX, y: t.clientY };
+      swipingRef.current = false;
+
+      // Long press timer
+      longPressRef.current = window.setTimeout(() => {
+        if (!swipingRef.current) {
+          setPickerOpen(true);
+          if (navigator.vibrate) navigator.vibrate(10);
         }
-      };
-      window.addEventListener('mousedown', onDoc);
-      return () => window.removeEventListener('mousedown', onDoc);
-    }, [menuOpen]);
-
-    const onTouchStart = () => {
-      longPressRef.current = window.setTimeout(() => setMenuOpen(true), 500);
+      }, 450);
     };
+
+    const onTouchMove = (e: React.TouchEvent) => {
+      if (!touchStartRef.current) return;
+      const t = e.touches[0];
+      const dx = t.clientX - touchStartRef.current.x;
+      const dy = t.clientY - touchStartRef.current.y;
+
+      // Only swipe on horizontal motion
+      if (!swipingRef.current && Math.abs(dx) > 12 && Math.abs(dx) > Math.abs(dy)) {
+        swipingRef.current = true;
+        if (longPressRef.current) {
+          window.clearTimeout(longPressRef.current);
+          longPressRef.current = null;
+        }
+      }
+
+      if (swipingRef.current) {
+        // Only allow right swipe (reply gesture), cap distance
+        const clamped = Math.max(0, Math.min(80, dx));
+        setSwipeX(clamped);
+      }
+    };
+
     const onTouchEnd = () => {
       if (longPressRef.current) {
         window.clearTimeout(longPressRef.current);
         longPressRef.current = null;
       }
+      if (swipingRef.current && swipeX > 55) {
+        onStartReply(message);
+        if (navigator.vibrate) navigator.vibrate(15);
+      }
+      setSwipeX(0);
+      swipingRef.current = false;
+      touchStartRef.current = null;
     };
 
     const hasMedia = Boolean(message.mediaUrl);
@@ -1321,6 +1579,8 @@ const MessageRow = React.memo(
       ? '0 4px 16px -8px rgba(0,0,0,0.18), 0 0 0 1px rgba(0,0,0,0.04)'
       : '0 6px 24px -10px rgba(0,0,0,0.55), 0 0 0 1px rgba(255,255,255,0.05)';
 
+    const replyProgress = Math.min(1, swipeX / 60);
+
     return (
       <div
         className={`group/row relative flex w-full ${
@@ -1328,298 +1588,310 @@ const MessageRow = React.memo(
         } ${isMe ? 'justify-end' : 'justify-start'} ${
           isTemp ? 'opacity-80' : ''
         }`}
-        onTouchStart={onTouchStart}
-        onTouchEnd={onTouchEnd}
-        onContextMenu={(e) => {
-          e.preventDefault();
-          setMenuOpen(true);
-        }}
       >
-        {!isMe && (
-          <div className="w-8 shrink-0 pt-0.5 mr-2.5">
-            {!grouped ? (
-              <button
-                type="button"
-                onClick={() => onRequestProfile(message.senderId)}
-                className="rounded-full focus:outline-none transition-transform hover:scale-[1.05]"
-                aria-label={`View ${senderName}'s profile`}
-              >
-                <Avatar name={senderName} src={senderAvatar} size="sm" />
-              </button>
-            ) : (
-              <span className="block w-8 h-8" aria-hidden />
-            )}
+        {/* Swipe-to-reply indicator (behind) */}
+        <div
+          className={`absolute inset-y-0 flex items-center pointer-events-none transition-opacity ${
+            isMe ? 'right-0' : 'left-0'
+          }`}
+          style={{ opacity: replyProgress }}
+        >
+          <div className="w-9 h-9 rounded-full bg-[#D97706]/[0.15] border border-[#D97706]/40 flex items-center justify-center">
+            <Reply className="w-4 h-4 text-[#F59E0B]" />
           </div>
-        )}
+        </div>
 
         <div
-          className={`flex flex-col min-w-0 max-w-[82%] sm:max-w-[72%] md:max-w-[62%] ${
-            isMe ? 'items-end' : 'items-start'
-          }`}
+          className="relative flex w-full transition-transform"
+          style={{
+            transform: swipeX > 0 ? `translateX(${swipeX}px)` : undefined,
+            transitionDuration: swipingRef.current ? '0ms' : '180ms',
+          }}
+          onTouchStart={onTouchStart}
+          onTouchMove={onTouchMove}
+          onTouchEnd={onTouchEnd}
+          onTouchCancel={onTouchEnd}
+          onContextMenu={(e) => {
+            e.preventDefault();
+            setPickerOpen(true);
+          }}
         >
-          {!grouped && !isMe && (
-            <div className="flex items-baseline gap-2 mb-1 px-1.5">
-              <span
-                className={`text-[12px] font-semibold tracking-tight ${theme.textSecondary}`}
-              >
-                {senderName}
-              </span>
-              <span
-                className={`text-[10.5px] tabular-nums opacity-70 ${theme.textSecondary}`}
-              >
-                {formatTime(message.sentAt)}
-              </span>
+          {!isMe && (
+            <div className="w-8 shrink-0 pt-0.5 mr-2.5">
+              {!grouped ? (
+                <button
+                  type="button"
+                  onClick={() => onRequestProfile(message.senderId)}
+                  className="rounded-full focus:outline-none transition-transform hover:scale-[1.05]"
+                  aria-label={`View ${senderName}'s profile`}
+                >
+                  <Avatar name={senderName} src={senderAvatar} size="sm" />
+                </button>
+              ) : (
+                <span className="block w-8 h-8" aria-hidden />
+              )}
             </div>
           )}
 
-          {hasMedia && !isVoice && (
-            <div className="relative group/media max-w-full">
-              {message.mediaType === MediaType.Image && !isViewOnce && (
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onOpenImage(message, senderName);
-                  }}
-                  className="relative cursor-zoom-in overflow-hidden rounded-[20px] block transition-transform hover:scale-[1.005]"
-                  aria-label="View full image"
+          <div
+            className={`flex flex-col min-w-0 max-w-[85%] sm:max-w-[74%] md:max-w-[65%] ${
+              isMe ? 'items-end' : 'items-start'
+            }`}
+          >
+            {!grouped && !isMe && (
+              <div className="flex items-baseline gap-2 mb-1 px-1.5">
+                <span
+                  className={`text-[12px] font-semibold tracking-tight ${theme.textSecondary}`}
                 >
-                  <img
-                    src={message.mediaUrl ?? undefined}
-                    alt=""
-                    loading="lazy"
-                    decoding="async"
-                    className="rounded-[20px] max-h-[380px] w-auto object-cover"
-                    style={{ boxShadow: mediaShadow }}
-                  />
-                  <span className="absolute top-2 right-2 w-7 h-7 rounded-full bg-black/50 backdrop-blur text-white flex items-center justify-center opacity-0 group-hover/media:opacity-100 transition-opacity pointer-events-none">
-                    <ZoomIn className="w-3.5 h-3.5" />
-                  </span>
-                </button>
-              )}
+                  {senderName}
+                </span>
+                <span
+                  className={`text-[10.5px] tabular-nums opacity-70 ${theme.textSecondary}`}
+                >
+                  {formatTime(message.sentAt)}
+                </span>
+              </div>
+            )}
 
-              {message.mediaType === MediaType.Image && isViewOnce && isMe && (
-                <div
-                  className={`inline-flex items-center gap-3 px-4 py-3.5 rounded-[20px] text-[13px] ${theme.subtleBg} border ${theme.subtleBorder}`}
-                >
-                  <span className="w-9 h-9 rounded-full bg-gradient-to-br from-[#7C3AED] to-[#A855F7] flex items-center justify-center shrink-0">
-                    <Eye className="w-4 h-4 text-white" />
-                  </span>
-                  <span className="text-left">
-                    <span
-                      className={`block font-semibold text-[13px] ${theme.textPrimary}`}
-                    >
-                      View-once photo sent
-                    </span>
-                    <span
-                      className={`block opacity-70 text-[11px] ${theme.textSecondary}`}
-                    >
-                      Only visible to recipient
-                    </span>
-                  </span>
-                </div>
-              )}
-
-              {message.mediaType === MediaType.Image && isViewOnce && !isMe && (
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    if (!message.viewed) onOpenImage(message, senderName);
-                  }}
-                  disabled={message.viewed}
-                  className={`inline-flex items-center gap-3 px-4 py-3.5 rounded-[20px] text-[13px] transition-colors ${
-                    message.viewed
-                      ? `${theme.subtleBg} border ${theme.subtleBorder} cursor-default`
-                      : 'bg-gradient-to-br from-[#7C3AED]/[0.14] to-[#A855F7]/[0.14] border border-[#A855F7]/30 hover:from-[#7C3AED]/[0.20] hover:to-[#A855F7]/[0.20]'
-                  }`}
-                >
-                  <span
-                    className={`w-9 h-9 rounded-full flex items-center justify-center shrink-0 ${
-                      message.viewed
-                        ? theme.subtleBgStrong
-                        : 'bg-gradient-to-br from-[#7C3AED] to-[#A855F7]'
-                    }`}
+            {hasMedia && !isVoice && (
+              <div className="relative group/media max-w-full">
+                {message.mediaType === MediaType.Image && !isViewOnce && (
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onOpenImage(message, senderName);
+                    }}
+                    className="relative cursor-zoom-in overflow-hidden rounded-[20px] block transition-transform hover:scale-[1.005]"
+                    aria-label="View full image"
                   >
-                    {message.viewed ? (
-                      <EyeOff className="w-4 h-4 opacity-60" />
-                    ) : (
-                      <Eye className="w-4 h-4 text-white" />
-                    )}
-                  </span>
-                  <span className="text-left">
-                    <span
-                      className={`block font-semibold text-[13px] ${theme.textPrimary}`}
-                    >
-                      {message.viewed ? 'Opened' : 'View once'}
+                    <img
+                      src={message.mediaUrl ?? undefined}
+                      alt=""
+                      loading="lazy"
+                      decoding="async"
+                      className="rounded-[20px] max-h-[380px] w-auto object-cover"
+                      style={{ boxShadow: mediaShadow }}
+                    />
+                    <span className="absolute top-2 right-2 w-7 h-7 rounded-full bg-black/50 backdrop-blur text-white flex items-center justify-center opacity-0 group-hover/media:opacity-100 transition-opacity pointer-events-none">
+                      <ZoomIn className="w-3.5 h-3.5" />
                     </span>
-                    {!message.viewed && (
+                  </button>
+                )}
+
+                {message.mediaType === MediaType.Image && isViewOnce && isMe && (
+                  <div
+                    className={`inline-flex items-center gap-3 px-4 py-3.5 rounded-[20px] text-[13px] ${theme.subtleBg} border ${theme.subtleBorder}`}
+                  >
+                    <span className="w-9 h-9 rounded-full bg-gradient-to-br from-[#7C3AED] to-[#A855F7] flex items-center justify-center shrink-0">
+                      <Eye className="w-4 h-4 text-white" />
+                    </span>
+                    <span className="text-left">
+                      <span
+                        className={`block font-semibold text-[13px] ${theme.textPrimary}`}
+                      >
+                        View-once photo sent
+                      </span>
                       <span
                         className={`block opacity-70 text-[11px] ${theme.textSecondary}`}
                       >
-                        Tap to reveal
+                        Only visible to recipient
                       </span>
-                    )}
-                  </span>
-                </button>
-              )}
+                    </span>
+                  </div>
+                )}
 
-              {message.mediaType === MediaType.Video && (
-                <video
-                  src={message.mediaUrl ?? undefined}
-                  controls
-                  preload="metadata"
-                  className="rounded-[20px] max-h-[380px] w-full bg-black"
-                  style={{ boxShadow: mediaShadow }}
-                />
-              )}
-
-              {message.mediaType === MediaType.File && (
-                <a
-                  href={message.mediaUrl ?? undefined}
-                  target="_blank"
-                  rel="noreferrer"
-                  download
-                  className={`inline-flex items-center gap-2.5 px-3.5 py-3 rounded-[16px] text-[12.5px] border transition-colors ${theme.subtleBg} ${theme.subtleBorder} ${theme.hoverBg} ${theme.textPrimary}`}
-                >
-                  <FileText className="w-4 h-4 shrink-0 opacity-70" />
-                  <span className="truncate max-w-[200px]">Attached file</span>
-                  <Download className="w-3.5 h-3.5 shrink-0 opacity-60" />
-                </a>
-              )}
-            </div>
-          )}
-
-          {isVoice && message.mediaUrl && (
-            <VoiceBubble url={message.mediaUrl} isMe={isMe} theme={theme} />
-          )}
-
-          {hasText && (
-            <div
-              className={`relative inline-flex items-end gap-1 max-w-full ${
-                hasMedia ? 'mt-1.5' : 'mt-0'
-              }`}
-            >
-              <button
-                type="button"
-                onClick={() => setMenuOpen((v) => !v)}
-                className={`hidden sm:flex absolute top-1/2 -translate-y-1/2 ${
-                  isMe ? '-left-8' : '-right-8'
-                } w-6 h-6 rounded-full items-center justify-center opacity-0 group-hover/row:opacity-100 transition-opacity ${theme.textSecondary} ${theme.hoverBg}`}
-                aria-label="Message options"
-              >
-                <MoreHorizontal className="w-4 h-4" />
-              </button>
-
-              {isEmojiOnly ? (
-                <div className="px-1 py-0.5 text-[42px] leading-[1.15] break-words max-w-full">
-                  {displayText}
-                </div>
-              ) : (
-                <div
-                  className={`inline-block max-w-full text-[14.5px] leading-[1.45] break-words rounded-[19px] ${tail} px-3.5 py-[7.5px] ${
-                    isMe ? theme.bubbleSent : theme.bubbleReceived
-                  }`}
-                >
-                  <LinkifiedText text={displayText} isMe={isMe} />
-                </div>
-              )}
-
-              <AnimatePresence>
-                {menuOpen && (
-                  <motion.div
-                    ref={menuRef}
-                    initial={{ opacity: 0, scale: 0.94, y: -4 }}
-                    animate={{ opacity: 1, scale: 1, y: 0 }}
-                    exit={{ opacity: 0, scale: 0.94, y: -4 }}
-                    transition={{ duration: 0.14 }}
-                    className={`absolute z-40 top-full mt-1.5 ${
-                      isMe ? 'right-0' : 'left-0'
-                    } min-w-[190px] rounded-2xl bg-[#1F1D1A] border border-white/[0.08] shadow-[0_24px_48px_-12px_rgba(0,0,0,0.9)] overflow-hidden backdrop-blur-md`}
+                {message.mediaType === MediaType.Image && isViewOnce && !isMe && (
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      if (!message.viewed) onOpenImage(message, senderName);
+                    }}
+                    disabled={message.viewed}
+                    className={`inline-flex items-center gap-3 px-4 py-3.5 rounded-[20px] text-[13px] transition-colors ${
+                      message.viewed
+                        ? `${theme.subtleBg} border ${theme.subtleBorder} cursor-default`
+                        : 'bg-gradient-to-br from-[#7C3AED]/[0.14] to-[#A855F7]/[0.14] border border-[#A855F7]/30 hover:from-[#7C3AED]/[0.20] hover:to-[#A855F7]/[0.20]'
+                    }`}
                   >
-                    <button
-                      onClick={() => {
-                        setMenuOpen(false);
-                        onDeleteForMe(message);
-                      }}
-                      className="w-full flex items-center gap-2.5 px-3.5 py-2.5 text-[12.5px] text-[#EDE5D4] hover:bg-white/[0.05] transition-colors"
+                    <span
+                      className={`w-9 h-9 rounded-full flex items-center justify-center shrink-0 ${
+                        message.viewed
+                          ? theme.subtleBgStrong
+                          : 'bg-gradient-to-br from-[#7C3AED] to-[#A855F7]'
+                      }`}
                     >
-                      <EyeOff className="w-3.5 h-3.5 opacity-70" />
-                      <span>Delete for me</span>
-                    </button>
-                    {isMe && !isTemp && (
-                      <button
-                        onClick={() => {
-                          setMenuOpen(false);
-                          onDeleteForEveryone(message);
-                        }}
-                        className="w-full flex items-center gap-2.5 px-3.5 py-2.5 text-[12.5px] text-[#F87171] hover:bg-[#B91C1C]/[0.10] transition-colors border-t border-white/[0.04]"
+                      {message.viewed ? (
+                        <EyeOff className="w-4 h-4 opacity-60" />
+                      ) : (
+                        <Eye className="w-4 h-4 text-white" />
+                      )}
+                    </span>
+                    <span className="text-left">
+                      <span
+                        className={`block font-semibold text-[13px] ${theme.textPrimary}`}
                       >
-                        <Trash2 className="w-3.5 h-3.5" />
-                        <span>Delete for everyone</span>
-                      </button>
+                        {message.viewed ? 'Opened' : 'View once'}
+                      </span>
+                      {!message.viewed && (
+                        <span
+                          className={`block opacity-70 text-[11px] ${theme.textSecondary}`}
+                        >
+                          Tap to reveal
+                        </span>
+                      )}
+                    </span>
+                  </button>
+                )}
+
+                {message.mediaType === MediaType.Video && (
+                  <video
+                    src={message.mediaUrl ?? undefined}
+                    controls
+                    preload="metadata"
+                    className="rounded-[20px] max-h-[380px] w-full bg-black"
+                    style={{ boxShadow: mediaShadow }}
+                  />
+                )}
+
+                {message.mediaType === MediaType.File && (
+                  <a
+                    href={message.mediaUrl ?? undefined}
+                    target="_blank"
+                    rel="noreferrer"
+                    download
+                    className={`inline-flex items-center gap-2.5 px-3.5 py-3 rounded-[16px] text-[12.5px] border transition-colors ${theme.subtleBg} ${theme.subtleBorder} ${theme.hoverBg} ${theme.textPrimary}`}
+                  >
+                    <FileText className="w-4 h-4 shrink-0 opacity-70" />
+                    <span className="truncate max-w-[200px]">Attached file</span>
+                    <Download className="w-3.5 h-3.5 shrink-0 opacity-60" />
+                  </a>
+                )}
+              </div>
+            )}
+
+            {isVoice && message.mediaUrl && (
+              <VoiceBubble url={message.mediaUrl} isMe={isMe} theme={theme} />
+            )}
+
+            {hasText && (
+              <div
+                className={`relative inline-flex items-end gap-1 max-w-full ${
+                  hasMedia ? 'mt-1.5' : 'mt-0'
+                }`}
+              >
+                <button
+                  type="button"
+                  onClick={() => setPickerOpen((v) => !v)}
+                  className={`hidden sm:flex absolute top-1/2 -translate-y-1/2 ${
+                    isMe ? '-left-8' : '-right-8'
+                  } w-6 h-6 rounded-full items-center justify-center opacity-0 group-hover/row:opacity-100 transition-opacity ${theme.textSecondary} ${theme.hoverBg}`}
+                  aria-label="Message options"
+                >
+                  <MoreHorizontal className="w-4 h-4" />
+                </button>
+
+                {isEmojiOnly ? (
+                  <div className="px-1 py-0.5 text-[42px] leading-[1.15] break-words max-w-full">
+                    {displayText}
+                  </div>
+                ) : (
+                  <div
+                    className={`inline-block max-w-full text-[14.5px] leading-[1.45] break-words rounded-[19px] ${tail} px-3.5 py-[7.5px] ${
+                      isMe ? theme.bubbleSent : theme.bubbleReceived
+                    }`}
+                  >
+                    {replyTarget && (
+                      <ReplyPreviewBubble
+                        replyTo={replyTarget}
+                        isMe={isMe}
+                        theme={theme}
+                      />
                     )}
-                  </motion.div>
+                    <LinkifiedText text={displayText} isMe={isMe} />
+                  </div>
+                )}
+
+                <AnimatePresence>
+                  {pickerOpen && (
+                    <ReactionPicker
+                      isMe={isMe}
+                      onPick={(emoji) => {
+                        if (typeof message.id === 'number' && message.id > 0) {
+                          onReact(message.id, emoji);
+                        }
+                      }}
+                      onClose={() => setPickerOpen(false)}
+                    />
+                  )}
+                </AnimatePresence>
+              </div>
+            )}
+
+            {!hasText && hasMedia && (
+              <AnimatePresence>
+                {pickerOpen && (
+                  <ReactionPicker
+                    isMe={isMe}
+                    onPick={(emoji) => {
+                      if (typeof message.id === 'number' && message.id > 0) {
+                        onReact(message.id, emoji);
+                      }
+                    }}
+                    onClose={() => setPickerOpen(false)}
+                  />
                 )}
               </AnimatePresence>
-            </div>
-          )}
+            )}
 
-          {!hasText && hasMedia && (
-            <AnimatePresence>
-              {menuOpen && (
-                <motion.div
-                  ref={menuRef}
-                  initial={{ opacity: 0, scale: 0.94, y: -4 }}
-                  animate={{ opacity: 1, scale: 1, y: 0 }}
-                  exit={{ opacity: 0, scale: 0.94, y: -4 }}
-                  transition={{ duration: 0.14 }}
-                  className={`relative z-40 mt-1.5 ${
-                    isMe ? 'self-end' : 'self-start'
-                  } min-w-[190px] rounded-2xl bg-[#1F1D1A] border border-white/[0.08] shadow-[0_24px_48px_-12px_rgba(0,0,0,0.9)] overflow-hidden backdrop-blur-md`}
-                >
-                  <button
-                    onClick={() => {
-                      setMenuOpen(false);
-                      onDeleteForMe(message);
-                    }}
-                    className="w-full flex items-center gap-2.5 px-3.5 py-2.5 text-[12.5px] text-[#EDE5D4] hover:bg-white/[0.05] transition-colors"
-                  >
-                    <EyeOff className="w-3.5 h-3.5 opacity-70" />
-                    <span>Delete for me</span>
-                  </button>
-                  {isMe && !isTemp && (
-                    <button
-                      onClick={() => {
-                        setMenuOpen(false);
-                        onDeleteForEveryone(message);
-                      }}
-                      className="w-full flex items-center gap-2.5 px-3.5 py-2.5 text-[12.5px] text-[#F87171] hover:bg-[#B91C1C]/[0.10] transition-colors border-t border-white/[0.04]"
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                      <span>Delete for everyone</span>
-                    </button>
-                  )}
-                </motion.div>
-              )}
-            </AnimatePresence>
-          )}
+            {reactions.length > 0 && (
+              <ReactionChips
+                reactions={reactions}
+                currentUserId={currentUserId}
+                isMe={isMe}
+                onToggle={(emoji) => {
+                  if (typeof message.id === 'number' && message.id > 0) {
+                    onReact(message.id, emoji);
+                  }
+                }}
+              />
+            )}
 
-          {urls.length > 0 && <LinkPreviews urls={urls} theme={theme} />}
+            {urls.length > 0 && <LinkPreviews urls={urls} theme={theme} />}
 
-          {isMe && isLastOfGroup && (
-            <div className="flex items-center mt-1 px-1.5">
-              {isTemp ? (
-                <Loader2
-                  className={`w-3 h-3 animate-spin ${theme.textSecondary}`}
-                />
-              ) : message.isRead ? (
-                <CheckCheck className="w-3.5 h-3.5 text-[#4ADE80]" />
-              ) : (
-                <Check className={`w-3.5 h-3.5 ${theme.textSecondary}`} />
-              )}
-            </div>
-          )}
+            {isMe && isLastOfGroup && (
+              <div className="flex items-center mt-1 px-1.5">
+                {isTemp ? (
+                  <Loader2
+                    className={`w-3 h-3 animate-spin ${theme.textSecondary}`}
+                  />
+                ) : message.isRead ? (
+                  <CheckCheck className="w-3.5 h-3.5 text-[#4ADE80]" />
+                ) : (
+                  <Check className={`w-3.5 h-3.5 ${theme.textSecondary}`} />
+                )}
+              </div>
+            )}
+          </div>
+
+          {/* Long-press desktop menu */}
+          <AnimatePresence>
+            {pickerOpen && (
+              <motion.button
+                key="menu-backdrop"
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                onClick={() => {
+                  setPickerOpen(false);
+                  onOpenMenu(message);
+                }}
+                className="fixed inset-0 z-40 cursor-default"
+                aria-label="Message menu"
+              />
+            )}
+          </AnimatePresence>
         </div>
       </div>
     );
@@ -1637,7 +1909,9 @@ const MessageRow = React.memo(
       prev.isMe === next.isMe &&
       prev.senderName === next.senderName &&
       prev.senderAvatar === next.senderAvatar &&
-      prev.theme === next.theme
+      prev.theme === next.theme &&
+      prev.reactions === next.reactions &&
+      prev.replyTarget === next.replyTarget
     );
   },
 );
@@ -1882,6 +2156,17 @@ function DirectMessagePane(): React.JSX.Element {
     Record<string, DirectMessageDto>
   >({});
 
+  // Reactions live per (user, peer) in localStorage
+  const [reactions, setReactions] = useState<Record<string, ReactionEntry[]>>(
+    () => readReactions(user?.id, userId),
+  );
+
+  // Currently replying-to message
+  const [replyTo, setReplyTo] = useState<LocalMessage | null>(null);
+
+  // Message options menu (from long-press on desktop)
+  const [menuMessage, setMenuMessage] = useState<LocalMessage | null>(null);
+
   const [pendingDeleteEveryoneId, setPendingDeleteEveryoneId] = useState<
     string | number | null
   >(null);
@@ -1902,7 +2187,7 @@ function DirectMessagePane(): React.JSX.Element {
   const [emojiPanelOpen, setEmojiPanelOpen] = useState(false);
   const [attachmentSheetOpen, setAttachmentSheetOpen] = useState(false);
   const [voiceRecorderOpen, setVoiceRecorderOpen] = useState(false);
-  const cameraInputRef = useRef<HTMLInputElement | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
   const documentInputRef = useRef<HTMLInputElement | null>(null);
   const audioFileInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -1924,11 +2209,16 @@ function DirectMessagePane(): React.JSX.Element {
 
   useEffect(() => {
     setChatThemeKey(readThemeFor(user?.id, userId));
+    setReactions(readReactions(user?.id, userId));
   }, [userId, user?.id]);
 
   useEffect(() => {
     writeThemeFor(user?.id, userId, chatThemeKey);
   }, [user?.id, userId, chatThemeKey]);
+
+  useEffect(() => {
+    writeReactions(user?.id, userId, reactions);
+  }, [user?.id, userId, reactions]);
 
   const theme = CHAT_THEMES[chatThemeKey];
 
@@ -1948,7 +2238,6 @@ function DirectMessagePane(): React.JSX.Element {
 
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
   const messagesContainerRef = useRef<HTMLDivElement | null>(null);
-  const fileInputRef = useRef<HTMLInputElement | null>(null);
   const composerRef = useRef<HTMLTextAreaElement | null>(null);
   const lastScrollTopRef = useRef(0);
   const userIdRef = useRef(userId);
@@ -2179,20 +2468,46 @@ function DirectMessagePane(): React.JSX.Element {
       raw: DirectMessageDto[],
       currentUserId: string,
       seenSet: Set<number>,
-    ): Promise<LocalMessage[]> => {
+    ): Promise<{ msgs: LocalMessage[]; reactions: Record<string, ReactionEntry[]> }> => {
       const decrypted = await decryptBatch(raw, currentUserId);
-      return decrypted.map((d) => {
+      const msgs: LocalMessage[] = [];
+      const reacts: Record<string, ReactionEntry[]> = {};
+
+      for (const d of decrypted) {
         const text = d.plaintext ?? d.content ?? '';
-        const { viewOnce: v, body } = decodeIncoming(text);
-        const viewed = v && typeof d.id === 'number' && seenSet.has(d.id);
-        return {
+        const decoded = decodeIncoming(text);
+        if (decoded.isReaction) {
+          const key = String(decoded.messageId);
+          const arr = reacts[key] ?? [];
+          if (decoded.action === 'remove') {
+            const idx = arr.findIndex(
+              (r) => r.userId === d.senderId && r.emoji === decoded.emoji,
+            );
+            if (idx >= 0) arr.splice(idx, 1);
+          } else {
+            const exists = arr.some(
+              (r) => r.userId === d.senderId && r.emoji === decoded.emoji,
+            );
+            if (!exists) arr.push({ emoji: decoded.emoji, userId: d.senderId });
+          }
+          reacts[key] = arr;
+          continue;
+        }
+        const viewed =
+          decoded.viewOnce &&
+          typeof d.id === 'number' &&
+          seenSet.has(d.id);
+        msgs.push({
           ...d,
-          plaintext: body,
-          content: body,
-          viewOnce: v,
+          plaintext: decoded.body,
+          content: decoded.body,
+          viewOnce: decoded.viewOnce,
           viewed,
-        };
-      });
+          replyToId: decoded.replyToId,
+        });
+      }
+
+      return { msgs, reactions: reacts };
     },
     [],
   );
@@ -2211,12 +2526,24 @@ function DirectMessagePane(): React.JSX.Element {
           (a, b) => getMessageTime(a) - getMessageTime(b),
         );
         const seen = readV1Seen(user.id);
-        const decrypted = await decodeMessages(sorted, user.id, seen);
+        const { msgs, reactions: reacts } = await decodeMessages(
+          sorted,
+          user.id,
+          seen,
+        );
         if (!active) return;
-        setMessages(decrypted);
+        setMessages(msgs);
+        // Merge server-loaded reactions into local (server wins)
+        setReactions((prev) => {
+          const merged: Record<string, ReactionEntry[]> = { ...prev };
+          for (const [k, list] of Object.entries(reacts)) {
+            merged[k] = list;
+          }
+          return merged;
+        });
         setHasMore(history.length >= 50);
-        if (decrypted.length > 0) {
-          const latest = decrypted[decrypted.length - 1];
+        if (msgs.length > 0) {
+          const latest = msgs[msgs.length - 1];
           setLastMessages((prev) => ({ ...prev, [userId]: latest }));
         }
         void apiService.markDmRead(userId);
@@ -2254,7 +2581,11 @@ function DirectMessagePane(): React.JSX.Element {
           (a, b) => getMessageTime(a) - getMessageTime(b),
         );
         const seen = readV1Seen(user.id);
-        const decrypted = await decodeMessages(sorted, user.id, seen);
+        const { msgs: decrypted, reactions: reacts } = await decodeMessages(
+          sorted,
+          user.id,
+          seen,
+        );
         if (cancelled) return;
 
         setMessages((prev) => {
@@ -2279,6 +2610,7 @@ function DirectMessagePane(): React.JSX.Element {
               mediaType: d.mediaType ?? existing.mediaType,
               viewOnce: d.viewOnce ?? existing.viewOnce,
               viewed: d.viewed ?? existing.viewed,
+              replyToId: d.replyToId ?? existing.replyToId,
             };
           });
 
@@ -2313,6 +2645,27 @@ function DirectMessagePane(): React.JSX.Element {
 
           return allSame ? prev : final;
         });
+
+        // Merge reactions from server
+        setReactions((prev) => {
+          const merged: Record<string, ReactionEntry[]> = { ...prev };
+          let changed = false;
+          for (const [k, list] of Object.entries(reacts)) {
+            const existing = prev[k] ?? [];
+            if (
+              existing.length !== list.length ||
+              list.some(
+                (r, i) =>
+                  existing[i]?.emoji !== r.emoji ||
+                  existing[i]?.userId !== r.userId,
+              )
+            ) {
+              merged[k] = list;
+              changed = true;
+            }
+          }
+          return changed ? merged : prev;
+        });
       } catch {
         /* silent */
       } finally {
@@ -2344,8 +2697,19 @@ function DirectMessagePane(): React.JSX.Element {
           (a, b) => getMessageTime(a) - getMessageTime(b),
         );
         const seen = readV1Seen(user.id);
-        const decrypted = await decodeMessages(sortedEarlier, user.id, seen);
-        setMessages((prev) => [...decrypted, ...prev]);
+        const { msgs, reactions: reacts } = await decodeMessages(
+          sortedEarlier,
+          user.id,
+          seen,
+        );
+        setMessages((prev) => [...msgs, ...prev]);
+        setReactions((prev) => {
+          const merged = { ...prev };
+          for (const [k, list] of Object.entries(reacts)) {
+            merged[k] = list;
+          }
+          return merged;
+        });
         setHasMore(earlier.length >= 50);
       } else {
         setHasMore(false);
@@ -2362,13 +2726,36 @@ function DirectMessagePane(): React.JSX.Element {
       async (msg: DirectMessageDto) => {
         const decrypted = await decryptOne(msg, user?.id ?? '');
         const text = decrypted.plaintext ?? decrypted.content ?? '';
-        const { viewOnce: v, body } = decodeIncoming(text);
+        const decoded = decodeIncoming(text);
+
+        // Handle reaction event
+        if (decoded.isReaction) {
+          const key = String(decoded.messageId);
+          setReactions((prev) => {
+            const arr = [...(prev[key] ?? [])];
+            if (decoded.action === 'remove') {
+              const idx = arr.findIndex(
+                (r) => r.userId === decrypted.senderId && r.emoji === decoded.emoji,
+              );
+              if (idx >= 0) arr.splice(idx, 1);
+            } else {
+              const exists = arr.some(
+                (r) => r.userId === decrypted.senderId && r.emoji === decoded.emoji,
+              );
+              if (!exists) arr.push({ emoji: decoded.emoji, userId: decrypted.senderId });
+            }
+            return { ...prev, [key]: arr };
+          });
+          return;
+        }
+
         const local: LocalMessage = {
           ...decrypted,
-          plaintext: body,
-          content: body,
-          viewOnce: v,
+          plaintext: decoded.body,
+          content: decoded.body,
+          viewOnce: decoded.viewOnce,
           viewed: false,
+          replyToId: decoded.replyToId,
         };
 
         const otherId =
@@ -2391,7 +2778,7 @@ function DirectMessagePane(): React.JSX.Element {
         if (isCurrentChat) {
           setMessages((prev) => {
             if (prev.some((m) => m.id === msg.id)) return prev;
-            const newText = body;
+            const newText = decoded.body;
             const newMedia = decrypted.mediaUrl ?? '';
             const tempIdx = prev.findIndex(
               (m) =>
@@ -2443,12 +2830,15 @@ function DirectMessagePane(): React.JSX.Element {
     }
   }, [isPeerTyping]);
 
+  /* ── Send helpers ──────────────────────────────────────── */
+
   const sendImageOrMedia = useCallback(
     async (
       mediaUrl: string,
       mediaType: number,
       extraText = '',
       viewOnce = false,
+      replyToId: number | null = null,
     ): Promise<void> => {
       if (!userId || !user?.id) return;
       const tempId = -Date.now();
@@ -2468,11 +2858,14 @@ function DirectMessagePane(): React.JSX.Element {
           sentAt: new Date().toISOString(),
           viewOnce,
           viewed: false,
+          replyToId,
         },
       ]);
       let ciphertext = '';
       let nonce = '';
-      const payload = viewOnce ? `[v1]${extraText}` : extraText;
+      let payload = extraText;
+      if (replyToId != null) payload = encodeReply(replyToId, payload);
+      if (viewOnce) payload = `[v1]${payload}`;
       if (payload) {
         const pub = await getPublicKeyFor(userId);
         const enc = await encryptFor(pub, payload);
@@ -2559,7 +2952,10 @@ function DirectMessagePane(): React.JSX.Element {
     } catch (err) {
       setFileError(extractErrorMessage(err));
     } finally {
-      if (cameraInputRef.current) cameraInputRef.current.value = '';
+      const el = document.getElementById(
+        'orbital-camera-input',
+      ) as HTMLInputElement | null;
+      if (el) el.value = '';
     }
   };
 
@@ -2658,6 +3054,66 @@ function DirectMessagePane(): React.JSX.Element {
     [sendImageOrMedia],
   );
 
+  /* ── React to a message ─────────────────────────────────── */
+
+  const handleReact = useCallback(
+    async (messageId: number, emoji: string) => {
+      if (!userId || !user?.id) return;
+      const key = String(messageId);
+      const existing = reactions[key] ?? [];
+      const mine = existing.find(
+        (r) => r.userId === user.id && r.emoji === emoji,
+      );
+      const action: 'add' | 'remove' = mine ? 'remove' : 'add';
+
+      // Optimistic local update
+      setReactions((prev) => {
+        const arr = [...(prev[key] ?? [])];
+        if (action === 'remove') {
+          const idx = arr.findIndex(
+            (r) => r.userId === user.id && r.emoji === emoji,
+          );
+          if (idx >= 0) arr.splice(idx, 1);
+        } else {
+          // remove my other reactions first (WhatsApp-style: one per person)
+          const cleaned = arr.filter((r) => r.userId !== user.id);
+          cleaned.push({ emoji, userId: user.id });
+          return { ...prev, [key]: cleaned };
+        }
+        return { ...prev, [key]: arr };
+      });
+
+      // Send control message
+      try {
+        const payload = encodeReaction(messageId, emoji, action);
+        const pub = await getPublicKeyFor(userId);
+        const enc = await encryptFor(pub, payload);
+        await signalRService.sendDirectMessage({
+          recipientId: userId,
+          ciphertext: enc.ciphertext,
+          nonce: enc.nonce,
+          mediaUrl: undefined,
+          mediaType: undefined,
+        });
+      } catch (err) {
+        console.warn('Reaction send failed:', err);
+      }
+    },
+    [userId, user?.id, reactions],
+  );
+
+  const handleStartReply = useCallback((m: LocalMessage) => {
+    if (typeof m.id === 'number' && m.id < 0) return;
+    setReplyTo(m);
+    if (composerRef.current) composerRef.current.focus();
+  }, []);
+
+  const handleOpenMenu = useCallback((m: LocalMessage) => {
+    setMenuMessage(m);
+  }, []);
+
+  /* ── Send text + files ──────────────────────────────────── */
+
   const handleSendMessage = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!userId || !user?.id) return;
@@ -2670,10 +3126,12 @@ function DirectMessagePane(): React.JSX.Element {
     const text = inputContent.trim();
     const filesToSend = [...pendingFiles];
     const sendViewOnce = pendingViewOnce;
+    const currentReplyTo = replyTo;
 
     setInputContent('');
     setPendingFiles([]);
     setPendingViewOnce(false);
+    setReplyTo(null);
     setEmojiPanelOpen(false);
     if (fileInputRef.current) fileInputRef.current.value = '';
     if (composerRef.current) composerRef.current.style.height = 'auto';
@@ -2697,11 +3155,12 @@ function DirectMessagePane(): React.JSX.Element {
 
           const includeText = i === 0 && text.length > 0;
           const markV1 = sendViewOnce && i === 0;
-          const outgoingPlain = markV1
-            ? `[v1]${includeText ? text : ''}`
-            : includeText
-              ? text
-              : '';
+
+          let payload = includeText ? text : '';
+          if (currentReplyTo && typeof currentReplyTo.id === 'number' && currentReplyTo.id > 0) {
+            payload = encodeReply(currentReplyTo.id, payload);
+          }
+          if (markV1) payload = `[v1]${payload}`;
 
           const tempId = -Date.now() - i;
           setMessages((prev) => [
@@ -2720,14 +3179,18 @@ function DirectMessagePane(): React.JSX.Element {
               sentAt: new Date().toISOString(),
               viewOnce: markV1,
               viewed: false,
+              replyToId:
+                currentReplyTo && typeof currentReplyTo.id === 'number'
+                  ? currentReplyTo.id
+                  : null,
             },
           ]);
 
           let ciphertext = '';
           let nonce = '';
-          if (outgoingPlain.length > 0) {
+          if (payload.length > 0) {
             const recipientPub = await getPublicKeyFor(userId);
-            const enc = await encryptFor(recipientPub, outgoingPlain);
+            const enc = await encryptFor(recipientPub, payload);
             ciphertext = enc.ciphertext;
             nonce = enc.nonce;
           }
@@ -2742,6 +3205,11 @@ function DirectMessagePane(): React.JSX.Element {
           playSend();
         }
       } else if (text.length > 0) {
+        let payload = text;
+        if (currentReplyTo && typeof currentReplyTo.id === 'number' && currentReplyTo.id > 0) {
+          payload = encodeReply(currentReplyTo.id, payload);
+        }
+
         const tempId = -Date.now();
         setMessages((prev) => [
           ...prev,
@@ -2757,11 +3225,15 @@ function DirectMessagePane(): React.JSX.Element {
             sentAt: new Date().toISOString(),
             viewOnce: false,
             viewed: false,
+            replyToId:
+              currentReplyTo && typeof currentReplyTo.id === 'number'
+                ? currentReplyTo.id
+                : null,
           },
         ]);
 
         const recipientPub = await getPublicKeyFor(userId);
-        const enc = await encryptFor(recipientPub, text);
+        const enc = await encryptFor(recipientPub, payload);
         await signalRService.sendDirectMessage({
           recipientId: userId,
           ciphertext: enc.ciphertext,
@@ -2816,6 +3288,11 @@ function DirectMessagePane(): React.JSX.Element {
 
   const handleDeleteForMe = useCallback(async (m: LocalMessage) => {
     setMessages((prev) => prev.filter((x) => x.id !== m.id));
+    setReactions((prev) => {
+      const next = { ...prev };
+      delete next[String(m.id)];
+      return next;
+    });
     try {
       await apiService.deleteDm(m.id);
     } catch (err) {
@@ -2834,6 +3311,11 @@ function DirectMessagePane(): React.JSX.Element {
     if (pendingDeleteEveryoneId == null) return;
     const targetId = pendingDeleteEveryoneId;
     setMessages((prev) => prev.filter((x) => x.id !== targetId));
+    setReactions((prev) => {
+      const next = { ...prev };
+      delete next[String(targetId)];
+      return next;
+    });
     setPendingDeleteEveryoneId(null);
     try {
       await apiService.deleteDmForEveryone(targetId);
@@ -2844,12 +3326,12 @@ function DirectMessagePane(): React.JSX.Element {
           const sorted = [...history].sort(
             (a, b) => getMessageTime(a) - getMessageTime(b),
           );
-          const decrypted = await decodeMessages(
+          const { msgs } = await decodeMessages(
             sorted,
             currentUserIdRef.current,
             readV1Seen(currentUserIdRef.current),
           );
-          setMessages(decrypted);
+          setMessages(msgs);
         } catch {
           /* ignore */
         }
@@ -2869,6 +3351,7 @@ function DirectMessagePane(): React.JSX.Element {
     if (!userId) return;
     await apiService.clearConversation(userId);
     setMessages([]);
+    setReactions({});
     setLastMessages((prev) => {
       const next = { ...prev };
       delete next[userId];
@@ -2957,6 +3440,14 @@ function DirectMessagePane(): React.JSX.Element {
     return map;
   }, [grouped]);
 
+  const findMessageById = useCallback(
+    (id: number | null | undefined): LocalMessage | null => {
+      if (id == null) return null;
+      return messages.find((m) => m.id === id) ?? null;
+    },
+    [messages],
+  );
+
   const onSidebarTouchStart = (friend: FriendDto) => {
     if (sidebarLongPressRef.current != null) {
       window.clearTimeout(sidebarLongPressRef.current);
@@ -3001,12 +3492,12 @@ function DirectMessagePane(): React.JSX.Element {
       <div
         className={`${
           hasActiveChat ? 'hidden md:flex' : 'flex'
-        } w-full md:w-[320px] md:shrink-0 border-r ${theme.subtleBorder} ${theme.sidebarBg} flex-col h-full transition-colors duration-500`}
+        } w-full md:w-[340px] md:shrink-0 border-r ${theme.subtleBorder} ${theme.sidebarBg} flex-col h-full transition-colors duration-500`}
       >
         <div className="h-[68px] px-5 flex items-center justify-between shrink-0">
           <div className="flex items-baseline gap-2">
             <h2
-              className={`text-[20px] font-semibold tracking-tight ${theme.textPrimary}`}
+              className={`text-[22px] font-bold tracking-tight ${theme.textPrimary}`}
             >
               Chats
             </h2>
@@ -3021,14 +3512,14 @@ function DirectMessagePane(): React.JSX.Element {
         <div className="px-4 pb-3">
           <div className="relative">
             <Search
-              className={`absolute left-3.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 pointer-events-none ${theme.textSecondary}`}
+              className={`absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 pointer-events-none ${theme.textSecondary}`}
             />
             <input
               type="text"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               placeholder="Search conversations"
-              className={`w-full h-10 pl-10 pr-3 rounded-xl ${theme.subtleBg} border ${theme.subtleBorder} text-[13px] ${theme.textPrimary} focus:outline-none transition-colors placeholder:opacity-60`}
+              className={`w-full h-11 pl-10 pr-3 rounded-2xl ${theme.subtleBg} border ${theme.subtleBorder} text-[13px] ${theme.textPrimary} focus:outline-none transition-colors placeholder:opacity-60`}
             />
           </div>
         </div>
@@ -3081,7 +3572,7 @@ function DirectMessagePane(): React.JSX.Element {
                           />
                         )}
                         <p
-                          className={`text-[13.5px] font-semibold truncate tracking-tight ${theme.textPrimary}`}
+                          className={`text-[13.5px] font-bold truncate tracking-tight ${theme.textPrimary}`}
                         >
                           {friend.displayName}
                         </p>
@@ -3101,7 +3592,7 @@ function DirectMessagePane(): React.JSX.Element {
                     </div>
                     <div className="flex items-center justify-between gap-2 mt-0.5">
                       <p
-                        className={`text-[11.5px] truncate ${
+                        className={`text-[12px] truncate ${
                           unread > 0
                             ? `${theme.textPrimary} font-medium`
                             : theme.textSecondary
@@ -3113,7 +3604,7 @@ function DirectMessagePane(): React.JSX.Element {
                       </p>
                       {unread > 0 && (
                         <span
-                          className={`shrink-0 min-w-[18px] h-[18px] px-1.5 rounded-full ${theme.accent} text-[10px] font-bold tabular-nums flex items-center justify-center`}
+                          className={`shrink-0 min-w-[20px] h-5 px-1.5 rounded-full ${theme.accent} text-[10.5px] font-bold tabular-nums flex items-center justify-center`}
                         >
                           {unread > 99 ? '99+' : unread}
                         </span>
@@ -3153,7 +3644,7 @@ function DirectMessagePane(): React.JSX.Element {
                   className={`md:hidden w-9 h-9 rounded-xl flex items-center justify-center ${theme.textSecondary} ${theme.hoverBg} transition-colors shrink-0`}
                   aria-label="Back"
                 >
-                  <ChevronLeft className="w-[18px] h-[18px]" />
+                  <ChevronLeft className="w-[20px] h-[20px]" />
                 </button>
 
                 <button
@@ -3172,7 +3663,7 @@ function DirectMessagePane(): React.JSX.Element {
 
                 <div className="min-w-0">
                   <h3
-                    className={`text-[14.5px] font-semibold truncate tracking-tight ${theme.textPrimary}`}
+                    className={`text-[15px] font-bold truncate tracking-tight ${theme.textPrimary}`}
                   >
                     {targetUser.displayName}
                   </h3>
@@ -3200,24 +3691,24 @@ function DirectMessagePane(): React.JSX.Element {
               <div className="flex items-center gap-0.5 sm:gap-1 shrink-0">
                 <button
                   onClick={() => void handleAudioCall()}
-                  className={`w-9 h-9 rounded-xl flex items-center justify-center ${theme.textSecondary} ${theme.hoverBg} transition-colors`}
+                  className={`w-10 h-10 rounded-2xl flex items-center justify-center ${theme.textSecondary} ${theme.hoverBg} transition-colors`}
                   title="Audio call"
                 >
-                  <Phone className="w-[17px] h-[17px]" />
+                  <Phone className="w-[18px] h-[18px]" />
                 </button>
                 <button
                   onClick={() => void handleVideoCall()}
-                  className={`w-9 h-9 rounded-xl flex items-center justify-center ${theme.textSecondary} ${theme.hoverBg} transition-colors`}
+                  className={`w-10 h-10 rounded-2xl flex items-center justify-center ${theme.textSecondary} ${theme.hoverBg} transition-colors`}
                   title="Video call"
                 >
-                  <Video className="w-[17px] h-[17px]" />
+                  <Video className="w-[18px] h-[18px]" />
                 </button>
                 <button
                   onClick={() => setInfoOpen(true)}
-                  className={`w-9 h-9 rounded-xl flex items-center justify-center ${theme.textSecondary} ${theme.hoverBg} transition-colors`}
+                  className={`w-10 h-10 rounded-2xl flex items-center justify-center ${theme.textSecondary} ${theme.hoverBg} transition-colors`}
                   title="Chat info"
                 >
-                  <Info className="w-[17px] h-[17px]" />
+                  <Info className="w-[18px] h-[18px]" />
                 </button>
               </div>
             </div>
@@ -3259,7 +3750,7 @@ function DirectMessagePane(): React.JSX.Element {
                   <button
                     onClick={() => void handleLoadEarlier()}
                     disabled={loadingMore}
-                    className={`px-3.5 py-1.5 rounded-full ${theme.subtleBg} border ${theme.subtleBorder} text-[11.5px] ${theme.textSecondary} ${theme.hoverBg} disabled:opacity-50 transition-colors`}
+                    className={`px-4 py-2 rounded-full ${theme.subtleBg} border ${theme.subtleBorder} text-[11.5px] ${theme.textSecondary} ${theme.hoverBg} disabled:opacity-50 transition-colors`}
                   >
                     {loadingMore ? 'Loading…' : 'Load earlier messages'}
                   </button>
@@ -3275,7 +3766,7 @@ function DirectMessagePane(): React.JSX.Element {
                   </div>
                   <div>
                     <p
-                      className={`text-[14px] font-semibold tracking-tight ${theme.textPrimary}`}
+                      className={`text-[14px] font-bold tracking-tight ${theme.textPrimary}`}
                     >
                       Couldn't load messages
                     </p>
@@ -3313,7 +3804,7 @@ function DirectMessagePane(): React.JSX.Element {
                   </div>
                   <div>
                     <p
-                      className={`text-[15px] font-semibold tracking-tight ${theme.textPrimary}`}
+                      className={`text-[15px] font-bold tracking-tight ${theme.textPrimary}`}
                     >
                       No messages yet
                     </p>
@@ -3328,7 +3819,7 @@ function DirectMessagePane(): React.JSX.Element {
                     return (
                       <div key={item.key} className="flex justify-center my-5">
                         <span
-                          className={`px-3 py-1 rounded-full ${theme.subtleBg} border ${theme.subtleBorder} text-[10.5px] uppercase tracking-[0.14em] ${theme.textSecondary} font-medium`}
+                          className={`px-3 py-1 rounded-full ${theme.subtleBg} border ${theme.subtleBorder} text-[10.5px] uppercase tracking-[0.14em] ${theme.textSecondary} font-semibold`}
                         >
                           {item.label}
                         </span>
@@ -3337,6 +3828,7 @@ function DirectMessagePane(): React.JSX.Element {
                   }
                   const m = item.message;
                   const isMe = m.senderId === user?.id;
+                  const replyTarget = findMessageById(m.replyToId);
                   return (
                     <MessageRow
                       key={item.key}
@@ -3349,10 +3841,16 @@ function DirectMessagePane(): React.JSX.Element {
                       grouped={item.grouped}
                       isLastOfGroup={isLastOfGroup.get(item.key) ?? true}
                       theme={theme}
+                      reactions={reactions[String(m.id)] ?? []}
+                      currentUserId={user?.id}
+                      replyTarget={replyTarget}
                       onDeleteForMe={handleDeleteForMe}
                       onDeleteForEveryone={handleRequestDeleteForEveryone}
                       onRequestProfile={setProfileModalUserId}
                       onOpenImage={handleOpenImage}
+                      onReact={handleReact}
+                      onStartReply={handleStartReply}
+                      onOpenMenu={handleOpenMenu}
                     />
                   );
                 })
@@ -3441,6 +3939,45 @@ function DirectMessagePane(): React.JSX.Element {
                     />
                   ) : (
                     <>
+                      {/* Reply preview */}
+                      <AnimatePresence>
+                        {replyTo && (
+                          <motion.div
+                            initial={{ opacity: 0, y: 8, height: 0 }}
+                            animate={{ opacity: 1, y: 0, height: 'auto' }}
+                            exit={{ opacity: 0, y: 8, height: 0 }}
+                            transition={{ duration: 0.18 }}
+                            className="pb-2 overflow-hidden"
+                          >
+                            <div className="flex items-center gap-3 p-2.5 rounded-2xl bg-white/[0.04] border-l-[3px] border-[#D97706]">
+                              <div className="flex-1 min-w-0">
+                                <div className="flex items-center gap-1.5 mb-0.5">
+                                  <CornerUpLeft className="w-3 h-3 text-[#D97706]" />
+                                  <span className="text-[10.5px] uppercase tracking-[0.14em] font-bold text-[#D97706]">
+                                    Reply
+                                  </span>
+                                </div>
+                                <p className="text-[12.5px] text-[#EDE5D4] truncate">
+                                  {replyTo.plaintext ??
+                                    replyTo.content ??
+                                    (replyTo.mediaType === MediaType.Image
+                                      ? '📷 Photo'
+                                      : 'Message')}
+                                </p>
+                              </div>
+                              <button
+                                onClick={() => setReplyTo(null)}
+                                className="shrink-0 w-7 h-7 rounded-full flex items-center justify-center text-[#7A6F65] hover:text-[#EDE5D4] hover:bg-white/[0.06] transition-colors"
+                                aria-label="Cancel reply"
+                              >
+                                <X className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          </motion.div>
+                        )}
+                      </AnimatePresence>
+
+                      {/* Pending files */}
                       <AnimatePresence>
                         {pendingFiles.length > 0 && (
                           <motion.div
@@ -3467,7 +4004,7 @@ function DirectMessagePane(): React.JSX.Element {
                                 return (
                                   <div
                                     key={`${file.name}-${index}`}
-                                    className={`relative shrink-0 w-20 h-20 rounded-xl overflow-hidden ${theme.subtleBg} border ${theme.subtleBorder}`}
+                                    className={`relative shrink-0 w-20 h-20 rounded-2xl overflow-hidden ${theme.subtleBg} border ${theme.subtleBorder}`}
                                   >
                                     {isImage && previewUrl ? (
                                       <img
@@ -3554,6 +4091,7 @@ function DirectMessagePane(): React.JSX.Element {
                         onSubmit={handleSendMessage}
                         className="flex items-end gap-1.5 sm:gap-2"
                       >
+                        {/* Hidden file inputs */}
                         <input
                           type="file"
                           ref={fileInputRef}
@@ -3563,8 +4101,8 @@ function DirectMessagePane(): React.JSX.Element {
                           multiple
                         />
                         <input
+                          id="orbital-camera-input"
                           type="file"
-                          ref={cameraInputRef}
                           onChange={(e) => void handleCameraCapture(e)}
                           accept="image/*"
                           capture="environment"
@@ -3584,6 +4122,7 @@ function DirectMessagePane(): React.JSX.Element {
                           className="hidden"
                         />
 
+                        {/* Emoji button */}
                         <button
                           type="button"
                           onClick={() => setEmojiPanelOpen((v) => !v)}
@@ -3594,27 +4133,20 @@ function DirectMessagePane(): React.JSX.Element {
                           }`}
                           title="Emoji, GIFs & stickers"
                         >
-                          <Smile className="w-[19px] h-[19px]" />
+                          <Smile className="w-[20px] h-[20px]" />
                         </button>
 
+                        {/* Attach */}
                         <button
                           type="button"
                           onClick={() => setAttachmentSheetOpen(true)}
                           className={`shrink-0 w-10 h-10 rounded-full flex items-center justify-center ${theme.textSecondary} ${theme.hoverBg} transition-colors`}
                           title="Attach"
                         >
-                          <Paperclip className="w-[18px] h-[18px]" />
+                          <Paperclip className="w-[19px] h-[19px]" />
                         </button>
 
-                        <button
-                          type="button"
-                          onClick={() => cameraInputRef.current?.click()}
-                          className={`hidden sm:flex shrink-0 w-10 h-10 rounded-full items-center justify-center ${theme.textSecondary} ${theme.hoverBg} transition-colors`}
-                          title="Camera"
-                        >
-                          <Camera className="w-[18px] h-[18px]" />
-                        </button>
-
+                        {/* Text input */}
                         <div className="flex-1 min-w-0 relative">
                           <textarea
                             ref={composerRef}
@@ -3634,12 +4166,17 @@ function DirectMessagePane(): React.JSX.Element {
                                 );
                               }
                             }}
-                            placeholder={`Message ${targetUser.displayName}`}
+                            placeholder={
+                              replyTo
+                                ? `Reply to ${targetUser.displayName}…`
+                                : `Message ${targetUser.displayName}`
+                            }
                             rows={1}
                             className={`w-full resize-none px-4 py-2.5 text-[14.5px] ${theme.textPrimary} focus:outline-none leading-[1.5] max-h-[140px] overflow-y-auto rounded-[22px] ${theme.subtleBgStrong} border ${theme.subtleBorder} transition-colors placeholder:opacity-60`}
                           />
                         </div>
 
+                        {/* Send / Mic */}
                         <AnimatePresence mode="popLayout" initial={false}>
                           {canSend ? (
                             <motion.button
@@ -3695,7 +4232,7 @@ function DirectMessagePane(): React.JSX.Element {
                               className={`shrink-0 w-10 h-10 rounded-full ${theme.accent} flex items-center justify-center`}
                               aria-label="Record voice message"
                             >
-                              <Mic className="w-[18px] h-[18px]" />
+                              <Mic className="w-[19px] h-[19px]" />
                             </motion.button>
                           )}
                         </AnimatePresence>
@@ -3722,7 +4259,7 @@ function DirectMessagePane(): React.JSX.Element {
               </div>
             </div>
             <h3
-              className={`text-[17px] font-semibold mb-2 tracking-tight ${theme.textPrimary}`}
+              className={`text-[17px] font-bold mb-2 tracking-tight ${theme.textPrimary}`}
             >
               Your messages
             </h3>
@@ -3739,10 +4276,86 @@ function DirectMessagePane(): React.JSX.Element {
         open={attachmentSheetOpen}
         onClose={() => setAttachmentSheetOpen(false)}
         onPhoto={() => fileInputRef.current?.click()}
-        onCamera={() => cameraInputRef.current?.click()}
+        onCamera={() => {
+          const el = document.getElementById('orbital-camera-input') as HTMLInputElement | null;
+          el?.click();
+        }}
         onDocument={() => documentInputRef.current?.click()}
         onAudioFile={() => audioFileInputRef.current?.click()}
       />
+
+      {/* Message menu (from desktop long-press) */}
+      <AnimatePresence>
+        {menuMessage && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[170] bg-black/60 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4"
+            onClick={() => setMenuMessage(null)}
+          >
+            <motion.div
+              initial={{ y: 40, opacity: 0, scale: 0.98 }}
+              animate={{ y: 0, opacity: 1, scale: 1 }}
+              exit={{ y: 40, opacity: 0, scale: 0.98 }}
+              transition={{ type: 'spring', stiffness: 380, damping: 32 }}
+              onClick={(e) => e.stopPropagation()}
+              className="w-full sm:max-w-xs rounded-t-[22px] sm:rounded-[22px] bg-[#1C1A17] border-t sm:border border-white/[0.08] shadow-[0_-24px_60px_-12px_rgba(0,0,0,0.95)] sm:shadow-[0_24px_60px_-12px_rgba(0,0,0,0.95)] overflow-hidden"
+            >
+              <div className="px-5 py-3 border-b border-white/[0.06]">
+                <span className="text-[11px] uppercase tracking-[0.16em] text-[#7A6F65] font-semibold">
+                  Message
+                </span>
+              </div>
+              <button
+                onClick={() => {
+                  handleStartReply(menuMessage);
+                  setMenuMessage(null);
+                }}
+                className="w-full flex items-center gap-3 px-5 py-3 text-[13px] text-[#EDE5D4] hover:bg-white/[0.04] transition-colors text-left"
+              >
+                <Reply className="w-4 h-4 text-[#A8A29E]" />
+                <span>Reply</span>
+              </button>
+              <button
+                onClick={() => {
+                  const t = menuMessage.plaintext ?? menuMessage.content ?? '';
+                  if (t) void navigator.clipboard.writeText(t);
+                  setMenuMessage(null);
+                }}
+                className="w-full flex items-center gap-3 px-5 py-3 text-[13px] text-[#EDE5D4] hover:bg-white/[0.04] transition-colors text-left"
+              >
+                <Copy className="w-4 h-4 text-[#A8A29E]" />
+                <span>Copy text</span>
+              </button>
+              <button
+                onClick={() => {
+                  void handleDeleteForMe(menuMessage);
+                  setMenuMessage(null);
+                }}
+                className="w-full flex items-center gap-3 px-5 py-3 text-[13px] text-[#EDE5D4] hover:bg-white/[0.04] transition-colors text-left"
+              >
+                <EyeOff className="w-4 h-4 text-[#A8A29E]" />
+                <span>Delete for me</span>
+              </button>
+              {menuMessage.senderId === user?.id &&
+                typeof menuMessage.id === 'number' &&
+                menuMessage.id > 0 && (
+                  <button
+                    onClick={() => {
+                      handleRequestDeleteForEveryone(menuMessage);
+                      setMenuMessage(null);
+                    }}
+                    className="w-full flex items-center gap-3 px-5 py-3 text-[13px] text-[#F87171] hover:bg-[#B91C1C]/[0.10] transition-colors text-left border-t border-white/[0.04]"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                    <span>Delete for everyone</span>
+                  </button>
+                )}
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       <AnimatePresence>
         {pendingDeleteEveryoneId != null && (
@@ -3815,7 +4428,10 @@ function DirectMessagePane(): React.JSX.Element {
                 delete next[chatMenuFriend.userId];
                 return next;
               });
-              if (chatMenuFriend.userId === userId) setMessages([]);
+              if (chatMenuFriend.userId === userId) {
+                setMessages([]);
+                setReactions({});
+              }
             }}
             onBlock={async () => {
               try {
