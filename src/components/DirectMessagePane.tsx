@@ -69,15 +69,45 @@ import {
   Eraser,
   Flag,
   ZoomIn,
+  Clock,
 } from 'lucide-react';
 
 /* ────────────────────────────────────────────────────────── */
-/* Helpers                                                    */
+/* Extended client-only message type                          */
 /* ────────────────────────────────────────────────────────── */
+
+interface ClientMessage extends DirectMessageDto {
+  pending?: boolean;   // optimistic send in-flight
+  failed?: boolean;    // optimistic send failed
+  clientId?: string;   // matches optimistic to server echo
+}
+
+/* ────────────────────────────────────────────────────────── */
+/* Date / time helpers — always interpret server dates as UTC */
+/* ────────────────────────────────────────────────────────── */
+
+/**
+ * Server returns DateTime without a UTC suffix. JavaScript would
+ * parse that as local time, showing the wrong hour. This forces
+ * a UTC interpretation.
+ */
+function parseUtc(dateStr: string): Date {
+  if (!dateStr) return new Date();
+  // Already has timezone info → use as-is
+  if (
+    dateStr.endsWith('Z') ||
+    /[+-]\d{2}:\d{2}$/.test(dateStr) ||
+    /[+-]\d{4}$/.test(dateStr)
+  ) {
+    return new Date(dateStr);
+  }
+  // ISO-like string without zone → treat as UTC
+  return new Date(dateStr + 'Z');
+}
 
 function formatDayDivider(dateStr: string): string {
   try {
-    const d = new Date(dateStr);
+    const d = parseUtc(dateStr);
     const now = new Date();
     const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
     const that = new Date(d.getFullYear(), d.getMonth(), d.getDate());
@@ -94,7 +124,7 @@ function formatDayDivider(dateStr: string): string {
 
 function formatTime(dateStr: string): string {
   try {
-    return new Date(dateStr).toLocaleTimeString([], {
+    return parseUtc(dateStr).toLocaleTimeString([], {
       hour: '2-digit',
       minute: '2-digit',
     });
@@ -105,7 +135,7 @@ function formatTime(dateStr: string): string {
 
 function formatRelativeShort(dateStr: string): string {
   try {
-    const then = new Date(dateStr).getTime();
+    const then = parseUtc(dateStr).getTime();
     const now = Date.now();
     const diff = Math.max(0, now - then);
     const mins = Math.floor(diff / 60_000);
@@ -115,14 +145,21 @@ function formatRelativeShort(dateStr: string): string {
     if (hours < 24) return `${hours}h`;
     const days = Math.floor(hours / 24);
     if (days < 7) return `${days}d`;
-    return new Date(dateStr).toLocaleDateString([], { month: 'short', day: 'numeric' });
+    return parseUtc(dateStr).toLocaleDateString([], {
+      month: 'short',
+      day: 'numeric',
+    });
   } catch {
     return '';
   }
 }
 
+function getMessageTime(msg: DirectMessageDto): number {
+  return parseUtc(msg.sentAt).getTime();
+}
+
 /* ────────────────────────────────────────────────────────── */
-/* Message preview snippet for sidebar                        */
+/* Sidebar preview snippet                                    */
 /* ────────────────────────────────────────────────────────── */
 
 interface LastMessagePreview {
@@ -146,7 +183,7 @@ function previewText(msg: DirectMessageDto, myUserId: string): LastMessagePrevie
 }
 
 /* ────────────────────────────────────────────────────────── */
-/* Full-size image viewer overlay                             */
+/* Full-size image viewer                                     */
 /* ────────────────────────────────────────────────────────── */
 
 interface ImageViewerProps {
@@ -173,7 +210,6 @@ function ImageViewer({ images, startIndex, onClose }: ImageViewerProps) {
     return () => window.removeEventListener('keydown', onKey);
   }, [onClose, hasPrev, hasNext]);
 
-  // Prevent page scroll while the viewer is open
   useEffect(() => {
     const prev = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
@@ -193,7 +229,6 @@ function ImageViewer({ images, startIndex, onClose }: ImageViewerProps) {
       className="fixed inset-0 z-[200] bg-black/95 backdrop-blur-sm flex items-center justify-center"
       onClick={onClose}
     >
-      {/* Top bar */}
       <div className="absolute top-0 left-0 right-0 flex items-center justify-between px-4 py-3 bg-gradient-to-b from-black/80 to-transparent z-10">
         <div className="min-w-0">
           <p className="text-[13.5px] font-medium text-white truncate">
@@ -230,7 +265,6 @@ function ImageViewer({ images, startIndex, onClose }: ImageViewerProps) {
         </div>
       </div>
 
-      {/* Prev button */}
       {hasPrev && (
         <button
           type="button"
@@ -245,7 +279,6 @@ function ImageViewer({ images, startIndex, onClose }: ImageViewerProps) {
         </button>
       )}
 
-      {/* Next button */}
       {hasNext && (
         <button
           type="button"
@@ -260,7 +293,6 @@ function ImageViewer({ images, startIndex, onClose }: ImageViewerProps) {
         </button>
       )}
 
-      {/* Image */}
       <motion.img
         key={index}
         initial={reduceMotion ? false : { opacity: 0, scale: 0.98 }}
@@ -280,7 +312,7 @@ function ImageViewer({ images, startIndex, onClose }: ImageViewerProps) {
 /* ────────────────────────────────────────────────────────── */
 
 interface MessageRowProps {
-  message: DirectMessageDto;
+  message: ClientMessage;
   isMe: boolean;
   senderName: string;
   senderAvatar?: string | null;
@@ -331,6 +363,11 @@ const MessageRow = React.memo(function MessageRow({
 
   const hasMedia = Boolean(message.mediaUrl);
   const displayText = message.plaintext ?? message.content ?? '';
+  const isPending = message.pending === true;
+  const isFailed = message.failed === true;
+
+  // Dim optimistic messages slightly so they visually differ
+  const bubbleOpacity = isPending ? 'opacity-70' : isFailed ? 'opacity-90' : '';
 
   return (
     <div
@@ -380,7 +417,7 @@ const MessageRow = React.memo(function MessageRow({
 
         <div className="relative inline-flex items-end gap-1 max-w-full">
           <div
-            className={`inline-block max-w-full px-3 py-1.5 text-[13.5px] leading-[1.55] break-words rounded-2xl ${
+            className={`inline-block max-w-full px-3 py-1.5 text-[13.5px] leading-[1.55] break-words rounded-2xl transition-opacity ${bubbleOpacity} ${
               isMe
                 ? 'bg-[#D97706] text-[#0F0D0A] rounded-br-md'
                 : 'bg-[#1A1816] text-[#EDE5D4] rounded-bl-md'
@@ -393,9 +430,12 @@ const MessageRow = React.memo(function MessageRow({
                     type="button"
                     onClick={(e) => {
                       e.stopPropagation();
+                      if (isPending) return;
                       onOpenImage(message, senderName);
                     }}
-                    className="relative group cursor-zoom-in rounded-xl overflow-hidden block"
+                    className={`relative group rounded-xl overflow-hidden block ${
+                      isPending ? 'cursor-wait' : 'cursor-zoom-in'
+                    }`}
                     aria-label="View full image"
                   >
                     <img
@@ -403,9 +443,16 @@ const MessageRow = React.memo(function MessageRow({
                       alt=""
                       className="rounded-xl max-h-72 w-auto object-cover"
                     />
-                    <span className="absolute top-2 right-2 w-7 h-7 rounded-full bg-black/50 text-white flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
-                      <ZoomIn className="w-3.5 h-3.5" />
-                    </span>
+                    {!isPending && (
+                      <span className="absolute top-2 right-2 w-7 h-7 rounded-full bg-black/50 text-white flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
+                        <ZoomIn className="w-3.5 h-3.5" />
+                      </span>
+                    )}
+                    {isPending && (
+                      <span className="absolute inset-0 bg-black/40 flex items-center justify-center">
+                        <Loader2 className="w-6 h-6 text-white animate-spin" />
+                      </span>
+                    )}
                   </button>
                 )}
                 {message.mediaType === MediaType.Video && (
@@ -444,7 +491,7 @@ const MessageRow = React.memo(function MessageRow({
           </div>
 
           <AnimatePresence>
-            {menuOpen && (
+            {menuOpen && !isPending && (
               <motion.div
                 ref={menuRef}
                 initial={{ opacity: 0, scale: 0.94, y: -4 }}
@@ -466,7 +513,7 @@ const MessageRow = React.memo(function MessageRow({
                   <span>Delete for me</span>
                 </button>
 
-                {isMe && (
+                {isMe && !isFailed && (
                   <button
                     onClick={() => {
                       setMenuOpen(false);
@@ -483,16 +530,29 @@ const MessageRow = React.memo(function MessageRow({
           </AnimatePresence>
         </div>
 
+        {/* Status row: clock while sending, warning if failed, double check when sent */}
         {isMe && isLastOfGroup && (
-          <div
-            className="flex items-center mt-0.5 px-1"
-            aria-label={message.isRead ? 'Read' : 'Delivered'}
-          >
-            <CheckCheck
-              className={`w-3.5 h-3.5 transition-colors ${
-                message.isRead ? 'text-[#4ADE80]' : 'text-[#6B6259]'
-              }`}
-            />
+          <div className="flex items-center mt-0.5 px-1 gap-1">
+            {isPending && (
+              <Clock
+                className="w-3.5 h-3.5 text-[#6B6259] animate-pulse"
+                aria-label="Sending"
+              />
+            )}
+            {isFailed && (
+              <AlertCircle
+                className="w-3.5 h-3.5 text-[#F87171]"
+                aria-label="Failed to send"
+              />
+            )}
+            {!isPending && !isFailed && (
+              <CheckCheck
+                className={`w-3.5 h-3.5 transition-colors ${
+                  message.isRead ? 'text-[#4ADE80]' : 'text-[#6B6259]'
+                }`}
+                aria-label={message.isRead ? 'Read' : 'Delivered'}
+              />
+            )}
           </div>
         )}
       </div>
@@ -693,13 +753,12 @@ function DirectMessagePane(): React.JSX.Element {
 
   const [friends, setFriends] = useState<FriendDto[]>([]);
   const [targetUser, setTargetUser] = useState<UserProfileDto | null>(null);
-  const [messages, setMessages] = useState<DirectMessageDto[]>([]);
+  const [messages, setMessages] = useState<ClientMessage[]>([]);
   const [loadingHistory, setLoadingHistory] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
   const [hasMore, setHasMore] = useState(true);
   const [inputContent, setInputContent] = useState('');
 
-  // Multiple files staged for sending
   const [pendingFiles, setPendingFiles] = useState<File[]>([]);
   const [fileError, setFileError] = useState<string | null>(null);
   const [isSending, setIsSending] = useState(false);
@@ -714,7 +773,6 @@ function DirectMessagePane(): React.JSX.Element {
   const [infoOpen, setInfoOpen] = useState(false);
   const [profileModalUserId, setProfileModalUserId] = useState<string | null>(null);
 
-  // Image viewer state
   const [viewerOpenIndex, setViewerOpenIndex] = useState<number | null>(null);
 
   const [composerVisible, setComposerVisible] = useState(true);
@@ -786,6 +844,51 @@ function DirectMessagePane(): React.JSX.Element {
     return () => { unsub(); };
   }, []);
 
+  /* ──────────────────────────────────────────────────────── */
+  /* Seed sidebar previews on mount — 1 message per friend    */
+  /* ──────────────────────────────────────────────────────── */
+
+  useEffect(() => {
+    if (friends.length === 0 || !user?.id) return;
+    let active = true;
+
+    const seedPreviews = async () => {
+      const results = await Promise.all(
+        friends.map(async (f) => {
+          try {
+            const history = await apiService.getDmHistory(f.userId, 1);
+            if (history.length === 0) return null;
+            const decrypted = await decryptBatch(history, user.id);
+            return { userId: f.userId, msg: decrypted[0] };
+          } catch {
+            return null;
+          }
+        }),
+      );
+
+      if (!active) return;
+
+      setLastMessages((prev) => {
+        const next = { ...prev };
+        for (const r of results) {
+          if (!r) continue;
+          const existing = next[r.userId];
+          // Only overwrite if this one is newer
+          if (
+            !existing ||
+            getMessageTime(r.msg) > getMessageTime(existing)
+          ) {
+            next[r.userId] = r.msg;
+          }
+        }
+        return next;
+      });
+    };
+
+    void seedPreviews();
+    return () => { active = false; };
+  }, [friends, user?.id]);
+
   const isConfirmedFriend = useMemo(() => {
     if (!userId) return false;
     return friends.some((f) => f.userId === userId);
@@ -807,19 +910,18 @@ function DirectMessagePane(): React.JSX.Element {
     list.sort((a, b) => {
       const ma = lastMessages[a.userId];
       const mb = lastMessages[b.userId];
-      const ta = ma ? new Date(ma.sentAt).getTime() : 0;
-      const tb = mb ? new Date(mb.sentAt).getTime() : 0;
+      const ta = ma ? getMessageTime(ma) : 0;
+      const tb = mb ? getMessageTime(mb) : 0;
       return tb - ta;
     });
 
     return list;
   }, [friends, searchQuery, lastMessages]);
 
-  // Collect all image messages in the current chat for the viewer
   const chatImages = useMemo(
     () =>
       messages
-        .filter((m) => m.mediaType === MediaType.Image && m.mediaUrl)
+        .filter((m) => m.mediaType === MediaType.Image && m.mediaUrl && !m.pending)
         .map((m) => ({
           url: m.mediaUrl as string,
           senderName: m.senderId === user?.id ? 'You' : (targetUser?.displayName ?? 'Them'),
@@ -893,7 +995,7 @@ function DirectMessagePane(): React.JSX.Element {
         if (!active) return;
 
         const sorted = [...history].sort(
-          (a, b) => new Date(a.sentAt).getTime() - new Date(b.sentAt).getTime(),
+          (a, b) => getMessageTime(a) - getMessageTime(b),
         );
         const decrypted = await decryptBatch(sorted, user?.id ?? '');
         if (!active) return;
@@ -928,7 +1030,7 @@ function DirectMessagePane(): React.JSX.Element {
       const earlier = await apiService.getDmHistory(userId, 50, oldestMessageId);
       if (earlier.length > 0) {
         const sortedEarlier = [...earlier].sort(
-          (a, b) => new Date(a.sentAt).getTime() - new Date(b.sentAt).getTime(),
+          (a, b) => getMessageTime(a) - getMessageTime(b),
         );
         const decrypted = await decryptBatch(sortedEarlier, user?.id ?? '');
         setMessages((prev) => [...decrypted, ...prev]);
@@ -953,7 +1055,7 @@ function DirectMessagePane(): React.JSX.Element {
           const existing = prev[otherId];
           if (
             existing &&
-            new Date(existing.sentAt).getTime() >= new Date(decrypted.sentAt).getTime()
+            getMessageTime(existing) >= getMessageTime(decrypted)
           ) {
             return prev;
           }
@@ -968,6 +1070,18 @@ function DirectMessagePane(): React.JSX.Element {
       if (isCurrentChat) {
         setMessages((prev) => {
           if (prev.some((m) => m.id === msg.id)) return prev;
+
+          // Replace matching optimistic message if found
+          const clientId = (msg as ClientMessage).clientId;
+          if (clientId) {
+            const idx = prev.findIndex((m) => m.clientId === clientId);
+            if (idx >= 0) {
+              const next = [...prev];
+              next[idx] = { ...decrypted, clientId };
+              return next;
+            }
+          }
+
           return [...prev, decrypted];
         });
         if (msg.senderId === userId) {
@@ -1026,7 +1140,6 @@ function DirectMessagePane(): React.JSX.Element {
       setPendingFiles((prev) => [...prev, ...accepted]);
     }
 
-    // Reset the file input so the same file can be re-selected
     if (fileInputRef.current) fileInputRef.current.value = '';
   };
 
@@ -1043,23 +1156,23 @@ function DirectMessagePane(): React.JSX.Element {
     setIsSending(true);
     setFileError(null);
 
+    const text = inputContent.trim();
+    const filesToSend = [...pendingFiles];
+
+    // Clear the composer immediately
+    setInputContent('');
+    setPendingFiles([]);
+    if (fileInputRef.current) fileInputRef.current.value = '';
+    if (composerRef.current) composerRef.current.style.height = 'auto';
+    setComposerVisible(true);
+
     try {
-      const text = inputContent.trim();
-      const filesToSend = [...pendingFiles];
-
-      // Clear the composer immediately for a snappy feel
-      setInputContent('');
-      setPendingFiles([]);
-      if (fileInputRef.current) fileInputRef.current.value = '';
-      if (composerRef.current) composerRef.current.style.height = 'auto';
-      setComposerVisible(true);
-
-      // If there are files, send each as its own message.
-      // If there's text and files, the text accompanies the FIRST file.
       if (filesToSend.length > 0) {
         for (let i = 0; i < filesToSend.length; i++) {
           const file = filesToSend[i];
+          const clientId = crypto.randomUUID();
 
+          // Optimistic message shown immediately
           const reader = new FileReader();
           const dataUrlPromise = new Promise<string>((resolve, reject) => {
             reader.onload = () => resolve(reader.result as string);
@@ -1069,7 +1182,6 @@ function DirectMessagePane(): React.JSX.Element {
           const mediaUrl = await dataUrlPromise;
           const mediaType = validateFileSize(file).mediaType;
 
-          // Attach the text to the first file, if any
           const includeText = i === 0 && text.length > 0;
           let ciphertext = '';
           let nonce = '';
@@ -1080,35 +1192,92 @@ function DirectMessagePane(): React.JSX.Element {
             nonce = enc.nonce;
           }
 
-          await signalRService.sendDirectMessage({
+          const optimistic: ClientMessage = {
+            id: -Date.now() - i, // temporary negative id
+            senderId: user?.id ?? '',
             recipientId: userId,
             ciphertext,
             nonce,
+            content: includeText ? text : null,
+            plaintext: includeText ? text : '',
             mediaUrl,
             mediaType,
-          });
+            isRead: false,
+            sentAt: new Date().toISOString(),
+            pending: true,
+            clientId,
+          };
 
-          playSend();
+          setMessages((prev) => [...prev, optimistic]);
+          setTimeout(() => {
+            messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+          }, 30);
+
+          try {
+            await signalRService.sendDirectMessage({
+              recipientId: userId,
+              ciphertext,
+              nonce,
+              mediaUrl,
+              mediaType,
+            });
+
+            playSend();
+          } catch (err) {
+            // Mark the optimistic message as failed
+            setMessages((prev) =>
+              prev.map((m) =>
+                m.clientId === clientId ? { ...m, pending: false, failed: true } : m,
+              ),
+            );
+            throw err;
+          }
         }
       } else if (text.length > 0) {
-        // Text-only
+        const clientId = crypto.randomUUID();
         const recipientPub = await getPublicKeyFor(userId);
         const enc = await encryptFor(recipientPub, text);
 
-        await signalRService.sendDirectMessage({
+        const optimistic: ClientMessage = {
+          id: -Date.now(),
+          senderId: user?.id ?? '',
           recipientId: userId,
           ciphertext: enc.ciphertext,
           nonce: enc.nonce,
+          content: text,
+          plaintext: text,
           mediaUrl: undefined,
           mediaType: undefined,
-        });
+          isRead: false,
+          sentAt: new Date().toISOString(),
+          pending: true,
+          clientId,
+        };
 
-        playSend();
+        setMessages((prev) => [...prev, optimistic]);
+        setTimeout(() => {
+          messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+        }, 30);
+
+        try {
+          await signalRService.sendDirectMessage({
+            recipientId: userId,
+            ciphertext: enc.ciphertext,
+            nonce: enc.nonce,
+            mediaUrl: undefined,
+            mediaType: undefined,
+          });
+
+          playSend();
+        } catch (err) {
+          setMessages((prev) =>
+            prev.map((m) =>
+              m.clientId === clientId ? { ...m, pending: false, failed: true } : m,
+            ),
+          );
+          throw err;
+        }
       }
-
-      setTimeout(() => {
-        messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-      }, 50);
     } catch (err) {
       setFileError(extractErrorMessage(err));
     } finally {
@@ -1151,9 +1320,7 @@ function DirectMessagePane(): React.JSX.Element {
       await apiService.deleteDm(m.id);
     } catch (err) {
       setMessages((prev) =>
-        [...prev, m].sort(
-          (a, b) => new Date(a.sentAt).getTime() - new Date(b.sentAt).getTime(),
-        ),
+        [...prev, m].sort((a, b) => getMessageTime(a) - getMessageTime(b)),
       );
       alert(`Delete failed: ${extractErrorMessage(err)}`);
     }
@@ -1177,7 +1344,7 @@ function DirectMessagePane(): React.JSX.Element {
         try {
           const history = await apiService.getDmHistory(userId, 50);
           const sorted = [...history].sort(
-            (a, b) => new Date(a.sentAt).getTime() - new Date(b.sentAt).getTime(),
+            (a, b) => getMessageTime(a) - getMessageTime(b),
           );
           const decrypted = await decryptBatch(sorted, user?.id ?? '');
           setMessages(decrypted);
@@ -1241,7 +1408,7 @@ function DirectMessagePane(): React.JSX.Element {
   const grouped = useMemo(() => {
     type Item =
       | { type: 'date'; key: string; label: string }
-      | { type: 'msg'; key: string; message: DirectMessageDto; grouped: boolean };
+      | { type: 'msg'; key: string; message: ClientMessage; grouped: boolean };
 
     const out: Item[] = [];
 
@@ -1250,7 +1417,7 @@ function DirectMessagePane(): React.JSX.Element {
     let lastTs = 0;
 
     for (const m of messages) {
-      const day = new Date(m.sentAt).toDateString();
+      const day = parseUtc(m.sentAt).toDateString();
       if (day !== lastDate) {
         out.push({ type: 'date', key: `d-${day}`, label: formatDayDivider(m.sentAt) });
         lastDate = day;
@@ -1258,12 +1425,17 @@ function DirectMessagePane(): React.JSX.Element {
         lastTs = 0;
       }
 
-      const ts = new Date(m.sentAt).getTime();
+      const ts = getMessageTime(m);
       const sameSender = m.senderId === lastSenderId;
       const within = ts - lastTs < 7 * 60 * 1000;
       const isGrouped = sameSender && within;
 
-      out.push({ type: 'msg', key: String(m.id), message: m, grouped: isGrouped });
+      out.push({
+        type: 'msg',
+        key: m.clientId ? `c-${m.clientId}` : String(m.id),
+        message: m,
+        grouped: isGrouped,
+      });
       lastSenderId = m.senderId ?? '';
       lastTs = ts;
     }
@@ -1827,7 +1999,6 @@ function DirectMessagePane(): React.JSX.Element {
         onClose={() => setProfileModalUserId(null)}
       />
 
-      {/* Full-screen image viewer */}
       <AnimatePresence>
         {viewerOpenIndex != null && (
           <ImageViewer
