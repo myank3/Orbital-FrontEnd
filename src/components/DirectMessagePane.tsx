@@ -75,7 +75,6 @@ import {
   Bell,
   BellOff,
   ShieldOff,
-  MessageSquare,
 } from 'lucide-react';
 
 /* ────────────────────────────────────────────────────────── */
@@ -105,7 +104,7 @@ const THEME_ANIMATIONS = `
 `;
 
 /* ────────────────────────────────────────────────────────── */
-/* Theme system — 8 distinctive themes                        */
+/* Theme system — surface tokens work for light AND dark      */
 /* ────────────────────────────────────────────────────────── */
 
 type ChatThemeKey =
@@ -121,115 +120,150 @@ type ChatThemeKey =
 interface ChatTheme {
   label: string;
   swatch: string;
+  isLight: boolean;
+
   bg: string;
   sidebarBg: string;
   sidebarActive: string;
+  composerBg: string;
+
   bubbleSent: string;
   bubbleReceived: string;
+
   accent: string;
   accentText: string;
-  composerBg: string;
   glow: string;
-  ambientStyle?: React.CSSProperties;
-  ambientClass?: string;
+
   textPrimary: string;
   textSecondary: string;
-  border: string;
+
+  // Surface tokens — differ for light/dark themes
+  subtleBg: string;
+  subtleBgStrong: string;
+  subtleBorder: string;
+  hoverBg: string;
+
+  ambientStyle?: React.CSSProperties;
+  ambientClass?: string;
 }
 
 const CHAT_THEMES: Record<ChatThemeKey, ChatTheme> = {
   obsidian: {
     label: 'Obsidian',
     swatch: 'linear-gradient(135deg, #2A2A2A, #050505)',
+    isLight: false,
     bg: 'bg-[#050505]',
     sidebarBg: 'bg-[#0A0A0A]',
-    sidebarActive: 'bg-white/[0.06] ring-white/[0.06]',
+    sidebarActive: 'bg-white/[0.06] ring-1 ring-inset ring-white/[0.06]',
+    composerBg: 'bg-[#050505]/85',
     bubbleSent: 'bg-[#262626] text-white',
-    bubbleReceived: 'bg-[#141414] text-[#EDEDED] border border-white/[0.04]',
+    bubbleReceived: 'bg-[#141414] text-[#EDEDED]',
     accent: 'bg-white hover:bg-[#E5E5E5] text-black',
     accentText: 'text-white',
-    composerBg: 'bg-[#050505]/85',
     glow: 'shadow-none',
     textPrimary: 'text-white',
     textSecondary: 'text-[#8A8A8A]',
-    border: 'border-white/[0.06]',
+    subtleBg: 'bg-white/[0.03]',
+    subtleBgStrong: 'bg-white/[0.06]',
+    subtleBorder: 'border-white/[0.06]',
+    hoverBg: 'hover:bg-white/[0.04]',
   },
   paper: {
     label: 'Paper',
-    swatch: 'linear-gradient(135deg, #FAF7F2, #C9832E)',
-    bg: 'bg-[#FAF7F2]',
-    sidebarBg: 'bg-[#F3EFE8]',
-    sidebarActive: 'bg-black/[0.05] ring-black/[0.05]',
-    bubbleSent: 'bg-[#C9832E] text-white',
-    bubbleReceived: 'bg-white text-[#1A1613] border border-black/[0.06]',
-    accent: 'bg-[#C9832E] hover:bg-[#B07222] text-white',
-    accentText: 'text-[#C9832E]',
-    composerBg: 'bg-[#FAF7F2]/90',
-    glow: 'shadow-[0_1px_4px_rgba(0,0,0,0.06)]',
-    textPrimary: 'text-[#1A1613]',
+    swatch: 'linear-gradient(135deg, #F5F1EA, #B8894A)',
+    isLight: true,
+    bg: 'bg-[#F5F1EA]',
+    sidebarBg: 'bg-[#EDE7DC]',
+    sidebarActive: 'bg-black/[0.05] ring-1 ring-inset ring-black/[0.05]',
+    composerBg: 'bg-[#F5F1EA]/90',
+    bubbleSent: 'bg-[#B8894A] text-white',
+    bubbleReceived:
+      'bg-white text-[#1F1B16] shadow-[0_1px_2px_rgba(0,0,0,0.06)] border border-black/[0.04]',
+    accent: 'bg-[#B8894A] hover:bg-[#9F7439] text-white',
+    accentText: 'text-[#B8894A]',
+    glow: 'shadow-[0_1px_3px_rgba(0,0,0,0.06)]',
+    textPrimary: 'text-[#1F1B16]',
     textSecondary: 'text-[#8A8178]',
-    border: 'border-black/[0.06]',
+    subtleBg: 'bg-black/[0.03]',
+    subtleBgStrong: 'bg-black/[0.06]',
+    subtleBorder: 'border-black/[0.06]',
+    hoverBg: 'hover:bg-black/[0.04]',
   },
   terminal: {
     label: 'Terminal',
     swatch: 'linear-gradient(135deg, #22C55E, #07100A)',
+    isLight: false,
     bg: 'bg-[#07100A]',
     sidebarBg: 'bg-[#0A1A0F]',
-    sidebarActive: 'bg-[#22C55E]/[0.10] ring-[#22C55E]/25',
+    sidebarActive: 'bg-[#22C55E]/[0.10] ring-1 ring-inset ring-[#22C55E]/25',
+    composerBg: 'bg-[#07100A]/90',
     bubbleSent: 'bg-[#14361F] text-[#A7F3D0] border border-[#22C55E]/40',
-    bubbleReceived:
-      'bg-[#0A1A0F] text-[#86EFAC] border border-[#22C55E]/[0.15]',
+    bubbleReceived: 'bg-[#0A1A0F] text-[#86EFAC] border border-[#22C55E]/[0.15]',
     accent: 'bg-[#22C55E] hover:bg-[#16A34A] text-[#07100A]',
     accentText: 'text-[#22C55E]',
-    composerBg: 'bg-[#07100A]/90',
     glow: 'shadow-[0_0_12px_-2px_rgba(34,197,94,0.3)]',
+    textPrimary: 'text-[#86EFAC]',
+    textSecondary: 'text-[#3D6B4F]',
+    subtleBg: 'bg-white/[0.02]',
+    subtleBgStrong: 'bg-white/[0.05]',
+    subtleBorder: 'border-[#22C55E]/[0.10]',
+    hoverBg: 'hover:bg-[#22C55E]/[0.06]',
     ambientClass: 'theme-anim-terminal',
     ambientStyle: {
       background:
         'repeating-linear-gradient(0deg, rgba(34,197,94,0.05) 0px, rgba(34,197,94,0.05) 1px, transparent 1px, transparent 6px)',
       animation: 'theme-scan 4s linear infinite',
     },
-    textPrimary: 'text-[#86EFAC]',
-    textSecondary: 'text-[#3D6B4F]',
-    border: 'border-[#22C55E]/[0.10]',
   },
   rose: {
     label: 'Rose',
     swatch: 'linear-gradient(135deg, #FB7185, #F9A8D4)',
-    bg: 'bg-[#FDF2F5]',
-    sidebarBg: 'bg-[#FBE4EC]',
-    sidebarActive: 'bg-[#FB7185]/[0.10] ring-[#FB7185]/20',
+    isLight: true,
+    bg: 'bg-[#FFF1F5]',
+    sidebarBg: 'bg-[#FFE4EC]',
+    sidebarActive: 'bg-[#FB7185]/[0.10] ring-1 ring-inset ring-[#FB7185]/25',
+    composerBg: 'bg-[#FFF1F5]/90',
     bubbleSent:
-      'bg-gradient-to-br from-[#FB7185] to-[#F472B6] text-white shadow-[0_2px_8px_-2px_rgba(251,113,133,0.35)]',
-    bubbleReceived: 'bg-white text-[#4A1B2C] border border-black/[0.05]',
+      'bg-gradient-to-br from-[#FB7185] to-[#F43F5E] text-white shadow-[0_2px_8px_-2px_rgba(251,113,133,0.4)]',
+    bubbleReceived:
+      'bg-white text-[#4A1B2C] shadow-[0_1px_2px_rgba(0,0,0,0.05)] border border-[#FB7185]/[0.10]',
     accent: 'bg-[#FB7185] hover:bg-[#E11D48] text-white',
     accentText: 'text-[#FB7185]',
-    composerBg: 'bg-[#FDF2F5]/90',
     glow: 'shadow-[0_2px_8px_-2px_rgba(251,113,133,0.35)]',
+    textPrimary: 'text-[#4A1B2C]',
+    textSecondary: 'text-[#9A7280]',
+    subtleBg: 'bg-black/[0.03]',
+    subtleBgStrong: 'bg-black/[0.06]',
+    subtleBorder: 'border-black/[0.06]',
+    hoverBg: 'hover:bg-black/[0.04]',
     ambientStyle: {
       background:
-        'radial-gradient(60% 50% at 80% 0%, rgba(251,113,133,0.10), transparent 60%), radial-gradient(50% 50% at 0% 100%, rgba(244,114,182,0.08), transparent 60%)',
+        'radial-gradient(60% 50% at 80% 0%, rgba(251,113,133,0.12), transparent 60%), radial-gradient(50% 50% at 0% 100%, rgba(244,114,182,0.10), transparent 60%)',
       animation: 'theme-breathe 12s ease-in-out infinite',
       filter: 'blur(50px)',
     },
-    textPrimary: 'text-[#4A1B2C]',
-    textSecondary: 'text-[#8A6B78]',
-    border: 'border-black/[0.05]',
   },
   cobalt: {
     label: 'Cobalt',
     swatch: 'linear-gradient(135deg, #3B82F6, #0A1628)',
+    isLight: false,
     bg: 'bg-[#0A1628]',
     sidebarBg: 'bg-[#0D1E36]',
-    sidebarActive: 'bg-[#3B82F6]/[0.12] ring-[#3B82F6]/30',
+    sidebarActive: 'bg-[#3B82F6]/[0.12] ring-1 ring-inset ring-[#3B82F6]/30',
+    composerBg: 'bg-[#0A1628]/85',
     bubbleSent:
       'bg-gradient-to-br from-[#2563EB] to-[#3B82F6] text-white shadow-[0_2px_12px_-2px_rgba(59,130,246,0.4)]',
     bubbleReceived:
       'bg-[#16263D] text-[#DBEAFE] border border-[#3B82F6]/[0.12]',
     accent: 'bg-[#3B82F6] hover:bg-[#2563EB] text-white',
     accentText: 'text-[#60A5FA]',
-    composerBg: 'bg-[#0A1628]/85',
     glow: 'shadow-[0_2px_12px_-2px_rgba(59,130,246,0.4)]',
+    textPrimary: 'text-[#DBEAFE]',
+    textSecondary: 'text-[#5A7AA6]',
+    subtleBg: 'bg-white/[0.03]',
+    subtleBgStrong: 'bg-white/[0.06]',
+    subtleBorder: 'border-white/[0.06]',
+    hoverBg: 'hover:bg-white/[0.04]',
     ambientClass: 'theme-anim-cobalt',
     ambientStyle: {
       background:
@@ -237,46 +271,55 @@ const CHAT_THEMES: Record<ChatThemeKey, ChatTheme> = {
       animation: 'theme-drift 16s ease-in-out infinite',
       filter: 'blur(45px)',
     },
-    textPrimary: 'text-[#DBEAFE]',
-    textSecondary: 'text-[#5A7AA6]',
-    border: 'border-white/[0.06]',
   },
   mint: {
     label: 'Mint',
     swatch: 'linear-gradient(135deg, #34D399, #F0FDF4)',
+    isLight: true,
     bg: 'bg-[#F0FDF4]',
     sidebarBg: 'bg-[#DCFCE7]',
-    sidebarActive: 'bg-[#34D399]/[0.10] ring-[#34D399]/25',
+    sidebarActive: 'bg-[#34D399]/[0.12] ring-1 ring-inset ring-[#34D399]/30',
+    composerBg: 'bg-[#F0FDF4]/90',
     bubbleSent:
-      'bg-gradient-to-br from-[#10B981] to-[#34D399] text-white shadow-[0_2px_8px_-2px_rgba(52,211,153,0.35)]',
-    bubbleReceived: 'bg-white text-[#052E16] border border-black/[0.05]',
+      'bg-gradient-to-br from-[#10B981] to-[#34D399] text-white shadow-[0_2px_8px_-2px_rgba(52,211,153,0.4)]',
+    bubbleReceived:
+      'bg-white text-[#052E16] shadow-[0_1px_2px_rgba(0,0,0,0.05)] border border-[#34D399]/[0.15]',
     accent: 'bg-[#10B981] hover:bg-[#059669] text-white',
     accentText: 'text-[#059669]',
-    composerBg: 'bg-[#F0FDF4]/90',
     glow: 'shadow-[0_2px_8px_-2px_rgba(52,211,153,0.35)]',
+    textPrimary: 'text-[#052E16]',
+    textSecondary: 'text-[#4B7A5E]',
+    subtleBg: 'bg-black/[0.03]',
+    subtleBgStrong: 'bg-black/[0.06]',
+    subtleBorder: 'border-black/[0.06]',
+    hoverBg: 'hover:bg-black/[0.04]',
     ambientStyle: {
       background:
-        'radial-gradient(55% 50% at 0% 0%, rgba(52,211,153,0.10), transparent 60%), radial-gradient(50% 50% at 100% 100%, rgba(16,185,129,0.08), transparent 60%)',
+        'radial-gradient(55% 50% at 0% 0%, rgba(52,211,153,0.12), transparent 60%), radial-gradient(50% 50% at 100% 100%, rgba(16,185,129,0.10), transparent 60%)',
       animation: 'theme-breathe 14s ease-in-out infinite',
       filter: 'blur(50px)',
     },
-    textPrimary: 'text-[#052E16]',
-    textSecondary: 'text-[#4B7A5E]',
-    border: 'border-black/[0.05]',
   },
   crimson: {
     label: 'Crimson',
     swatch: 'linear-gradient(135deg, #DC2626, #150404)',
+    isLight: false,
     bg: 'bg-[#150404]',
     sidebarBg: 'bg-[#1F0707]',
-    sidebarActive: 'bg-[#DC2626]/[0.12] ring-[#DC2626]/30',
+    sidebarActive: 'bg-[#DC2626]/[0.12] ring-1 ring-inset ring-[#DC2626]/30',
+    composerBg: 'bg-[#150404]/85',
     bubbleSent:
       'bg-gradient-to-br from-[#DC2626] to-[#991B1B] text-white shadow-[0_2px_12px_-2px_rgba(220,38,38,0.35)]',
     bubbleReceived: 'bg-[#2A0A0A] text-[#FEE2E2] border border-[#DC2626]/[0.14]',
     accent: 'bg-[#DC2626] hover:bg-[#B91C1C] text-white',
     accentText: 'text-[#F87171]',
-    composerBg: 'bg-[#150404]/85',
     glow: 'shadow-[0_2px_12px_-2px_rgba(220,38,38,0.35)]',
+    textPrimary: 'text-[#FEE2E2]',
+    textSecondary: 'text-[#8A5555]',
+    subtleBg: 'bg-white/[0.03]',
+    subtleBgStrong: 'bg-white/[0.06]',
+    subtleBorder: 'border-white/[0.06]',
+    hoverBg: 'hover:bg-white/[0.04]',
     ambientClass: 'theme-anim-crimson',
     ambientStyle: {
       background:
@@ -284,33 +327,34 @@ const CHAT_THEMES: Record<ChatThemeKey, ChatTheme> = {
       animation: 'theme-breathe 12s ease-in-out infinite',
       filter: 'blur(45px)',
     },
-    textPrimary: 'text-[#FEE2E2]',
-    textSecondary: 'text-[#8A5555]',
-    border: 'border-white/[0.06]',
   },
   void: {
     label: 'Void',
     swatch: 'linear-gradient(135deg, #A855F7, #05010F)',
+    isLight: false,
     bg: 'bg-[#05010F]',
     sidebarBg: 'bg-[#0D0817]',
-    sidebarActive: 'bg-[#A855F7]/[0.12] ring-[#A855F7]/30',
+    sidebarActive: 'bg-[#A855F7]/[0.12] ring-1 ring-inset ring-[#A855F7]/30',
+    composerBg: 'bg-[#05010F]/85',
     bubbleSent:
       'bg-gradient-to-br from-[#7C3AED] via-[#A855F7] to-[#C084FC] text-white shadow-[0_2px_16px_-2px_rgba(168,85,247,0.5)]',
     bubbleReceived:
       'bg-[#120A24] text-[#F3E8FF] border border-[#A855F7]/[0.18]',
     accent: 'bg-[#A855F7] hover:bg-[#9333EA] text-white',
     accentText: 'text-[#C084FC]',
-    composerBg: 'bg-[#05010F]/85',
     glow: 'shadow-[0_2px_16px_-2px_rgba(168,85,247,0.5)]',
+    textPrimary: 'text-[#F3E8FF]',
+    textSecondary: 'text-[#6B4F8C]',
+    subtleBg: 'bg-white/[0.03]',
+    subtleBgStrong: 'bg-white/[0.06]',
+    subtleBorder: 'border-white/[0.06]',
+    hoverBg: 'hover:bg-white/[0.04]',
     ambientClass: 'theme-anim-void',
     ambientStyle: {
       background:
         'radial-gradient(2px 2px at 20% 30%, rgba(255,255,255,0.7), transparent 50%), radial-gradient(1.5px 1.5px at 60% 70%, rgba(192,132,252,0.8), transparent 50%), radial-gradient(1px 1px at 80% 20%, rgba(255,255,255,0.6), transparent 50%), radial-gradient(2px 2px at 30% 80%, rgba(168,85,247,0.8), transparent 50%), radial-gradient(1.5px 1.5px at 75% 50%, rgba(192,132,252,0.7), transparent 50%), radial-gradient(60% 50% at 50% 0%, rgba(124,58,237,0.16), transparent 60%), radial-gradient(50% 50% at 50% 100%, rgba(168,85,247,0.12), transparent 60%)',
       animation: 'theme-twinkle 8s ease-in-out infinite',
     },
-    textPrimary: 'text-[#F3E8FF]',
-    textSecondary: 'text-[#6B4F8C]',
-    border: 'border-white/[0.06]',
   },
 };
 
@@ -347,17 +391,14 @@ function lsSet(key: string, value: unknown) {
 }
 
 function themeKey(userId: string | undefined, peerId: string | undefined) {
-  return `orbital.chatTheme.v2.${userId ?? 'anon'}.${peerId ?? 'none'}`;
+  return `orbital.chatTheme.v3.${userId ?? 'anon'}.${peerId ?? 'none'}`;
 }
-
 function v1SeenKey(userId: string | undefined) {
   return `orbital.v1seen.${userId ?? 'anon'}`;
 }
-
 function pinnedKey(userId: string | undefined) {
   return `orbital.pinned.${userId ?? 'anon'}`;
 }
-
 function mutedKey(userId: string | undefined) {
   return `orbital.muted.${userId ?? 'anon'}`;
 }
@@ -380,8 +421,7 @@ function writeThemeFor(
 }
 
 function readV1Seen(userId: string | undefined): Set<number> {
-  const arr = lsGet<number[]>(v1SeenKey(userId), []);
-  return new Set(arr);
+  return new Set(lsGet<number[]>(v1SeenKey(userId), []));
 }
 
 function markV1Seen(userId: string | undefined, messageId: number) {
@@ -393,15 +433,12 @@ function markV1Seen(userId: string | undefined, messageId: number) {
 function readPinned(userId: string | undefined): Set<string> {
   return new Set(lsGet<string[]>(pinnedKey(userId), []));
 }
-
 function writePinned(userId: string | undefined, set: Set<string>) {
   lsSet(pinnedKey(userId), Array.from(set));
 }
-
 function readMuted(userId: string | undefined): Set<string> {
   return new Set(lsGet<string[]>(mutedKey(userId), []));
 }
-
 function writeMuted(userId: string | undefined, set: Set<string>) {
   lsSet(mutedKey(userId), Array.from(set));
 }
@@ -419,7 +456,7 @@ function decodeIncoming(text: string): { viewOnce: boolean; body: string } {
 }
 
 /* ────────────────────────────────────────────────────────── */
-/* Date / time helpers                                        */
+/* Date / time                                                */
 /* ────────────────────────────────────────────────────────── */
 
 function parseUtc(dateStr: string): Date {
@@ -513,7 +550,7 @@ function previewText(msg: DirectMessageDto, myUserId: string): LastMessagePrevie
 }
 
 /* ────────────────────────────────────────────────────────── */
-/* Link detection                                             */
+/* Links                                                      */
 /* ────────────────────────────────────────────────────────── */
 
 const URL_REGEX = /https?:\/\/[^\s<>"']+/gi;
@@ -525,10 +562,9 @@ function extractUrls(text: string): string[] {
   let m: RegExpExecArray | null;
   URL_REGEX.lastIndex = 0;
   while ((m = URL_REGEX.exec(text)) !== null) {
-    const url = m[0];
-    if (!seen.has(url)) {
-      seen.add(url);
-      out.push(url);
+    if (!seen.has(m[0])) {
+      seen.add(m[0]);
+      out.push(m[0]);
     }
   }
   return out;
@@ -554,8 +590,7 @@ function getHostname(url: string): string {
   }
 }
 
-/** Linkify URLs inside text — the raw URL stays clickable in the bubble. */
-function LinkifiedText({ text }: { text: string }) {
+function LinkifiedText({ text, isMe }: { text: string; isMe: boolean }) {
   const parts = useMemo(() => {
     if (!text) return [] as Array<{ type: 'text' | 'link'; value: string }>;
     const out: Array<{ type: 'text' | 'link'; value: string }> = [];
@@ -587,8 +622,9 @@ function LinkifiedText({ text }: { text: string }) {
             target="_blank"
             rel="noreferrer"
             onClick={(e) => e.stopPropagation()}
-            className="underline break-all opacity-90 hover:opacity-100 transition-opacity"
-            style={{ textDecorationColor: 'currentColor' }}
+            className={`underline break-all transition-opacity ${
+              isMe ? 'opacity-90 hover:opacity-100' : 'hover:opacity-80'
+            }`}
           >
             {p.value}
           </a>
@@ -598,11 +634,7 @@ function LinkifiedText({ text }: { text: string }) {
   );
 }
 
-/* ────────────────────────────────────────────────────────── */
-/* Link previews — rendered OUTSIDE the bubble                */
-/* ────────────────────────────────────────────────────────── */
-
-function LinkPreviews({ urls }: { urls: string[] }) {
+function LinkPreviews({ urls, theme }: { urls: string[]; theme: ChatTheme }) {
   if (urls.length === 0) return null;
 
   return (
@@ -613,7 +645,7 @@ function LinkPreviews({ urls }: { urls: string[] }) {
           return (
             <div
               key={url}
-              className="rounded-[14px] overflow-hidden border border-white/[0.08] bg-black aspect-video w-full max-w-[420px]"
+              className="rounded-[16px] overflow-hidden border border-black/[0.06] bg-black aspect-video w-full max-w-[420px] shadow-[0_2px_8px_-4px_rgba(0,0,0,0.2)]"
               onClick={(e) => e.stopPropagation()}
             >
               <iframe
@@ -632,7 +664,7 @@ function LinkPreviews({ urls }: { urls: string[] }) {
           return (
             <div
               key={url}
-              className="rounded-[14px] overflow-hidden border border-white/[0.08] bg-black aspect-video w-full max-w-[420px]"
+              className="rounded-[16px] overflow-hidden border border-black/[0.06] bg-black aspect-video w-full max-w-[420px] shadow-[0_2px_8px_-4px_rgba(0,0,0,0.2)]"
               onClick={(e) => e.stopPropagation()}
             >
               <iframe
@@ -650,6 +682,7 @@ function LinkPreviews({ urls }: { urls: string[] }) {
         const favicon = `https://www.google.com/s2/favicons?domain=${encodeURIComponent(
           host,
         )}&sz=64`;
+
         return (
           <a
             key={url}
@@ -657,9 +690,11 @@ function LinkPreviews({ urls }: { urls: string[] }) {
             target="_blank"
             rel="noreferrer"
             onClick={(e) => e.stopPropagation()}
-            className="flex items-stretch gap-2.5 rounded-[14px] border overflow-hidden transition-colors bg-white/[0.03] border-white/[0.08] hover:bg-white/[0.05] max-w-[420px]"
+            className={`flex items-stretch gap-3 rounded-[16px] border overflow-hidden transition-colors max-w-[420px] ${theme.subtleBg} ${theme.subtleBorder} ${theme.hoverBg}`}
           >
-            <div className="w-[68px] shrink-0 flex items-center justify-center bg-white/[0.02]">
+            <div
+              className={`w-[68px] shrink-0 flex items-center justify-center ${theme.subtleBgStrong}`}
+            >
               <img
                 src={favicon}
                 alt=""
@@ -672,15 +707,17 @@ function LinkPreviews({ urls }: { urls: string[] }) {
                 className="rounded"
               />
             </div>
-            <div className="flex-1 min-w-0 py-2 pr-3">
-              <div className="flex items-center gap-1.5">
+            <div className="flex-1 min-w-0 py-2.5 pr-3.5">
+              <div className={`flex items-center gap-1.5 ${theme.textPrimary}`}>
                 <Link2 className="w-3 h-3 opacity-60 shrink-0" />
-                <span className="text-[11.5px] font-semibold truncate">
+                <span className="text-[12px] font-semibold truncate">
                   {host}
                 </span>
                 <ExternalLink className="w-3 h-3 opacity-40 shrink-0" />
               </div>
-              <p className="text-[11.5px] opacity-60 truncate mt-0.5">
+              <p
+                className={`text-[11.5px] opacity-70 truncate mt-0.5 ${theme.textSecondary}`}
+              >
                 {url}
               </p>
             </div>
@@ -692,7 +729,7 @@ function LinkPreviews({ urls }: { urls: string[] }) {
 }
 
 /* ────────────────────────────────────────────────────────── */
-/* Full-size image viewer                                     */
+/* Image viewer                                               */
 /* ────────────────────────────────────────────────────────── */
 
 interface ImageViewerProps {
@@ -814,16 +851,8 @@ function ImageViewer({ images, startIndex, onClose }: ImageViewerProps) {
 }
 
 /* ────────────────────────────────────────────────────────── */
-/* Sidebar chat context menu                                  */
+/* Chat sidebar context menu                                  */
 /* ────────────────────────────────────────────────────────── */
-
-interface ChatMenuAction {
-  key: string;
-  label: string;
-  icon: React.ReactNode;
-  danger?: boolean;
-  onClick: () => void;
-}
 
 function ChatContextMenu({
   friend,
@@ -848,44 +877,48 @@ function ChatContextMenu({
   onBlock: () => void;
   onUnfriend: () => void;
 }) {
-  const actions: ChatMenuAction[] = [
+  const actions = [
     {
       key: 'pin',
       label: isPinned ? 'Unpin chat' : 'Pin chat',
       icon: isPinned ? <PinOff className="w-4 h-4" /> : <Pin className="w-4 h-4" />,
       onClick: onPin,
+      danger: false,
     },
     {
       key: 'mute',
       label: isMuted ? 'Unmute notifications' : 'Mute notifications',
       icon: isMuted ? <Bell className="w-4 h-4" /> : <BellOff className="w-4 h-4" />,
       onClick: onMute,
+      danger: false,
     },
     {
       key: 'read',
       label: 'Mark as read',
       icon: <CheckCheck className="w-4 h-4" />,
       onClick: onMarkRead,
+      danger: false,
     },
     {
       key: 'clear',
       label: 'Clear chat',
       icon: <Eraser className="w-4 h-4" />,
       onClick: onClearChat,
+      danger: false,
     },
     {
       key: 'block',
       label: `Block @${friend.handle}`,
       icon: <ShieldOff className="w-4 h-4" />,
-      danger: true,
       onClick: onBlock,
+      danger: true,
     },
     {
       key: 'unfriend',
       label: `Unfriend @${friend.handle}`,
       icon: <UserMinus className="w-4 h-4" />,
-      danger: true,
       onClick: onUnfriend,
+      danger: true,
     },
   ];
 
@@ -906,7 +939,6 @@ function ChatContextMenu({
         onClick={(e) => e.stopPropagation()}
         className="w-full sm:max-w-xs rounded-t-[22px] sm:rounded-[22px] bg-[#1C1A17] border-t sm:border border-white/[0.08] shadow-[0_-24px_60px_-12px_rgba(0,0,0,0.95)] sm:shadow-[0_24px_60px_-12px_rgba(0,0,0,0.95)] overflow-hidden"
       >
-        {/* Header */}
         <div className="px-5 py-4 border-b border-white/[0.06] flex items-center gap-3">
           <Avatar name={friend.displayName} src={friend.avatarUrl} size="md" />
           <div className="min-w-0 flex-1">
@@ -926,7 +958,6 @@ function ChatContextMenu({
           </button>
         </div>
 
-        {/* Actions */}
         <div className="py-1.5 max-h-[60vh] overflow-y-auto">
           {actions.map((a) => (
             <button
@@ -952,7 +983,7 @@ function ChatContextMenu({
 }
 
 /* ────────────────────────────────────────────────────────── */
-/* Theme picker (inside Info modal)                           */
+/* Theme grid                                                 */
 /* ────────────────────────────────────────────────────────── */
 
 function ThemeGrid({
@@ -1069,6 +1100,14 @@ const MessageRow = React.memo(
         : 'rounded-bl-[6px]'
       : '';
 
+    const mediaShadow = theme.isLight
+      ? '0 4px 16px -8px rgba(0,0,0,0.18), 0 0 0 1px rgba(0,0,0,0.04)'
+      : '0 6px 24px -10px rgba(0,0,0,0.55), 0 0 0 1px rgba(255,255,255,0.05)';
+
+    // Is this a view-once image the sender is sending? Then just show the image.
+    const renderViewOnce = isViewOnce && !isMe;
+    const renderSenderImageBadge = isViewOnce && isMe && !isTemp;
+
     return (
       <div
         className={`group/row relative flex w-full ${
@@ -1089,7 +1128,7 @@ const MessageRow = React.memo(
               <button
                 type="button"
                 onClick={() => onRequestProfile(message.senderId)}
-                className={`rounded-full focus:outline-none focus-visible:ring-2 transition-transform hover:scale-[1.05] ${theme.accentText}`}
+                className="rounded-full focus:outline-none transition-transform hover:scale-[1.05]"
                 aria-label={`View ${senderName}'s profile`}
               >
                 <Avatar name={senderName} src={senderAvatar} size="sm" />
@@ -1112,16 +1151,18 @@ const MessageRow = React.memo(
               >
                 {senderName}
               </span>
-              <span className={`text-[10.5px] tabular-nums ${theme.textSecondary} opacity-70`}>
+              <span
+                className={`text-[10.5px] tabular-nums opacity-70 ${theme.textSecondary}`}
+              >
                 {formatTime(message.sentAt)}
               </span>
             </div>
           )}
 
-          {/* ── Media block (always outside bubble) ────────── */}
+          {/* Media — always outside bubble */}
           {hasMedia && (
             <div className="relative group/media max-w-full">
-              {message.mediaType === MediaType.Image && !isViewOnce && (
+              {message.mediaType === MediaType.Image && !renderViewOnce && (
                 <button
                   type="button"
                   onClick={(e) => {
@@ -1137,18 +1178,20 @@ const MessageRow = React.memo(
                     loading="lazy"
                     decoding="async"
                     className="rounded-[20px] max-h-[380px] w-auto object-cover"
-                    style={{
-                      boxShadow:
-                        '0 6px 24px -10px rgba(0,0,0,0.55), 0 0 0 1px rgba(255,255,255,0.05)',
-                    }}
+                    style={{ boxShadow: mediaShadow }}
                   />
                   <span className="absolute top-2 right-2 w-7 h-7 rounded-full bg-black/50 backdrop-blur text-white flex items-center justify-center opacity-0 group-hover/media:opacity-100 transition-opacity pointer-events-none">
                     <ZoomIn className="w-3.5 h-3.5" />
                   </span>
+                  {renderSenderImageBadge && (
+                    <span className="absolute top-2 left-2 px-2 py-0.5 rounded-full bg-gradient-to-r from-[#7C3AED] to-[#A855F7] text-white text-[10px] font-bold shadow-lg">
+                      1x
+                    </span>
+                  )}
                 </button>
               )}
 
-              {message.mediaType === MediaType.Image && isViewOnce && (
+              {message.mediaType === MediaType.Image && renderViewOnce && (
                 <button
                   type="button"
                   onClick={(e) => {
@@ -1158,14 +1201,14 @@ const MessageRow = React.memo(
                   disabled={message.viewed}
                   className={`inline-flex items-center gap-3 px-4 py-3.5 rounded-[20px] text-[13px] transition-colors ${
                     message.viewed
-                      ? 'bg-white/[0.04] border border-white/[0.06] cursor-default'
+                      ? `${theme.subtleBg} border ${theme.subtleBorder} cursor-default`
                       : 'bg-gradient-to-br from-[#7C3AED]/[0.14] to-[#A855F7]/[0.14] border border-[#A855F7]/30 hover:from-[#7C3AED]/[0.20] hover:to-[#A855F7]/[0.20]'
                   }`}
                 >
                   <span
                     className={`w-9 h-9 rounded-full flex items-center justify-center shrink-0 ${
                       message.viewed
-                        ? 'bg-white/[0.05]'
+                        ? theme.subtleBgStrong
                         : 'bg-gradient-to-br from-[#7C3AED] to-[#A855F7]'
                     }`}
                   >
@@ -1176,11 +1219,15 @@ const MessageRow = React.memo(
                     )}
                   </span>
                   <span className="text-left">
-                    <span className="block font-semibold text-[13px]">
+                    <span
+                      className={`block font-semibold text-[13px] ${theme.textPrimary}`}
+                    >
                       {message.viewed ? 'Opened' : 'View once'}
                     </span>
                     {!message.viewed && (
-                      <span className="block opacity-70 text-[11px]">
+                      <span
+                        className={`block opacity-70 text-[11px] ${theme.textSecondary}`}
+                      >
                         Tap to reveal
                       </span>
                     )}
@@ -1194,10 +1241,7 @@ const MessageRow = React.memo(
                   controls
                   preload="metadata"
                   className="rounded-[20px] max-h-[380px] w-full bg-black"
-                  style={{
-                    boxShadow:
-                      '0 6px 24px -10px rgba(0,0,0,0.55), 0 0 0 1px rgba(255,255,255,0.05)',
-                  }}
+                  style={{ boxShadow: mediaShadow }}
                 />
               )}
 
@@ -1216,7 +1260,7 @@ const MessageRow = React.memo(
                   target="_blank"
                   rel="noreferrer"
                   download
-                  className="inline-flex items-center gap-2.5 px-3.5 py-3 rounded-[16px] text-[12.5px] bg-white/[0.04] border border-white/[0.08] hover:bg-white/[0.06] transition-colors"
+                  className={`inline-flex items-center gap-2.5 px-3.5 py-3 rounded-[16px] text-[12.5px] border transition-colors ${theme.subtleBg} ${theme.subtleBorder} ${theme.hoverBg} ${theme.textPrimary}`}
                 >
                   <FileText className="w-4 h-4 shrink-0 opacity-70" />
                   <span className="truncate max-w-[200px]">Attached file</span>
@@ -1226,11 +1270,11 @@ const MessageRow = React.memo(
             </div>
           )}
 
-          {/* ── Text bubble ───────────────────────────────── */}
+          {/* Text bubble */}
           {hasText && (
             <div
-              className={`relative inline-flex items-end gap-1 max-w-full mt-1.5 ${
-                !hasMedia ? 'mt-0' : ''
+              className={`relative inline-flex items-end gap-1 max-w-full ${
+                hasMedia ? 'mt-1.5' : 'mt-0'
               }`}
             >
               <button
@@ -1238,20 +1282,18 @@ const MessageRow = React.memo(
                 onClick={() => setMenuOpen((v) => !v)}
                 className={`hidden sm:flex absolute top-1/2 -translate-y-1/2 ${
                   isMe ? '-left-8' : '-right-8'
-                } w-6 h-6 rounded-full items-center justify-center opacity-0 group-hover/row:opacity-100 transition-opacity ${
-                  theme.textSecondary
-                } hover:bg-white/[0.06]`}
+                } w-6 h-6 rounded-full items-center justify-center opacity-0 group-hover/row:opacity-100 transition-opacity ${theme.textSecondary} ${theme.hoverBg}`}
                 aria-label="Message options"
               >
                 <MoreHorizontal className="w-4 h-4" />
               </button>
 
               <div
-                className={`inline-block max-w-full text-[14.5px] leading-[1.4] break-words rounded-[19px] ${tail} px-3.5 py-[7px] ${
+                className={`inline-block max-w-full text-[14.5px] leading-[1.45] break-words rounded-[19px] ${tail} px-3.5 py-[7.5px] ${
                   isMe ? theme.bubbleSent : theme.bubbleReceived
                 }`}
               >
-                <LinkifiedText text={displayText} />
+                <LinkifiedText text={displayText} isMe={isMe} />
               </div>
 
               <AnimatePresence>
@@ -1294,7 +1336,7 @@ const MessageRow = React.memo(
             </div>
           )}
 
-          {/* If media-only, still allow long-press to delete */}
+          {/* Media-only: allow long-press delete */}
           {!hasText && hasMedia && (
             <AnimatePresence>
               {menuOpen && (
@@ -1335,18 +1377,20 @@ const MessageRow = React.memo(
             </AnimatePresence>
           )}
 
-          {/* ── Link previews (outside bubble) ─────────────── */}
-          {urls.length > 0 && <LinkPreviews urls={urls} />}
+          {/* Link previews — outside bubble */}
+          {urls.length > 0 && <LinkPreviews urls={urls} theme={theme} />}
 
-          {/* ── Meta row: read receipts ────────────────────── */}
+          {/* Meta row */}
           {isMe && isLastOfGroup && (
             <div className="flex items-center mt-1 px-1.5">
               {isTemp ? (
-                <Loader2 className="w-3 h-3 text-[#5A524A] animate-spin" />
+                <Loader2
+                  className={`w-3 h-3 animate-spin ${theme.textSecondary}`}
+                />
               ) : message.isRead ? (
                 <CheckCheck className="w-3.5 h-3.5 text-[#4ADE80]" />
               ) : (
-                <Check className="w-3.5 h-3.5 text-[#5A524A]" />
+                <Check className={`w-3.5 h-3.5 ${theme.textSecondary}`} />
               )}
             </div>
           )}
@@ -1373,7 +1417,7 @@ const MessageRow = React.memo(
 );
 
 /* ────────────────────────────────────────────────────────── */
-/* Info modal (with themes)                                   */
+/* Info modal                                                 */
 /* ────────────────────────────────────────────────────────── */
 
 type InfoAction = 'unfriend' | 'clear' | null;
@@ -1486,7 +1530,6 @@ function InfoModal({
 
             {!confirmAction ? (
               <div className="overflow-y-auto flex-1">
-                {/* Theme section */}
                 <div className="px-5 py-4 border-b border-white/[0.06]">
                   <div className="flex items-center gap-2 mb-3">
                     <Palette className="w-3.5 h-3.5 text-[#7A6F65]" />
@@ -1497,7 +1540,6 @@ function InfoModal({
                   <ThemeGrid current={currentTheme} onSelect={onThemeChange} />
                 </div>
 
-                {/* Actions */}
                 <div className="divide-y divide-white/[0.04]">
                   {isFriend && (
                     <button
@@ -1622,12 +1664,9 @@ function DirectMessagePane(): React.JSX.Element {
     null,
   );
   const [viewerOpenIndex, setViewerOpenIndex] = useState<number | null>(null);
-
-  // Sidebar chat context menu
   const [chatMenuFriend, setChatMenuFriend] = useState<FriendDto | null>(null);
   const sidebarLongPressRef = useRef<number | null>(null);
 
-  // Pinned + muted sets
   const [pinnedIds, setPinnedIds] = useState<Set<string>>(() =>
     readPinned(user?.id),
   );
@@ -1640,11 +1679,9 @@ function DirectMessagePane(): React.JSX.Element {
     setMutedIds(readMuted(user?.id));
   }, [user?.id]);
 
-  // Theme per chat
   const [chatThemeKey, setChatThemeKey] = useState<ChatThemeKey>(() =>
     readThemeFor(user?.id, userId),
   );
-  const [v1Seen, setV1Seen] = useState<Set<number>>(() => readV1Seen(user?.id));
 
   useEffect(() => {
     setChatThemeKey(readThemeFor(user?.id, userId));
@@ -1801,7 +1838,10 @@ function DirectMessagePane(): React.JSX.Element {
   const chatImages = useMemo(
     () =>
       messages
-        .filter((m) => m.mediaType === MediaType.Image && m.mediaUrl)
+        .filter(
+          (m) =>
+            m.mediaType === MediaType.Image && m.mediaUrl && !m.viewOnce,
+        )
         .map((m) => ({
           url: m.mediaUrl as string,
           senderName:
@@ -1813,16 +1853,18 @@ function DirectMessagePane(): React.JSX.Element {
 
   const handleOpenImage = useCallback(
     (m: LocalMessage, _senderName: string) => {
-      const idx = chatImages.findIndex((img) => img.url === m.mediaUrl);
-      if (idx >= 0) setViewerOpenIndex(idx);
-
       if (m.viewOnce && typeof m.id === 'number' && m.id > 0) {
+        // Fullscreen single-view for view-once (not part of the carousel)
+        setViewerOpenIndex(-1);
+        // Mark viewed + remove from list after closing
         markV1Seen(currentUserIdRef.current, m.id);
-        setV1Seen(new Set(readV1Seen(currentUserIdRef.current)));
         setMessages((prev) =>
           prev.map((x) => (x.id === m.id ? { ...x, viewed: true } : x)),
         );
+        return;
       }
+      const idx = chatImages.findIndex((img) => img.url === m.mediaUrl);
+      if (idx >= 0) setViewerOpenIndex(idx);
     },
     [chatImages],
   );
@@ -2227,7 +2269,11 @@ function DirectMessagePane(): React.JSX.Element {
 
           const includeText = i === 0 && text.length > 0;
           const markV1 = sendViewOnce && i === 0;
-          const outgoingPlain = markV1 ? `[v1]${includeText ? text : ''}` : (includeText ? text : '');
+          const outgoingPlain = markV1
+            ? `[v1]${includeText ? text : ''}`
+            : includeText
+              ? text
+              : '';
 
           const tempId = -Date.now() - i;
           setMessages((prev) => [
@@ -2483,7 +2529,6 @@ function DirectMessagePane(): React.JSX.Element {
     return map;
   }, [grouped]);
 
-  // Sidebar long-press / right-click handlers
   const onSidebarTouchStart = (friend: FriendDto) => {
     if (sidebarLongPressRef.current != null) {
       window.clearTimeout(sidebarLongPressRef.current);
@@ -2523,18 +2568,22 @@ function DirectMessagePane(): React.JSX.Element {
     >
       <style>{THEME_ANIMATIONS}</style>
 
-      {/* LEFT sidebar */}
+      {/* Sidebar */}
       <div
         className={`${
           hasActiveChat ? 'hidden md:flex' : 'flex'
-        } w-full md:w-[320px] md:shrink-0 border-r ${theme.border} ${theme.sidebarBg} flex-col h-full transition-colors duration-500`}
+        } w-full md:w-[320px] md:shrink-0 border-r ${theme.subtleBorder} ${theme.sidebarBg} flex-col h-full transition-colors duration-500`}
       >
         <div className="h-[68px] px-5 flex items-center justify-between shrink-0">
           <div className="flex items-baseline gap-2">
-            <h2 className={`text-[20px] font-semibold tracking-tight ${theme.textPrimary}`}>
+            <h2
+              className={`text-[20px] font-semibold tracking-tight ${theme.textPrimary}`}
+            >
               Chats
             </h2>
-            <span className={`text-[11.5px] tabular-nums ${theme.textSecondary}`}>
+            <span
+              className={`text-[11.5px] tabular-nums ${theme.textSecondary}`}
+            >
               {friends.length}
             </span>
           </div>
@@ -2542,20 +2591,24 @@ function DirectMessagePane(): React.JSX.Element {
 
         <div className="px-4 pb-3">
           <div className="relative">
-            <Search className={`absolute left-3.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 ${theme.textSecondary} pointer-events-none`} />
+            <Search
+              className={`absolute left-3.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 pointer-events-none ${theme.textSecondary}`}
+            />
             <input
               type="text"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               placeholder="Search conversations"
-              className={`w-full h-10 pl-10 pr-3 rounded-xl bg-white/[0.03] border ${theme.border} text-[13px] ${theme.textPrimary} placeholder:${theme.textSecondary} focus:outline-none focus:bg-white/[0.05] transition-colors`}
+              className={`w-full h-10 pl-10 pr-3 rounded-xl ${theme.subtleBg} border ${theme.subtleBorder} text-[13px] ${theme.textPrimary} focus:outline-none transition-colors placeholder:opacity-60`}
             />
           </div>
         </div>
 
         <div className="flex-1 overflow-y-auto px-2.5 pb-2 space-y-0.5">
           {filteredFriends.length === 0 ? (
-            <div className={`p-8 text-center text-[12.5px] ${theme.textSecondary}`}>
+            <div
+              className={`p-8 text-center text-[12.5px] ${theme.textSecondary}`}
+            >
               {friends.length === 0 ? 'No contacts yet.' : 'No matches.'}
             </div>
           ) : (
@@ -2580,8 +2633,8 @@ function DirectMessagePane(): React.JSX.Element {
                   onTouchStart={() => onSidebarTouchStart(friend)}
                   onTouchEnd={onSidebarTouchEnd}
                   onTouchCancel={onSidebarTouchEnd}
-                  className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-2xl text-left transition-all duration-150 relative ${
-                    isSelected ? theme.sidebarActive : 'hover:bg-white/[0.03]'
+                  className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-2xl text-left transition-all duration-150 ${
+                    isSelected ? theme.sidebarActive : theme.hoverBg
                   }`}
                 >
                   <Avatar
@@ -2594,23 +2647,37 @@ function DirectMessagePane(): React.JSX.Element {
                     <div className="flex items-center justify-between gap-2">
                       <div className="flex items-center gap-1.5 min-w-0">
                         {isPinned && (
-                          <Pin className={`w-3 h-3 shrink-0 ${theme.accentText}`} />
+                          <Pin
+                            className={`w-3 h-3 shrink-0 ${theme.accentText}`}
+                          />
                         )}
-                        <p className={`text-[13.5px] font-semibold truncate tracking-tight ${theme.textPrimary}`}>
+                        <p
+                          className={`text-[13.5px] font-semibold truncate tracking-tight ${theme.textPrimary}`}
+                        >
                           {friend.displayName}
                         </p>
                         {isMuted && (
-                          <BellOff className={`w-3 h-3 shrink-0 ${theme.textSecondary}`} />
+                          <BellOff
+                            className={`w-3 h-3 shrink-0 ${theme.textSecondary}`}
+                          />
                         )}
                       </div>
                       {preview && (
-                        <span className={`shrink-0 text-[10.5px] tabular-nums ${theme.textSecondary}`}>
+                        <span
+                          className={`shrink-0 text-[10.5px] tabular-nums ${theme.textSecondary}`}
+                        >
                           {formatRelativeShort(preview.sentAt)}
                         </span>
                       )}
                     </div>
                     <div className="flex items-center justify-between gap-2 mt-0.5">
-                      <p className={`text-[11.5px] truncate ${unread > 0 ? `${theme.textPrimary} font-medium` : theme.textSecondary}`}>
+                      <p
+                        className={`text-[11.5px] truncate ${
+                          unread > 0
+                            ? `${theme.textPrimary} font-medium`
+                            : theme.textSecondary
+                        }`}
+                      >
                         {preview
                           ? `${preview.isMe ? 'You: ' : ''}${preview.text}`
                           : `@${friend.handle}`}
@@ -2631,7 +2698,7 @@ function DirectMessagePane(): React.JSX.Element {
         </div>
       </div>
 
-      {/* RIGHT chat */}
+      {/* Chat */}
       <div
         className={`${
           hasActiveChat ? 'flex' : 'hidden md:flex'
@@ -2639,7 +2706,9 @@ function DirectMessagePane(): React.JSX.Element {
       >
         {theme.ambientStyle && (
           <div
-            className={`pointer-events-none absolute inset-0 ${theme.ambientClass ?? ''}`}
+            className={`pointer-events-none absolute inset-0 ${
+              theme.ambientClass ?? ''
+            }`}
             style={theme.ambientStyle}
           />
         )}
@@ -2647,12 +2716,12 @@ function DirectMessagePane(): React.JSX.Element {
         {userId && targetUser ? (
           <>
             <div
-              className={`h-[68px] px-3 sm:px-5 border-b ${theme.border} ${theme.composerBg} backdrop-blur-xl flex items-center justify-between shrink-0 gap-2 z-20 relative`}
+              className={`h-[68px] px-3 sm:px-5 border-b ${theme.subtleBorder} ${theme.composerBg} backdrop-blur-xl flex items-center justify-between shrink-0 gap-2 z-20 relative`}
             >
               <div className="flex items-center gap-2 sm:gap-3 min-w-0">
                 <button
                   onClick={() => navigate('/app/dm')}
-                  className={`md:hidden w-9 h-9 rounded-xl flex items-center justify-center ${theme.textSecondary} hover:bg-white/[0.05] transition-colors shrink-0`}
+                  className={`md:hidden w-9 h-9 rounded-xl flex items-center justify-center ${theme.textSecondary} ${theme.hoverBg} transition-colors shrink-0`}
                   aria-label="Back"
                 >
                   <ChevronLeft className="w-[18px] h-[18px]" />
@@ -2673,10 +2742,14 @@ function DirectMessagePane(): React.JSX.Element {
                 </button>
 
                 <div className="min-w-0">
-                  <h3 className={`text-[14.5px] font-semibold truncate tracking-tight ${theme.textPrimary}`}>
+                  <h3
+                    className={`text-[14.5px] font-semibold truncate tracking-tight ${theme.textPrimary}`}
+                  >
                     {targetUser.displayName}
                   </h3>
-                  <p className={`text-[11px] truncate mt-0.5 flex items-center gap-1.5 ${theme.textSecondary}`}>
+                  <p
+                    className={`text-[11px] truncate mt-0.5 flex items-center gap-1.5 ${theme.textSecondary}`}
+                  >
                     <span
                       className={`w-1.5 h-1.5 rounded-full shrink-0 ${
                         isTargetOnline
@@ -2698,21 +2771,21 @@ function DirectMessagePane(): React.JSX.Element {
               <div className="flex items-center gap-0.5 sm:gap-1 shrink-0">
                 <button
                   onClick={() => void handleAudioCall()}
-                  className={`w-9 h-9 rounded-xl flex items-center justify-center ${theme.textSecondary} hover:bg-white/[0.05] transition-colors`}
+                  className={`w-9 h-9 rounded-xl flex items-center justify-center ${theme.textSecondary} ${theme.hoverBg} transition-colors`}
                   title="Audio call"
                 >
                   <Phone className="w-[17px] h-[17px]" />
                 </button>
                 <button
                   onClick={() => void handleVideoCall()}
-                  className={`w-9 h-9 rounded-xl flex items-center justify-center ${theme.textSecondary} hover:bg-white/[0.05] transition-colors`}
+                  className={`w-9 h-9 rounded-xl flex items-center justify-center ${theme.textSecondary} ${theme.hoverBg} transition-colors`}
                   title="Video call"
                 >
                   <Video className="w-[17px] h-[17px]" />
                 </button>
                 <button
                   onClick={() => setInfoOpen(true)}
-                  className={`w-9 h-9 rounded-xl flex items-center justify-center ${theme.textSecondary} hover:bg-white/[0.05] transition-colors`}
+                  className={`w-9 h-9 rounded-xl flex items-center justify-center ${theme.textSecondary} ${theme.hoverBg} transition-colors`}
                   title="Chat info"
                 >
                   <Info className="w-[17px] h-[17px]" />
@@ -2722,7 +2795,9 @@ function DirectMessagePane(): React.JSX.Element {
 
             {!isConfirmedFriend && (
               <div className="shrink-0 px-4 sm:px-5 py-2.5 bg-[#D97706]/[0.06] border-b border-[#D97706]/20 flex flex-wrap items-center justify-between gap-3 text-[12.5px]">
-                <div className={`flex items-center gap-2 min-w-0 ${theme.textSecondary}`}>
+                <div
+                  className={`flex items-center gap-2 min-w-0 ${theme.textSecondary}`}
+                >
                   <AlertCircle className="w-4 h-4 text-[#D97706] shrink-0" />
                   <span className="truncate">
                     You're not friends yet — messaging is limited.
@@ -2755,7 +2830,7 @@ function DirectMessagePane(): React.JSX.Element {
                   <button
                     onClick={() => void handleLoadEarlier()}
                     disabled={loadingMore}
-                    className={`px-3.5 py-1.5 rounded-full bg-white/[0.035] border ${theme.border} text-[11.5px] ${theme.textSecondary} hover:text-current hover:bg-white/[0.06] disabled:opacity-50 transition-colors`}
+                    className={`px-3.5 py-1.5 rounded-full ${theme.subtleBg} border ${theme.subtleBorder} text-[11.5px] ${theme.textSecondary} ${theme.hoverBg} disabled:opacity-50 transition-colors`}
                   >
                     {loadingMore ? 'Loading…' : 'Load earlier messages'}
                   </button>
@@ -2770,10 +2845,14 @@ function DirectMessagePane(): React.JSX.Element {
                     <AlertCircle className="w-6 h-6 text-[#F87171]" />
                   </div>
                   <div>
-                    <p className={`text-[14px] font-semibold tracking-tight ${theme.textPrimary}`}>
+                    <p
+                      className={`text-[14px] font-semibold tracking-tight ${theme.textPrimary}`}
+                    >
                       Couldn't load messages
                     </p>
-                    <p className={`text-[12.5px] mt-1 max-w-[300px] ${theme.textSecondary}`}>
+                    <p
+                      className={`text-[12.5px] mt-1 max-w-[300px] ${theme.textSecondary}`}
+                    >
                       {historyError}
                     </p>
                   </div>
@@ -2794,15 +2873,19 @@ function DirectMessagePane(): React.JSX.Element {
                     className="w-20 h-20 rounded-full flex items-center justify-center"
                     style={{
                       background:
-                        'radial-gradient(circle, rgba(255,255,255,0.05), transparent 70%)',
+                        'radial-gradient(circle, rgba(128,128,128,0.10), transparent 70%)',
                     }}
                   >
-                    <div className={`w-14 h-14 rounded-full bg-white/[0.04] border ${theme.border} flex items-center justify-center`}>
+                    <div
+                      className={`w-14 h-14 rounded-full ${theme.subtleBg} border ${theme.subtleBorder} flex items-center justify-center`}
+                    >
                       <User className={`w-6 h-6 ${theme.textSecondary}`} />
                     </div>
                   </div>
                   <div>
-                    <p className={`text-[15px] font-semibold tracking-tight ${theme.textPrimary}`}>
+                    <p
+                      className={`text-[15px] font-semibold tracking-tight ${theme.textPrimary}`}
+                    >
                       No messages yet
                     </p>
                     <p className={`text-[12.5px] mt-1 ${theme.textSecondary}`}>
@@ -2815,7 +2898,9 @@ function DirectMessagePane(): React.JSX.Element {
                   if (item.type === 'date') {
                     return (
                       <div key={item.key} className="flex justify-center my-5">
-                        <span className={`px-3 py-1 rounded-full bg-white/[0.035] border ${theme.border} text-[10.5px] uppercase tracking-[0.14em] ${theme.textSecondary} font-medium`}>
+                        <span
+                          className={`px-3 py-1 rounded-full ${theme.subtleBg} border ${theme.subtleBorder} text-[10.5px] uppercase tracking-[0.14em] ${theme.textSecondary} font-medium`}
+                        >
                           {item.label}
                         </span>
                       </div>
@@ -2860,7 +2945,9 @@ function DirectMessagePane(): React.JSX.Element {
                         size="sm"
                       />
                     </div>
-                    <div className={`inline-flex items-center gap-1.5 px-4 py-3 rounded-[19px] rounded-bl-[6px] ${theme.bubbleReceived}`}>
+                    <div
+                      className={`inline-flex items-center gap-1.5 px-4 py-3 rounded-[19px] rounded-bl-[6px] ${theme.bubbleReceived}`}
+                    >
                       <span className="w-1.5 h-1.5 rounded-full bg-current opacity-60 animate-bounce [animation-delay:-0.32s]" />
                       <span className="w-1.5 h-1.5 rounded-full bg-current opacity-60 animate-bounce [animation-delay:-0.16s]" />
                       <span className="w-1.5 h-1.5 rounded-full bg-current opacity-60 animate-bounce" />
@@ -2876,9 +2963,13 @@ function DirectMessagePane(): React.JSX.Element {
               {showJumpToLatest && (
                 <motion.button
                   key="jump-btn"
-                  initial={reduceMotion ? false : { opacity: 0, y: 8, scale: 0.9 }}
+                  initial={
+                    reduceMotion ? false : { opacity: 0, y: 8, scale: 0.9 }
+                  }
                   animate={{ opacity: 1, y: 0, scale: 1 }}
-                  exit={reduceMotion ? undefined : { opacity: 0, y: 8, scale: 0.9 }}
+                  exit={
+                    reduceMotion ? undefined : { opacity: 0, y: 8, scale: 0.9 }
+                  }
                   transition={{ type: 'spring', stiffness: 400, damping: 30 }}
                   onClick={handleJumpToLatest}
                   className={`absolute bottom-24 right-6 z-30 w-10 h-10 rounded-full ${theme.accent} shadow-lg flex items-center justify-center transition-colors`}
@@ -2900,14 +2991,18 @@ function DirectMessagePane(): React.JSX.Element {
               className="shrink-0 overflow-hidden relative z-20"
             >
               <div
-                className={`border-t ${theme.border} ${theme.composerBg} backdrop-blur-xl px-2 sm:px-4 py-2.5 sm:py-3.5`}
+                className={`border-t ${theme.subtleBorder} ${theme.composerBg} backdrop-blur-xl px-2 sm:px-4 py-2.5 sm:py-3.5`}
               >
                 <AnimatePresence>
                   {pendingFiles.length > 0 && (
                     <motion.div
-                      initial={reduceMotion ? false : { opacity: 0, y: 6, height: 0 }}
+                      initial={
+                        reduceMotion ? false : { opacity: 0, y: 6, height: 0 }
+                      }
                       animate={{ opacity: 1, y: 0, height: 'auto' }}
-                      exit={reduceMotion ? undefined : { opacity: 0, y: 6, height: 0 }}
+                      exit={
+                        reduceMotion ? undefined : { opacity: 0, y: 6, height: 0 }
+                      }
                       transition={{ duration: 0.18 }}
                       className="pb-2 sm:pb-3 overflow-hidden"
                     >
@@ -2920,19 +3015,25 @@ function DirectMessagePane(): React.JSX.Element {
                           return (
                             <div
                               key={`${file.name}-${index}`}
-                              className={`relative shrink-0 w-20 h-20 rounded-xl overflow-hidden bg-white/[0.035] border ${theme.border}`}
+                              className={`relative shrink-0 w-20 h-20 rounded-xl overflow-hidden ${theme.subtleBg} border ${theme.subtleBorder}`}
                             >
                               {isImage && previewUrl ? (
                                 <img
                                   src={previewUrl}
                                   alt={file.name}
                                   className="w-full h-full object-cover"
-                                  onLoad={() => URL.revokeObjectURL(previewUrl)}
+                                  onLoad={() =>
+                                    URL.revokeObjectURL(previewUrl)
+                                  }
                                 />
                               ) : (
                                 <div className="w-full h-full flex flex-col items-center justify-center px-1 text-center">
-                                  <FileText className={`w-5 h-5 ${theme.accentText}`} />
-                                  <span className={`text-[9px] truncate w-full mt-1 ${theme.textSecondary}`}>
+                                  <FileText
+                                    className={`w-5 h-5 ${theme.accentText}`}
+                                  />
+                                  <span
+                                    className={`text-[9px] truncate w-full mt-1 ${theme.textSecondary}`}
+                                  >
                                     {file.name}
                                   </span>
                                 </div>
@@ -2965,7 +3066,7 @@ function DirectMessagePane(): React.JSX.Element {
                           className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10.5px] font-semibold transition-colors ${
                             pendingViewOnce
                               ? 'bg-gradient-to-r from-[#7C3AED] to-[#A855F7] text-white'
-                              : `bg-white/[0.04] border ${theme.border} ${theme.textSecondary} hover:text-current`
+                              : `${theme.subtleBg} border ${theme.subtleBorder} ${theme.textSecondary}`
                           }`}
                         >
                           <Eye className="w-3 h-3" />
@@ -2993,7 +3094,10 @@ function DirectMessagePane(): React.JSX.Element {
                   )}
                 </AnimatePresence>
 
-                <form onSubmit={handleSendMessage} className="flex items-end gap-2">
+                <form
+                  onSubmit={handleSendMessage}
+                  className="flex items-end gap-2"
+                >
                   <input
                     type="file"
                     ref={fileInputRef}
@@ -3006,7 +3110,7 @@ function DirectMessagePane(): React.JSX.Element {
                   <button
                     type="button"
                     onClick={() => fileInputRef.current?.click()}
-                    className={`shrink-0 w-10 h-10 rounded-full flex items-center justify-center ${theme.textSecondary} hover:bg-white/[0.05] transition-colors`}
+                    className={`shrink-0 w-10 h-10 rounded-full flex items-center justify-center ${theme.textSecondary} ${theme.hoverBg} transition-colors`}
                     title="Attach image"
                   >
                     <Paperclip className="w-[18px] h-[18px]" />
@@ -3026,25 +3130,36 @@ function DirectMessagePane(): React.JSX.Element {
                       onKeyDown={(e) => {
                         if (e.key === 'Enter' && !e.shiftKey) {
                           e.preventDefault();
-                          void handleSendMessage(e as unknown as React.FormEvent);
+                          void handleSendMessage(
+                            e as unknown as React.FormEvent,
+                          );
                         }
                       }}
                       placeholder={`Message ${targetUser.displayName}`}
                       rows={1}
-                      className={`w-full resize-none px-4 py-2.5 text-[14.5px] ${theme.textPrimary} placeholder:${theme.textSecondary} focus:outline-none leading-[1.5] max-h-[140px] overflow-y-auto rounded-[22px] bg-white/[0.045] border ${theme.border} focus:bg-white/[0.06] transition-colors`}
+                      className={`w-full resize-none px-4 py-2.5 text-[14.5px] ${theme.textPrimary} focus:outline-none leading-[1.5] max-h-[140px] overflow-y-auto rounded-[22px] ${theme.subtleBgStrong} border ${theme.subtleBorder} transition-colors placeholder:opacity-60`}
                     />
                   </div>
 
                   <AnimatePresence mode="popLayout" initial={false}>
-                    {(inputContent.trim().length > 0 || pendingFiles.length > 0) && (
+                    {(inputContent.trim().length > 0 ||
+                      pendingFiles.length > 0) && (
                       <motion.button
                         key="send-btn"
                         type="submit"
                         disabled={isSending}
-                        initial={reduceMotion ? false : { scale: 0.6, opacity: 0 }}
+                        initial={
+                          reduceMotion ? false : { scale: 0.6, opacity: 0 }
+                        }
                         animate={{ scale: 1, opacity: 1 }}
-                        exit={reduceMotion ? undefined : { scale: 0.6, opacity: 0 }}
-                        transition={{ type: 'spring', stiffness: 420, damping: 26 }}
+                        exit={
+                          reduceMotion ? undefined : { scale: 0.6, opacity: 0 }
+                        }
+                        transition={{
+                          type: 'spring',
+                          stiffness: 420,
+                          damping: 26,
+                        }}
                         className={`shrink-0 w-10 h-10 rounded-full ${theme.accent} disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center`}
                         aria-label="Send"
                       >
@@ -3066,17 +3181,23 @@ function DirectMessagePane(): React.JSX.Element {
               className="w-24 h-24 rounded-full flex items-center justify-center mb-6"
               style={{
                 background:
-                  'radial-gradient(circle, rgba(255,255,255,0.06), transparent 70%)',
+                  'radial-gradient(circle, rgba(128,128,128,0.12), transparent 70%)',
               }}
             >
-              <div className={`w-16 h-16 rounded-full bg-white/[0.03] border ${theme.border} flex items-center justify-center`}>
+              <div
+                className={`w-16 h-16 rounded-full ${theme.subtleBg} border ${theme.subtleBorder} flex items-center justify-center`}
+              >
                 <User className={`w-7 h-7 ${theme.textSecondary}`} />
               </div>
             </div>
-            <h3 className={`text-[17px] font-semibold mb-2 tracking-tight ${theme.textPrimary}`}>
+            <h3
+              className={`text-[17px] font-semibold mb-2 tracking-tight ${theme.textPrimary}`}
+            >
               Your messages
             </h3>
-            <p className={`text-[13px] max-w-[320px] leading-relaxed ${theme.textSecondary}`}>
+            <p
+              className={`text-[13px] max-w-[320px] leading-relaxed ${theme.textSecondary}`}
+            >
               Pick a conversation from the list to start chatting.
             </p>
           </div>
@@ -3131,7 +3252,7 @@ function DirectMessagePane(): React.JSX.Element {
         )}
       </AnimatePresence>
 
-      {/* Sidebar chat context menu */}
+      {/* Sidebar context menu */}
       <AnimatePresence>
         {chatMenuFriend && (
           <ChatContextMenu
@@ -3203,7 +3324,7 @@ function DirectMessagePane(): React.JSX.Element {
       />
 
       <AnimatePresence>
-        {viewerOpenIndex != null && (
+        {viewerOpenIndex != null && viewerOpenIndex >= 0 && (
           <ImageViewer
             images={chatImages}
             startIndex={viewerOpenIndex}
