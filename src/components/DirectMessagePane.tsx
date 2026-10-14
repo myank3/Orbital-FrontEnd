@@ -119,7 +119,7 @@ const THEME_ANIMATIONS = `
   50% { filter: blur(50px) brightness(1.3); }
 }
 @keyframes bubble-in {
-  from { opacity: 0; transform: translateY(8px) scale(0.95); }
+  from { opacity: 0; transform: translateY(8px) scale(0.96); }
   to { opacity: 1; transform: translateY(0) scale(1); }
 }
 @keyframes react-pop {
@@ -174,42 +174,42 @@ const CHAT_THEMES: Record<ChatThemeKey, ChatTheme> = {
     label: 'Obsidian',
     swatch: 'linear-gradient(135deg, #2A2A2A, #050505)',
     isLight: false,
-    bg: 'bg-[#050505]',
-    sidebarBg: 'bg-[#0A0A0A]',
-    sidebarActive: 'bg-white/[0.06] ring-1 ring-inset ring-white/[0.06]',
-    composerBg: 'bg-[#050505]/85',
-    bubbleSent: 'bg-[#262626] text-white',
-    bubbleReceived: 'bg-[#141414] text-[#EDEDED]',
-    accent: 'bg-white hover:bg-[#E5E5E5] text-black',
+    bg: 'bg-[#080808]',
+    sidebarBg: 'bg-[#0E0E0E]',
+    sidebarActive: 'bg-white/[0.08] ring-1 ring-inset ring-white/[0.08]',
+    composerBg: 'bg-[#0E0E0E]/90',
+    bubbleSent: 'bg-[#2E2E2E] text-white shadow-sm',
+    bubbleReceived: 'bg-[#181818] text-[#EDEDED] border border-white/[0.04]',
+    accent: 'bg-white hover:bg-[#E5E5E5] text-black shadow-sm',
     accentText: 'text-white',
     glow: 'shadow-none',
     textPrimary: 'text-white',
-    textSecondary: 'text-[#8A8A8A]',
-    subtleBg: 'bg-white/[0.03]',
-    subtleBgStrong: 'bg-white/[0.06]',
-    subtleBorder: 'border-white/[0.06]',
-    hoverBg: 'hover:bg-white/[0.04]',
+    textSecondary: 'text-[#949494]',
+    subtleBg: 'bg-white/[0.04]',
+    subtleBgStrong: 'bg-white/[0.08]',
+    subtleBorder: 'border-white/[0.08]',
+    hoverBg: 'hover:bg-white/[0.05]',
   },
   paper: {
     label: 'Paper',
     swatch: 'linear-gradient(135deg, #F5F1EA, #B8894A)',
     isLight: true,
-    bg: 'bg-[#F5F1EA]',
-    sidebarBg: 'bg-[#EDE7DC]',
-    sidebarActive: 'bg-black/[0.05] ring-1 ring-inset ring-black/[0.05]',
-    composerBg: 'bg-[#F5F1EA]/90',
-    bubbleSent: 'bg-[#B8894A] text-white',
+    bg: 'bg-[#F7F4EE]',
+    sidebarBg: 'bg-[#EFE8DD]',
+    sidebarActive: 'bg-black/[0.06] ring-1 ring-inset ring-black/[0.06]',
+    composerBg: 'bg-[#F7F4EE]/95',
+    bubbleSent: 'bg-[#B8894A] text-white shadow-sm',
     bubbleReceived:
-      'bg-white text-[#1F1B16] shadow-[0_1px_2px_rgba(0,0,0,0.06)] border border-black/[0.04]',
-    accent: 'bg-[#B8894A] hover:bg-[#9F7439] text-white',
+      'bg-white text-[#1F1B16] shadow-[0_1px_3px_rgba(0,0,0,0.06)] border border-black/[0.05]',
+    accent: 'bg-[#B8894A] hover:bg-[#9F7439] text-white shadow-sm',
     accentText: 'text-[#B8894A]',
     glow: 'shadow-[0_1px_3px_rgba(0,0,0,0.06)]',
     textPrimary: 'text-[#1F1B16]',
-    textSecondary: 'text-[#8A8178]',
+    textSecondary: 'text-[#857B72]',
     subtleBg: 'bg-black/[0.03]',
     subtleBgStrong: 'bg-black/[0.06]',
-    subtleBorder: 'border-black/[0.06]',
-    hoverBg: 'hover:bg-black/[0.04]',
+    subtleBorder: 'border-black/[0.07]',
+    hoverBg: 'hover:bg-black/[0.05]',
   },
   terminal: {
     label: 'Terminal',
@@ -217,19 +217,19 @@ const CHAT_THEMES: Record<ChatThemeKey, ChatTheme> = {
     isLight: false,
     bg: 'bg-[#07100A]',
     sidebarBg: 'bg-[#0A1A0F]',
-    sidebarActive: 'bg-[#22C55E]/[0.10] ring-1 ring-inset ring-[#22C55E]/25',
-    composerBg: 'bg-[#07100A]/90',
+    sidebarActive: 'bg-[#22C55E]/[0.12] ring-1 ring-inset ring-[#22C55E]/30',
+    composerBg: 'bg-[#07100A]/95',
     bubbleSent: 'bg-[#14361F] text-[#A7F3D0] border border-[#22C55E]/40',
-    bubbleReceived: 'bg-[#0A1A0F] text-[#86EFAC] border border-[#22C55E]/[0.15]',
+    bubbleReceived: 'bg-[#0D2214] text-[#86EFAC] border border-[#22C55E]/[0.18]',
     accent: 'bg-[#22C55E] hover:bg-[#16A34A] text-[#07100A]',
     accentText: 'text-[#22C55E]',
     glow: 'shadow-[0_0_12px_-2px_rgba(34,197,94,0.3)]',
     textPrimary: 'text-[#86EFAC]',
-    textSecondary: 'text-[#3D6B4F]',
+    textSecondary: 'text-[#4D8060]',
     subtleBg: 'bg-white/[0.02]',
-    subtleBgStrong: 'bg-white/[0.05]',
-    subtleBorder: 'border-[#22C55E]/[0.10]',
-    hoverBg: 'hover:bg-[#22C55E]/[0.06]',
+    subtleBgStrong: 'bg-white/[0.06]',
+    subtleBorder: 'border-[#22C55E]/[0.12]',
+    hoverBg: 'hover:bg-[#22C55E]/[0.08]',
     ambientClass: 'theme-anim-terminal',
     ambientStyle: {
       background:
@@ -241,14 +241,14 @@ const CHAT_THEMES: Record<ChatThemeKey, ChatTheme> = {
     label: 'Rose',
     swatch: 'linear-gradient(135deg, #FB7185, #F9A8D4)',
     isLight: true,
-    bg: 'bg-[#FFF1F5]',
-    sidebarBg: 'bg-[#FFE4EC]',
-    sidebarActive: 'bg-[#FB7185]/[0.10] ring-1 ring-inset ring-[#FB7185]/25',
-    composerBg: 'bg-[#FFF1F5]/90',
+    bg: 'bg-[#FFF0F4]',
+    sidebarBg: 'bg-[#FFE2EC]',
+    sidebarActive: 'bg-[#FB7185]/[0.12] ring-1 ring-inset ring-[#FB7185]/30',
+    composerBg: 'bg-[#FFF0F4]/95',
     bubbleSent:
       'bg-gradient-to-br from-[#FB7185] to-[#F43F5E] text-white shadow-[0_2px_8px_-2px_rgba(251,113,133,0.4)]',
     bubbleReceived:
-      'bg-white text-[#4A1B2C] shadow-[0_1px_2px_rgba(0,0,0,0.05)] border border-[#FB7185]/[0.10]',
+      'bg-white text-[#4A1B2C] shadow-[0_1px_3px_rgba(0,0,0,0.05)] border border-[#FB7185]/[0.12]',
     accent: 'bg-[#FB7185] hover:bg-[#E11D48] text-white',
     accentText: 'text-[#FB7185]',
     glow: 'shadow-[0_2px_8px_-2px_rgba(251,113,133,0.35)]',
@@ -256,8 +256,8 @@ const CHAT_THEMES: Record<ChatThemeKey, ChatTheme> = {
     textSecondary: 'text-[#9A7280]',
     subtleBg: 'bg-black/[0.03]',
     subtleBgStrong: 'bg-black/[0.06]',
-    subtleBorder: 'border-black/[0.06]',
-    hoverBg: 'hover:bg-black/[0.04]',
+    subtleBorder: 'border-black/[0.07]',
+    hoverBg: 'hover:bg-black/[0.05]',
     ambientStyle: {
       background:
         'radial-gradient(60% 50% at 80% 0%, rgba(251,113,133,0.12), transparent 60%), radial-gradient(50% 50% at 0% 100%, rgba(244,114,182,0.10), transparent 60%)',
@@ -271,21 +271,21 @@ const CHAT_THEMES: Record<ChatThemeKey, ChatTheme> = {
     isLight: false,
     bg: 'bg-[#0A1628]',
     sidebarBg: 'bg-[#0D1E36]',
-    sidebarActive: 'bg-[#3B82F6]/[0.12] ring-1 ring-inset ring-[#3B82F6]/30',
-    composerBg: 'bg-[#0A1628]/85',
+    sidebarActive: 'bg-[#3B82F6]/[0.15] ring-1 ring-inset ring-[#3B82F6]/35',
+    composerBg: 'bg-[#0A1628]/90',
     bubbleSent:
       'bg-gradient-to-br from-[#2563EB] to-[#3B82F6] text-white shadow-[0_2px_12px_-2px_rgba(59,130,246,0.4)]',
     bubbleReceived:
-      'bg-[#16263D] text-[#DBEAFE] border border-[#3B82F6]/[0.12]',
+      'bg-[#132238] text-[#DBEAFE] border border-[#3B82F6]/[0.15]',
     accent: 'bg-[#3B82F6] hover:bg-[#2563EB] text-white',
     accentText: 'text-[#60A5FA]',
     glow: 'shadow-[0_2px_12px_-2px_rgba(59,130,246,0.4)]',
     textPrimary: 'text-[#DBEAFE]',
-    textSecondary: 'text-[#5A7AA6]',
-    subtleBg: 'bg-white/[0.03]',
-    subtleBgStrong: 'bg-white/[0.06]',
-    subtleBorder: 'border-white/[0.06]',
-    hoverBg: 'hover:bg-white/[0.04]',
+    textSecondary: 'text-[#6E8EB8]',
+    subtleBg: 'bg-white/[0.04]',
+    subtleBgStrong: 'bg-white/[0.07]',
+    subtleBorder: 'border-white/[0.08]',
+    hoverBg: 'hover:bg-white/[0.05]',
     ambientClass: 'theme-anim-cobalt',
     ambientStyle: {
       background:
@@ -298,23 +298,23 @@ const CHAT_THEMES: Record<ChatThemeKey, ChatTheme> = {
     label: 'Mint',
     swatch: 'linear-gradient(135deg, #34D399, #F0FDF4)',
     isLight: true,
-    bg: 'bg-[#F0FDF4]',
-    sidebarBg: 'bg-[#DCFCE7]',
-    sidebarActive: 'bg-[#34D399]/[0.12] ring-1 ring-inset ring-[#34D399]/30',
-    composerBg: 'bg-[#F0FDF4]/90',
+    bg: 'bg-[#EFFDF4]',
+    sidebarBg: 'bg-[#DAFBE5]',
+    sidebarActive: 'bg-[#34D399]/[0.15] ring-1 ring-inset ring-[#34D399]/35',
+    composerBg: 'bg-[#EFFDF4]/95',
     bubbleSent:
       'bg-gradient-to-br from-[#10B981] to-[#34D399] text-white shadow-[0_2px_8px_-2px_rgba(52,211,153,0.4)]',
     bubbleReceived:
-      'bg-white text-[#052E16] shadow-[0_1px_2px_rgba(0,0,0,0.05)] border border-[#34D399]/[0.15]',
+      'bg-white text-[#052E16] shadow-[0_1px_3px_rgba(0,0,0,0.05)] border border-[#34D399]/[0.18]',
     accent: 'bg-[#10B981] hover:bg-[#059669] text-white',
     accentText: 'text-[#059669]',
     glow: 'shadow-[0_2px_8px_-2px_rgba(52,211,153,0.35)]',
     textPrimary: 'text-[#052E16]',
-    textSecondary: 'text-[#4B7A5E]',
+    textSecondary: 'text-[#487358]',
     subtleBg: 'bg-black/[0.03]',
     subtleBgStrong: 'bg-black/[0.06]',
-    subtleBorder: 'border-black/[0.06]',
-    hoverBg: 'hover:bg-black/[0.04]',
+    subtleBorder: 'border-black/[0.07]',
+    hoverBg: 'hover:bg-black/[0.05]',
     ambientStyle: {
       background:
         'radial-gradient(55% 50% at 0% 0%, rgba(52,211,153,0.12), transparent 60%), radial-gradient(50% 50% at 100% 100%, rgba(16,185,129,0.10), transparent 60%)',
@@ -327,21 +327,21 @@ const CHAT_THEMES: Record<ChatThemeKey, ChatTheme> = {
     swatch: 'linear-gradient(135deg, #DC2626, #150404)',
     isLight: false,
     bg: 'bg-[#150404]',
-    sidebarBg: 'bg-[#1F0707]',
-    sidebarActive: 'bg-[#DC2626]/[0.12] ring-1 ring-inset ring-[#DC2626]/30',
-    composerBg: 'bg-[#150404]/85',
+    sidebarBg: 'bg-[#200707]',
+    sidebarActive: 'bg-[#DC2626]/[0.15] ring-1 ring-inset ring-[#DC2626]/35',
+    composerBg: 'bg-[#150404]/90',
     bubbleSent:
       'bg-gradient-to-br from-[#DC2626] to-[#991B1B] text-white shadow-[0_2px_12px_-2px_rgba(220,38,38,0.35)]',
-    bubbleReceived: 'bg-[#2A0A0A] text-[#FEE2E2] border border-[#DC2626]/[0.14]',
+    bubbleReceived: 'bg-[#280909] text-[#FEE2E2] border border-[#DC2626]/[0.16]',
     accent: 'bg-[#DC2626] hover:bg-[#B91C1C] text-white',
     accentText: 'text-[#F87171]',
     glow: 'shadow-[0_2px_12px_-2px_rgba(220,38,38,0.35)]',
     textPrimary: 'text-[#FEE2E2]',
-    textSecondary: 'text-[#8A5555]',
+    textSecondary: 'text-[#966161]',
     subtleBg: 'bg-white/[0.03]',
-    subtleBgStrong: 'bg-white/[0.06]',
-    subtleBorder: 'border-white/[0.06]',
-    hoverBg: 'hover:bg-white/[0.04]',
+    subtleBgStrong: 'bg-white/[0.07]',
+    subtleBorder: 'border-white/[0.08]',
+    hoverBg: 'hover:bg-white/[0.05]',
     ambientClass: 'theme-anim-crimson',
     ambientStyle: {
       background:
@@ -355,22 +355,22 @@ const CHAT_THEMES: Record<ChatThemeKey, ChatTheme> = {
     swatch: 'linear-gradient(135deg, #A855F7, #05010F)',
     isLight: false,
     bg: 'bg-[#05010F]',
-    sidebarBg: 'bg-[#0D0817]',
-    sidebarActive: 'bg-[#A855F7]/[0.12] ring-1 ring-inset ring-[#A855F7]/30',
-    composerBg: 'bg-[#05010F]/85',
+    sidebarBg: 'bg-[#0E061B]',
+    sidebarActive: 'bg-[#A855F7]/[0.15] ring-1 ring-inset ring-[#A855F7]/35',
+    composerBg: 'bg-[#05010F]/90',
     bubbleSent:
       'bg-gradient-to-br from-[#7C3AED] via-[#A855F7] to-[#C084FC] text-white shadow-[0_2px_16px_-2px_rgba(168,85,247,0.5)]',
     bubbleReceived:
-      'bg-[#120A24] text-[#F3E8FF] border border-[#A855F7]/[0.18]',
+      'bg-[#120822] text-[#F3E8FF] border border-[#A855F7]/[0.20]',
     accent: 'bg-[#A855F7] hover:bg-[#9333EA] text-white',
     accentText: 'text-[#C084FC]',
     glow: 'shadow-[0_2px_16px_-2px_rgba(168,85,247,0.5)]',
     textPrimary: 'text-[#F3E8FF]',
-    textSecondary: 'text-[#6B4F8C]',
-    subtleBg: 'bg-white/[0.03]',
-    subtleBgStrong: 'bg-white/[0.06]',
-    subtleBorder: 'border-white/[0.06]',
-    hoverBg: 'hover:bg-white/[0.04]',
+    textSecondary: 'text-[#7D5F9F]',
+    subtleBg: 'bg-white/[0.04]',
+    subtleBgStrong: 'bg-white/[0.07]',
+    subtleBorder: 'border-white/[0.08]',
+    hoverBg: 'hover:bg-white/[0.05]',
     ambientClass: 'theme-anim-void',
     ambientStyle: {
       background:
@@ -384,8 +384,8 @@ const CHAT_THEMES: Record<ChatThemeKey, ChatTheme> = {
 /* Reactions + replies — encoding layer                       */
 /* ────────────────────────────────────────────────────────── */
 
-const REACT_RE = /^\[react:(\d+):([^:\]]+)(?::(add|remove))?\]$/;
-const REPLY_RE = /^\[reply:(\d+)\]/;
+const REACT_RE = /^\[react:(-?\d+):([^:\]]+)(?::(add|remove))?\]$/;
+const REPLY_RE = /^\[reply:(-?\d+)\]/;
 const V1_RE = /^\[v1\]/;
 
 export interface ReactionEntry {
@@ -407,9 +407,7 @@ export interface DecodedReaction {
   action: 'add' | 'remove';
 }
 
-export type Decoded =
-  | DecodedMessage
-  | DecodedReaction;
+export type Decoded = DecodedMessage | DecodedReaction;
 
 export function decodeIncoming(text: string): Decoded {
   const react = text.match(REACT_RE);
@@ -441,7 +439,11 @@ export function decodeIncoming(text: string): Decoded {
   return { viewOnce, body, replyToId, isReaction: false };
 }
 
-export function encodeReaction(messageId: number, emoji: string, action: 'add' | 'remove' = 'add'): string {
+export function encodeReaction(
+  messageId: number,
+  emoji: string,
+  action: 'add' | 'remove' = 'add',
+): string {
   return `[react:${messageId}:${emoji}:${action}]`;
 }
 
@@ -713,7 +715,7 @@ function LinkifiedText({ text, isMe }: { text: string; isMe: boolean }) {
   }, [text]);
 
   return (
-    <p className="whitespace-pre-wrap">
+    <p className="whitespace-pre-wrap break-words leading-relaxed select-text">
       {parts.map((p, i) =>
         p.type === 'text' ? (
           <React.Fragment key={i}>{p.value}</React.Fragment>
@@ -724,8 +726,8 @@ function LinkifiedText({ text, isMe }: { text: string; isMe: boolean }) {
             target="_blank"
             rel="noreferrer"
             onClick={(e) => e.stopPropagation()}
-            className={`underline break-all transition-opacity ${
-              isMe ? 'opacity-90 hover:opacity-100' : 'hover:opacity-80'
+            className={`underline underline-offset-2 break-all transition-opacity ${
+              isMe ? 'opacity-90 hover:opacity-100 font-medium' : 'hover:opacity-80 font-medium'
             }`}
           >
             {p.value}
@@ -740,14 +742,14 @@ function LinkPreviews({ urls, theme }: { urls: string[]; theme: ChatTheme }) {
   if (urls.length === 0) return null;
 
   return (
-    <div className="mt-2 space-y-2">
+    <div className="mt-2.5 space-y-2">
       {urls.slice(0, 2).map((url) => {
         const yt = getYouTubeId(url);
         if (yt) {
           return (
             <div
               key={url}
-              className="rounded-[16px] overflow-hidden border border-black/[0.06] bg-black aspect-video w-full max-w-[420px] shadow-[0_2px_8px_-4px_rgba(0,0,0,0.2)]"
+              className="rounded-[18px] overflow-hidden border border-black/[0.08] bg-black aspect-video w-full max-w-[420px] shadow-sm"
               onClick={(e) => e.stopPropagation()}
             >
               <iframe
@@ -756,7 +758,7 @@ function LinkPreviews({ urls, theme }: { urls: string[]; theme: ChatTheme }) {
                 allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
                 allowFullScreen
                 loading="lazy"
-                className="w-full h-full"
+                className="w-full h-full border-0"
               />
             </div>
           );
@@ -766,7 +768,7 @@ function LinkPreviews({ urls, theme }: { urls: string[]; theme: ChatTheme }) {
           return (
             <div
               key={url}
-              className="rounded-[16px] overflow-hidden border border-black/[0.06] bg-black aspect-video w-full max-w-[420px] shadow-[0_2px_8px_-4px_rgba(0,0,0,0.2)]"
+              className="rounded-[18px] overflow-hidden border border-black/[0.08] bg-black aspect-video w-full max-w-[420px] shadow-sm"
               onClick={(e) => e.stopPropagation()}
             >
               <iframe
@@ -775,7 +777,7 @@ function LinkPreviews({ urls, theme }: { urls: string[]; theme: ChatTheme }) {
                 allow="autoplay; fullscreen; picture-in-picture"
                 allowFullScreen
                 loading="lazy"
-                className="w-full h-full"
+                className="w-full h-full border-0"
               />
             </div>
           );
@@ -792,7 +794,7 @@ function LinkPreviews({ urls, theme }: { urls: string[]; theme: ChatTheme }) {
             target="_blank"
             rel="noreferrer"
             onClick={(e) => e.stopPropagation()}
-            className={`flex items-stretch gap-3 rounded-[16px] border overflow-hidden transition-colors max-w-[420px] ${theme.subtleBg} ${theme.subtleBorder} ${theme.hoverBg}`}
+            className={`flex items-stretch gap-3 rounded-[16px] border overflow-hidden transition-all max-w-[420px] shadow-sm ${theme.subtleBg} ${theme.subtleBorder} ${theme.hoverBg}`}
           >
             <div
               className={`w-[68px] shrink-0 flex items-center justify-center ${theme.subtleBgStrong}`}
@@ -811,8 +813,8 @@ function LinkPreviews({ urls, theme }: { urls: string[]; theme: ChatTheme }) {
             </div>
             <div className="flex-1 min-w-0 py-2.5 pr-3.5">
               <div className={`flex items-center gap-1.5 ${theme.textPrimary}`}>
-                <Link2 className="w-3 h-3 opacity-60 shrink-0" />
-                <span className="text-[12px] font-semibold truncate">
+                <Link2 className="w-3.5 h-3.5 opacity-60 shrink-0" />
+                <span className="text-[12.5px] font-semibold truncate">
                   {host}
                 </span>
                 <ExternalLink className="w-3 h-3 opacity-40 shrink-0" />
@@ -873,7 +875,7 @@ function ImageViewer({ images, startIndex, onClose }: ImageViewerProps) {
       animate={{ opacity: 1 }}
       exit={reduceMotion ? undefined : { opacity: 0 }}
       transition={{ duration: 0.18 }}
-      className="fixed inset-0 z-[200] bg-black/95 backdrop-blur-md flex items-center justify-center"
+      className="fixed inset-0 z-[200] bg-black/95 backdrop-blur-md flex items-center justify-center select-none"
       onClick={onClose}
     >
       <div className="absolute top-0 left-0 right-0 flex items-center justify-between px-4 py-3.5 bg-gradient-to-b from-black/90 via-black/40 to-transparent z-10">
@@ -946,7 +948,7 @@ function ImageViewer({ images, startIndex, onClose }: ImageViewerProps) {
         src={current.url}
         alt=""
         onClick={(e) => e.stopPropagation()}
-        className="max-w-[95vw] max-h-[88vh] object-contain select-none rounded-lg"
+        className="max-w-[95vw] max-h-[88vh] object-contain select-none rounded-xl shadow-2xl"
       />
     </motion.div>
   );
@@ -994,12 +996,12 @@ function ViewOnceViewerModal({
       animate={{ opacity: 1 }}
       exit={reduceMotion ? undefined : { opacity: 0 }}
       transition={{ duration: 0.18 }}
-      className="fixed inset-0 z-[210] bg-black/98 backdrop-blur-md flex flex-col items-center justify-center"
+      className="fixed inset-0 z-[210] bg-black/98 backdrop-blur-md flex flex-col items-center justify-center select-none"
       onClick={onClose}
     >
       <div className="absolute top-0 left-0 right-0 flex items-center justify-between px-4 py-3.5 bg-gradient-to-b from-black/90 via-black/40 to-transparent z-10">
         <div className="min-w-0">
-          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-gradient-to-r from-[#7C3AED] to-[#A855F7] text-white text-[10px] font-bold tracking-wide">
+          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-gradient-to-r from-[#7C3AED] to-[#A855F7] text-white text-[10px] font-bold tracking-wide">
             <Eye className="w-3 h-3" />
             VIEW ONCE
           </span>
@@ -1027,13 +1029,13 @@ function ViewOnceViewerModal({
         src={url}
         alt=""
         onClick={(e) => e.stopPropagation()}
-        className="max-w-[95vw] max-h-[80vh] object-contain select-none rounded-lg"
+        className="max-w-[95vw] max-h-[80vh] object-contain select-none rounded-xl shadow-2xl"
         draggable={false}
         onContextMenu={(e) => e.preventDefault()}
       />
 
-      <p className="absolute bottom-8 text-[12px] text-white/50 pointer-events-none">
-        Tap anywhere to close · Photo will disappear
+      <p className="absolute bottom-8 text-[12.5px] font-medium text-white/60 pointer-events-none">
+        Tap anywhere to close · Disappears once dismissed
       </p>
     </motion.div>
   );
@@ -1067,13 +1069,13 @@ function ReactionPicker({
   return (
     <motion.div
       ref={ref}
-      initial={{ opacity: 0, scale: 0.7, y: 10 }}
+      initial={{ opacity: 0, scale: 0.8, y: 10 }}
       animate={{ opacity: 1, scale: 1, y: 0 }}
-      exit={{ opacity: 0, scale: 0.7, y: 10 }}
+      exit={{ opacity: 0, scale: 0.8, y: 10 }}
       transition={{ type: 'spring', stiffness: 500, damping: 30 }}
       className={`absolute z-50 bottom-full mb-2 ${
         isMe ? 'right-0' : 'left-0'
-      } flex items-center gap-0.5 px-2 py-1.5 rounded-full bg-[#1F1D1A] border border-white/[0.10] shadow-[0_16px_40px_-8px_rgba(0,0,0,0.9)] backdrop-blur-md`}
+      } flex items-center gap-1 px-2.5 py-1.5 rounded-full bg-[#1A1816]/95 border border-white/[0.12] shadow-[0_16px_40px_-8px_rgba(0,0,0,0.85)] backdrop-blur-md`}
     >
       {QUICK_REACTIONS.map((e, i) => (
         <motion.button
@@ -1087,7 +1089,7 @@ function ReactionPicker({
           transition={{ delay: i * 0.03, type: 'spring', stiffness: 500, damping: 22 }}
           whileHover={{ scale: 1.35, y: -3 }}
           whileTap={{ scale: 0.85 }}
-          className="w-9 h-9 rounded-full flex items-center justify-center text-[22px] hover:bg-white/[0.06] transition-colors"
+          className="w-9 h-9 rounded-full flex items-center justify-center text-[22px] hover:bg-white/[0.08] transition-colors"
         >
           {e}
         </motion.button>
@@ -1121,7 +1123,7 @@ function ReactionChips({
 
   return (
     <div
-      className={`flex items-center gap-1 mt-1 px-1 flex-wrap ${
+      className={`flex items-center gap-1.5 mt-1.5 px-1 flex-wrap ${
         isMe ? 'justify-end' : 'justify-start'
       }`}
     >
@@ -1131,21 +1133,21 @@ function ReactionChips({
           <motion.button
             key={emoji}
             onClick={() => onToggle(emoji)}
-            initial={{ opacity: 0, scale: 0.4 }}
+            initial={{ opacity: 0, scale: 0.5 }}
             animate={{ opacity: 1, scale: 1 }}
             whileHover={{ scale: 1.08 }}
             whileTap={{ scale: 0.92 }}
             transition={{ type: 'spring', stiffness: 500, damping: 25 }}
-            className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[12px] font-medium border transition-colors ${
+            className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[12px] font-medium border transition-colors shadow-sm ${
               mine
-                ? 'bg-[#D97706]/[0.15] border-[#D97706]/40 text-[#F59E0B]'
-                : 'bg-white/[0.06] border-white/[0.10] text-[#EDE5D4] hover:bg-white/[0.10]'
+                ? 'bg-[#D97706]/[0.18] border-[#D97706]/50 text-[#F59E0B]'
+                : 'bg-white/[0.08] border-white/[0.12] text-[#EDE5D4] hover:bg-white/[0.12]'
             }`}
             title={`${entries.length} reaction${entries.length > 1 ? 's' : ''}`}
           >
             <span className="text-[14px] leading-none">{emoji}</span>
             {entries.length > 1 && (
-              <span className="tabular-nums text-[10.5px] opacity-90">
+              <span className="tabular-nums text-[11px] opacity-90 font-semibold">
                 {entries.length}
               </span>
             )}
@@ -1163,32 +1165,33 @@ function ReactionChips({
 function ReplyPreviewBubble({
   replyTo,
   isMe,
-  theme,
+  currentUserId,
 }: {
   replyTo: LocalMessage;
   isMe: boolean;
-  theme: ChatTheme;
+  currentUserId: string | undefined;
 }) {
   const body =
     replyTo.plaintext ??
     replyTo.content ??
-    (replyTo.mediaType === MediaType.Image ? '📷 Photo' : '');
-  const senderLabel = replyTo.senderId === (isMe ? 'me' : 'them') ? 'You' : 'Them';
+    (replyTo.mediaType === MediaType.Image ? '📷 Photo' : 'Attachment');
+  const isTargetMine = replyTo.senderId === currentUserId;
+  const senderLabel = isTargetMine ? 'You' : 'Reply';
   const display = body.length > 80 ? body.slice(0, 80) + '…' : body;
 
   return (
     <div
-      className={`mb-1.5 rounded-2xl border-l-[3px] pl-2.5 pr-2 py-1.5 text-[12px] ${
+      className={`mb-2 rounded-xl border-l-[3px] pl-2.5 pr-2 py-1.5 text-[12px] select-none ${
         isMe
-          ? 'bg-black/[0.15] border-black/40 text-black/80'
-          : 'bg-white/[0.06] border-[#D97706]/60 text-[#EDE5D4]/80'
+          ? 'bg-black/[0.18] border-white/60 text-white/90'
+          : 'bg-white/[0.08] border-[#D97706] text-[#EDE5D4]/90'
       }`}
     >
-      <div className="flex items-center gap-1 mb-0.5">
-        <CornerUpLeft className="w-3 h-3 opacity-60" />
-        <span className="font-semibold opacity-90">{senderLabel}</span>
+      <div className="flex items-center gap-1.5 mb-0.5">
+        <CornerUpLeft className="w-3 h-3 opacity-70 shrink-0" />
+        <span className="font-bold tracking-tight opacity-95">{senderLabel}</span>
       </div>
-      <p className="line-clamp-2 opacity-80">{display}</p>
+      <p className="line-clamp-2 opacity-85 leading-snug">{display}</p>
     </div>
   );
 }
@@ -1244,7 +1247,7 @@ function ChatContextMenu({
         exit={{ y: 40, opacity: 0, scale: 0.98 }}
         transition={{ type: 'spring', stiffness: 380, damping: 32 }}
         onClick={(e) => e.stopPropagation()}
-        className="w-full sm:max-w-xs rounded-t-[22px] sm:rounded-[22px] bg-[#1C1A17] border-t sm:border border-white/[0.08] shadow-[0_-24px_60px_-12px_rgba(0,0,0,0.95)] sm:shadow-[0_24px_60px_-12px_rgba(0,0,0,0.95)] overflow-hidden"
+        className="w-full sm:max-w-xs rounded-t-[22px] sm:rounded-[22px] bg-[#1C1A17] border-t sm:border border-white/[0.08] shadow-2xl overflow-hidden"
       >
         <div className="px-5 py-4 border-b border-white/[0.06] flex items-center gap-3">
           <Avatar name={friend.displayName} src={friend.avatarUrl} size="md" />
@@ -1272,7 +1275,7 @@ function ChatContextMenu({
                 a.onClick();
                 onClose();
               }}
-              className={`w-full flex items-center gap-3 px-5 py-3 text-[13px] transition-colors text-left ${
+              className={`w-full flex items-center gap-3 px-5 py-3 text-[13px] font-medium transition-colors text-left ${
                 a.danger
                   ? 'text-[#F87171] hover:bg-[#B91C1C]/[0.10]'
                   : 'text-[#EDE5D4] hover:bg-white/[0.04]'
@@ -1308,23 +1311,23 @@ function ThemeGrid({
           <button
             key={k}
             onClick={() => onSelect(k)}
-            className={`flex flex-col items-center gap-1.5 p-2 rounded-xl transition-colors ${
+            className={`flex flex-col items-center gap-1.5 p-2 rounded-xl transition-all ${
               active
-                ? 'bg-white/[0.06] ring-1 ring-inset ring-white/[0.10]'
-                : 'hover:bg-white/[0.03]'
+                ? 'bg-white/[0.08] ring-1 ring-inset ring-white/[0.14]'
+                : 'hover:bg-white/[0.04]'
             }`}
           >
             <span
-              className={`w-8 h-8 rounded-full border-2 ${
+              className={`w-8 h-8 rounded-full border-2 transition-transform ${
                 active
-                  ? 'border-[#4ADE80] shadow-[0_0_12px_rgba(74,222,128,0.4)]'
-                  : 'border-white/[0.10]'
+                  ? 'border-[#4ADE80] shadow-[0_0_12px_rgba(74,222,128,0.4)] scale-105'
+                  : 'border-white/[0.12]'
               }`}
               style={{ background: t.swatch }}
             />
             <span
-              className={`text-[10px] font-medium truncate max-w-full ${
-                active ? 'text-[#EDE5D4]' : 'text-[#A8A29E]'
+              className={`text-[10.5px] font-medium truncate max-w-full ${
+                active ? 'text-[#EDE5D4] font-semibold' : 'text-[#A8A29E]'
               }`}
             >
               {t.label}
@@ -1393,26 +1396,26 @@ function VoiceBubble({
 
   return (
     <div
-      className={`inline-flex items-center gap-3 px-3 py-2 rounded-[20px] ${
+      className={`inline-flex items-center gap-3 px-3.5 py-2.5 rounded-[22px] shadow-sm select-none ${
         isMe ? theme.bubbleSent : theme.bubbleReceived
       } min-w-[220px] max-w-[280px]`}
     >
       <button
         type="button"
         onClick={toggle}
-        className={`shrink-0 w-9 h-9 rounded-full flex items-center justify-center transition-colors ${
-          isMe ? 'bg-black/[0.15]' : 'bg-white/[0.06]'
+        className={`shrink-0 w-9 h-9 rounded-full flex items-center justify-center transition-all ${
+          isMe ? 'bg-black/[0.18] hover:bg-black/[0.28]' : 'bg-white/[0.08] hover:bg-white/[0.15]'
         }`}
         aria-label={playing ? 'Pause' : 'Play'}
       >
         {playing ? (
-          <span className="flex gap-0.5">
-            <span className="w-[3px] h-3 rounded-sm bg-current" />
-            <span className="w-[3px] h-3 rounded-sm bg-current" />
+          <span className="flex gap-1">
+            <span className="w-[3px] h-3.5 rounded-sm bg-current" />
+            <span className="w-[3px] h-3.5 rounded-sm bg-current" />
           </span>
         ) : (
           <span
-            className="w-0 h-0 border-y-[6px] border-y-transparent border-l-[9px] ml-0.5"
+            className="w-0 h-0 border-y-[6px] border-y-transparent border-l-[10px] ml-0.5"
             style={{ borderLeftColor: 'currentColor' }}
           />
         )}
@@ -1420,26 +1423,26 @@ function VoiceBubble({
       <div className="flex-1 min-w-0">
         <div className="flex items-end gap-0.5 h-6">
           {Array.from({ length: 24 }).map((_, i) => {
-            const height = 20 + Math.sin(i * 0.7) * 12 + (i % 3) * 4;
+            const height = 18 + Math.sin(i * 0.7) * 10 + (i % 3) * 4;
             const active = (i / 24) * 100 <= pct;
             return (
               <span
                 key={i}
-                className="w-[2.5px] rounded-full transition-colors"
+                className="w-[2.5px] rounded-full transition-all"
                 style={{
                   height: `${Math.max(4, Math.min(24, height))}px`,
                   background: 'currentColor',
-                  opacity: active ? 1 : 0.28,
+                  opacity: active ? 1 : 0.3,
                 }}
               />
             );
           })}
         </div>
         <div className="flex justify-between mt-1">
-          <span className="text-[10.5px] tabular-nums opacity-70">
+          <span className="text-[10.5px] font-medium tabular-nums opacity-80">
             {playing || progress > 0 ? formatDuration(progress) : '0:00'}
           </span>
-          <span className="text-[10.5px] tabular-nums opacity-70">
+          <span className="text-[10.5px] font-medium tabular-nums opacity-80">
             {duration > 0 ? formatDuration(duration) : '–:––'}
           </span>
         </div>
@@ -1485,8 +1488,6 @@ const MessageRow = React.memo(
     reactions,
     currentUserId,
     replyTarget,
-    onDeleteForMe,
-    onDeleteForEveryone,
     onRequestProfile,
     onOpenImage,
     onReact,
@@ -1504,7 +1505,6 @@ const MessageRow = React.memo(
       touchStartRef.current = { x: t.clientX, y: t.clientY };
       swipingRef.current = false;
 
-      // Long press timer
       longPressRef.current = window.setTimeout(() => {
         if (!swipingRef.current) {
           setPickerOpen(true);
@@ -1519,7 +1519,14 @@ const MessageRow = React.memo(
       const dx = t.clientX - touchStartRef.current.x;
       const dy = t.clientY - touchStartRef.current.y;
 
-      // Only swipe on horizontal motion
+      if (Math.abs(dy) > 15 && !swipingRef.current) {
+        if (longPressRef.current) {
+          window.clearTimeout(longPressRef.current);
+          longPressRef.current = null;
+        }
+        return;
+      }
+
       if (!swipingRef.current && Math.abs(dx) > 12 && Math.abs(dx) > Math.abs(dy)) {
         swipingRef.current = true;
         if (longPressRef.current) {
@@ -1529,7 +1536,6 @@ const MessageRow = React.memo(
       }
 
       if (swipingRef.current) {
-        // Only allow right swipe (reply gesture), cap distance
         const clamped = Math.max(0, Math.min(80, dx));
         setSwipeX(clamped);
       }
@@ -1569,15 +1575,11 @@ const MessageRow = React.memo(
 
     const isVoice = message.mediaType === MediaType.Audio;
 
-    const tail = isLastOfGroup
+    const tailClass = isLastOfGroup
       ? isMe
-        ? 'rounded-br-[6px]'
-        : 'rounded-bl-[6px]'
+        ? 'rounded-br-[4px]'
+        : 'rounded-bl-[4px]'
       : '';
-
-    const mediaShadow = theme.isLight
-      ? '0 4px 16px -8px rgba(0,0,0,0.18), 0 0 0 1px rgba(0,0,0,0.04)'
-      : '0 6px 24px -10px rgba(0,0,0,0.55), 0 0 0 1px rgba(255,255,255,0.05)';
 
     const replyProgress = Math.min(1, swipeX / 60);
 
@@ -1589,14 +1591,14 @@ const MessageRow = React.memo(
           isTemp ? 'opacity-80' : ''
         }`}
       >
-        {/* Swipe-to-reply indicator (behind) */}
+        {/* Swipe-to-reply indicator */}
         <div
           className={`absolute inset-y-0 flex items-center pointer-events-none transition-opacity ${
             isMe ? 'right-0' : 'left-0'
           }`}
           style={{ opacity: replyProgress }}
         >
-          <div className="w-9 h-9 rounded-full bg-[#D97706]/[0.15] border border-[#D97706]/40 flex items-center justify-center">
+          <div className="w-9 h-9 rounded-full bg-[#D97706]/[0.18] border border-[#D97706]/50 flex items-center justify-center">
             <Reply className="w-4 h-4 text-[#F59E0B]" />
           </div>
         </div>
@@ -1622,7 +1624,7 @@ const MessageRow = React.memo(
                 <button
                   type="button"
                   onClick={() => onRequestProfile(message.senderId)}
-                  className="rounded-full focus:outline-none transition-transform hover:scale-[1.05]"
+                  className="rounded-full focus:outline-none transition-transform hover:scale-105"
                   aria-label={`View ${senderName}'s profile`}
                 >
                   <Avatar name={senderName} src={senderAvatar} size="sm" />
@@ -1646,7 +1648,7 @@ const MessageRow = React.memo(
                   {senderName}
                 </span>
                 <span
-                  className={`text-[10.5px] tabular-nums opacity-70 ${theme.textSecondary}`}
+                  className={`text-[10.5px] tabular-nums opacity-75 ${theme.textSecondary}`}
                 >
                   {formatTime(message.sentAt)}
                 </span>
@@ -1662,7 +1664,7 @@ const MessageRow = React.memo(
                       e.stopPropagation();
                       onOpenImage(message, senderName);
                     }}
-                    className="relative cursor-zoom-in overflow-hidden rounded-[20px] block transition-transform hover:scale-[1.005]"
+                    className="relative cursor-zoom-in overflow-hidden rounded-[20px] block transition-transform hover:scale-[1.008] shadow-md border border-white/[0.04]"
                     aria-label="View full image"
                   >
                     <img
@@ -1671,9 +1673,8 @@ const MessageRow = React.memo(
                       loading="lazy"
                       decoding="async"
                       className="rounded-[20px] max-h-[380px] w-auto object-cover"
-                      style={{ boxShadow: mediaShadow }}
                     />
-                    <span className="absolute top-2 right-2 w-7 h-7 rounded-full bg-black/50 backdrop-blur text-white flex items-center justify-center opacity-0 group-hover/media:opacity-100 transition-opacity pointer-events-none">
+                    <span className="absolute top-2.5 right-2.5 w-7 h-7 rounded-full bg-black/60 backdrop-blur-md text-white flex items-center justify-center opacity-0 group-hover/media:opacity-100 transition-opacity pointer-events-none">
                       <ZoomIn className="w-3.5 h-3.5" />
                     </span>
                   </button>
@@ -1681,9 +1682,9 @@ const MessageRow = React.memo(
 
                 {message.mediaType === MediaType.Image && isViewOnce && isMe && (
                   <div
-                    className={`inline-flex items-center gap-3 px-4 py-3.5 rounded-[20px] text-[13px] ${theme.subtleBg} border ${theme.subtleBorder}`}
+                    className={`inline-flex items-center gap-3 px-4 py-3.5 rounded-[22px] text-[13px] ${theme.subtleBg} border ${theme.subtleBorder} shadow-sm`}
                   >
-                    <span className="w-9 h-9 rounded-full bg-gradient-to-br from-[#7C3AED] to-[#A855F7] flex items-center justify-center shrink-0">
+                    <span className="w-9 h-9 rounded-full bg-gradient-to-br from-[#7C3AED] to-[#A855F7] flex items-center justify-center shrink-0 shadow-sm">
                       <Eye className="w-4 h-4 text-white" />
                     </span>
                     <span className="text-left">
@@ -1693,7 +1694,7 @@ const MessageRow = React.memo(
                         View-once photo sent
                       </span>
                       <span
-                        className={`block opacity-70 text-[11px] ${theme.textSecondary}`}
+                        className={`block opacity-75 text-[11px] ${theme.textSecondary}`}
                       >
                         Only visible to recipient
                       </span>
@@ -1709,23 +1710,23 @@ const MessageRow = React.memo(
                       if (!message.viewed) onOpenImage(message, senderName);
                     }}
                     disabled={message.viewed}
-                    className={`inline-flex items-center gap-3 px-4 py-3.5 rounded-[20px] text-[13px] transition-colors ${
+                    className={`inline-flex items-center gap-3 px-4 py-3.5 rounded-[22px] text-[13px] transition-all shadow-sm ${
                       message.viewed
-                        ? `${theme.subtleBg} border ${theme.subtleBorder} cursor-default`
-                        : 'bg-gradient-to-br from-[#7C3AED]/[0.14] to-[#A855F7]/[0.14] border border-[#A855F7]/30 hover:from-[#7C3AED]/[0.20] hover:to-[#A855F7]/[0.20]'
+                        ? `${theme.subtleBg} border ${theme.subtleBorder} opacity-60 cursor-default`
+                        : 'bg-gradient-to-br from-[#7C3AED]/[0.18] to-[#A855F7]/[0.18] border border-[#A855F7]/40 hover:from-[#7C3AED]/[0.26] hover:to-[#A855F7]/[0.26]'
                     }`}
                   >
                     <span
                       className={`w-9 h-9 rounded-full flex items-center justify-center shrink-0 ${
                         message.viewed
                           ? theme.subtleBgStrong
-                          : 'bg-gradient-to-br from-[#7C3AED] to-[#A855F7]'
+                          : 'bg-gradient-to-br from-[#7C3AED] to-[#A855F7] text-white shadow-sm'
                       }`}
                     >
                       {message.viewed ? (
                         <EyeOff className="w-4 h-4 opacity-60" />
                       ) : (
-                        <Eye className="w-4 h-4 text-white" />
+                        <Eye className="w-4 h-4" />
                       )}
                     </span>
                     <span className="text-left">
@@ -1736,7 +1737,7 @@ const MessageRow = React.memo(
                       </span>
                       {!message.viewed && (
                         <span
-                          className={`block opacity-70 text-[11px] ${theme.textSecondary}`}
+                          className={`block opacity-80 text-[11px] font-medium ${theme.textSecondary}`}
                         >
                           Tap to reveal
                         </span>
@@ -1750,8 +1751,7 @@ const MessageRow = React.memo(
                     src={message.mediaUrl ?? undefined}
                     controls
                     preload="metadata"
-                    className="rounded-[20px] max-h-[380px] w-full bg-black"
-                    style={{ boxShadow: mediaShadow }}
+                    className="rounded-[20px] max-h-[380px] w-full bg-black shadow-md border border-white/[0.04]"
                   />
                 )}
 
@@ -1761,11 +1761,11 @@ const MessageRow = React.memo(
                     target="_blank"
                     rel="noreferrer"
                     download
-                    className={`inline-flex items-center gap-2.5 px-3.5 py-3 rounded-[16px] text-[12.5px] border transition-colors ${theme.subtleBg} ${theme.subtleBorder} ${theme.hoverBg} ${theme.textPrimary}`}
+                    className={`inline-flex items-center gap-3 px-4 py-3 rounded-[18px] text-[13px] border shadow-sm transition-all ${theme.subtleBg} ${theme.subtleBorder} ${theme.hoverBg} ${theme.textPrimary}`}
                   >
-                    <FileText className="w-4 h-4 shrink-0 opacity-70" />
-                    <span className="truncate max-w-[200px]">Attached file</span>
-                    <Download className="w-3.5 h-3.5 shrink-0 opacity-60" />
+                    <FileText className="w-4 h-4 shrink-0 opacity-80" />
+                    <span className="truncate max-w-[200px] font-medium">Attached file</span>
+                    <Download className="w-4 h-4 shrink-0 opacity-70" />
                   </a>
                 )}
               </div>
@@ -1777,7 +1777,7 @@ const MessageRow = React.memo(
 
             {hasText && (
               <div
-                className={`relative inline-flex items-end gap-1 max-w-full ${
+                className={`relative inline-flex items-end gap-1.5 max-w-full ${
                   hasMedia ? 'mt-1.5' : 'mt-0'
                 }`}
               >
@@ -1793,12 +1793,12 @@ const MessageRow = React.memo(
                 </button>
 
                 {isEmojiOnly ? (
-                  <div className="px-1 py-0.5 text-[42px] leading-[1.15] break-words max-w-full">
+                  <div className="px-1 py-0.5 text-[44px] leading-[1.15] break-words max-w-full">
                     {displayText}
                   </div>
                 ) : (
                   <div
-                    className={`inline-block max-w-full text-[14.5px] leading-[1.45] break-words rounded-[19px] ${tail} px-3.5 py-[7.5px] ${
+                    className={`inline-block max-w-full text-[14.5px] leading-[1.5] break-words rounded-[20px] ${tailClass} px-4 py-2 shadow-sm ${
                       isMe ? theme.bubbleSent : theme.bubbleReceived
                     }`}
                   >
@@ -1806,7 +1806,7 @@ const MessageRow = React.memo(
                       <ReplyPreviewBubble
                         replyTo={replyTarget}
                         isMe={isMe}
-                        theme={theme}
+                        currentUserId={currentUserId}
                       />
                     )}
                     <LinkifiedText text={displayText} isMe={isMe} />
@@ -1861,7 +1861,10 @@ const MessageRow = React.memo(
             {urls.length > 0 && <LinkPreviews urls={urls} theme={theme} />}
 
             {isMe && isLastOfGroup && (
-              <div className="flex items-center mt-1 px-1.5">
+              <div className="flex items-center gap-1 mt-1 px-1.5 select-none">
+                <span className={`text-[10px] tabular-nums opacity-60 ${theme.textSecondary}`}>
+                  {formatTime(message.sentAt)}
+                </span>
                 {isTemp ? (
                   <Loader2
                     className={`w-3 h-3 animate-spin ${theme.textSecondary}`}
@@ -1875,7 +1878,6 @@ const MessageRow = React.memo(
             )}
           </div>
 
-          {/* Long-press desktop menu */}
           <AnimatePresence>
             {pickerOpen && (
               <motion.button
@@ -1887,7 +1889,7 @@ const MessageRow = React.memo(
                   setPickerOpen(false);
                   onOpenMenu(message);
                 }}
-                className="fixed inset-0 z-40 cursor-default"
+                className="fixed inset-0 z-40 cursor-default bg-transparent"
                 aria-label="Message menu"
               />
             )}
@@ -2007,7 +2009,7 @@ function InfoModal({
             exit={{ scale: 0.96, opacity: 0, y: 6 }}
             transition={{ type: 'spring', stiffness: 340, damping: 28 }}
             onClick={(e) => e.stopPropagation()}
-            className="w-full max-w-md rounded-[22px] bg-[#1C1A17] border border-white/[0.08] shadow-[0_24px_60px_-12px_rgba(0,0,0,0.95)] overflow-hidden flex flex-col max-h-[90vh]"
+            className="w-full max-w-md rounded-[22px] bg-[#1C1A17] border border-white/[0.08] shadow-2xl overflow-hidden flex flex-col max-h-[90vh]"
           >
             <div className="p-6 flex flex-col items-center text-center border-b border-white/[0.06] shrink-0">
               <div className="p-[3px] rounded-full bg-gradient-to-tr from-[#D97706]/50 via-[#D97706]/20 to-transparent">
@@ -2020,7 +2022,7 @@ function InfoModal({
                   />
                 </div>
               </div>
-              <p className="mt-4 text-[15.5px] font-semibold text-[#EDE5D4] tracking-tight">
+              <p className="mt-4 text-[16px] font-bold text-[#EDE5D4] tracking-tight">
                 {targetUser.displayName}
               </p>
               <p className="text-[12px] text-[#7A6F65] mt-0.5">
@@ -2033,7 +2035,7 @@ function InfoModal({
                 <div className="px-5 py-4 border-b border-white/[0.06]">
                   <div className="flex items-center gap-2 mb-3">
                     <Palette className="w-3.5 h-3.5 text-[#7A6F65]" />
-                    <span className="text-[11px] uppercase tracking-[0.16em] text-[#7A6F65] font-medium">
+                    <span className="text-[11px] uppercase tracking-[0.16em] text-[#7A6F65] font-semibold">
                       Chat theme
                     </span>
                   </div>
@@ -2044,7 +2046,7 @@ function InfoModal({
                   {isFriend && (
                     <button
                       onClick={() => setConfirmAction('unfriend')}
-                      className="w-full flex items-center gap-3 px-5 py-3.5 text-[13px] text-[#EDE5D4] hover:bg-white/[0.04] transition-colors text-left"
+                      className="w-full flex items-center gap-3 px-5 py-3.5 text-[13px] font-medium text-[#EDE5D4] hover:bg-white/[0.04] transition-colors text-left"
                     >
                       <UserMinus className="w-4 h-4 text-[#A8A29E] shrink-0" />
                       <span>Unfriend</span>
@@ -2052,7 +2054,7 @@ function InfoModal({
                   )}
                   <button
                     onClick={() => setConfirmAction('clear')}
-                    className="w-full flex items-center gap-3 px-5 py-3.5 text-[13px] text-[#EDE5D4] hover:bg-white/[0.04] transition-colors text-left"
+                    className="w-full flex items-center gap-3 px-5 py-3.5 text-[13px] font-medium text-[#EDE5D4] hover:bg-white/[0.04] transition-colors text-left"
                   >
                     <Eraser className="w-4 h-4 text-[#A8A29E] shrink-0" />
                     <span>Clear this chat</span>
@@ -2065,7 +2067,7 @@ function InfoModal({
               </div>
             ) : (
               <div className="p-5">
-                <h3 className="text-[14px] font-semibold text-[#EDE5D4] mb-1.5">
+                <h3 className="text-[14.5px] font-bold text-[#EDE5D4] mb-1.5">
                   {confirmCopy[confirmAction].title}
                 </h3>
                 <p className="text-[12.5px] text-[#A8A29E] leading-relaxed">
@@ -2084,7 +2086,7 @@ function InfoModal({
               {!confirmAction ? (
                 <button
                   onClick={handleClose}
-                  className="h-9 px-4 rounded-xl bg-white/[0.04] hover:bg-white/[0.08] text-[12.5px] text-[#EDE5D4] transition-colors"
+                  className="h-9 px-4 rounded-xl bg-white/[0.04] hover:bg-white/[0.08] text-[12.5px] font-medium text-[#EDE5D4] transition-colors"
                 >
                   Close
                 </button>
@@ -2096,14 +2098,14 @@ function InfoModal({
                       setError(null);
                     }}
                     disabled={busy}
-                    className="h-9 px-4 rounded-xl bg-white/[0.04] hover:bg-white/[0.08] disabled:opacity-40 text-[12.5px] text-[#EDE5D4] transition-colors"
+                    className="h-9 px-4 rounded-xl bg-white/[0.04] hover:bg-white/[0.08] disabled:opacity-40 text-[12.5px] font-medium text-[#EDE5D4] transition-colors"
                   >
                     Back
                   </button>
                   <button
                     onClick={() => void runAction(confirmAction)}
                     disabled={busy}
-                    className="h-9 px-4 rounded-xl bg-[#B91C1C] hover:bg-[#991B1B] disabled:opacity-50 text-white text-[12.5px] font-medium transition-colors inline-flex items-center gap-1.5"
+                    className="h-9 px-4 rounded-xl bg-[#B91C1C] hover:bg-[#991B1B] disabled:opacity-50 text-white text-[12.5px] font-semibold transition-colors inline-flex items-center gap-1.5"
                   >
                     {busy && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
                     <span>
@@ -2124,7 +2126,7 @@ function InfoModal({
 /* Main pane                                                  */
 /* ────────────────────────────────────────────────────────── */
 
-function DirectMessagePane(): React.JSX.Element {
+export function DirectMessagePane(): React.JSX.Element {
   const { userId } = useParams<{ userId?: string }>();
   const navigate = useNavigate();
   const { user } = useAuth();
@@ -2156,15 +2158,11 @@ function DirectMessagePane(): React.JSX.Element {
     Record<string, DirectMessageDto>
   >({});
 
-  // Reactions live per (user, peer) in localStorage
   const [reactions, setReactions] = useState<Record<string, ReactionEntry[]>>(
     () => readReactions(user?.id, userId),
   );
 
-  // Currently replying-to message
   const [replyTo, setReplyTo] = useState<LocalMessage | null>(null);
-
-  // Message options menu (from long-press on desktop)
   const [menuMessage, setMenuMessage] = useState<LocalMessage | null>(null);
 
   const [pendingDeleteEveryoneId, setPendingDeleteEveryoneId] = useState<
@@ -2533,7 +2531,6 @@ function DirectMessagePane(): React.JSX.Element {
         );
         if (!active) return;
         setMessages(msgs);
-        // Merge server-loaded reactions into local (server wins)
         setReactions((prev) => {
           const merged: Record<string, ReactionEntry[]> = { ...prev };
           for (const [k, list] of Object.entries(reacts)) {
@@ -2609,7 +2606,7 @@ function DirectMessagePane(): React.JSX.Element {
               mediaUrl: d.mediaUrl ?? existing.mediaUrl,
               mediaType: d.mediaType ?? existing.mediaType,
               viewOnce: d.viewOnce ?? existing.viewOnce,
-              viewed: d.viewed ?? existing.viewed,
+              viewed: existing.viewed || d.viewed,
               replyToId: d.replyToId ?? existing.replyToId,
             };
           });
@@ -2646,7 +2643,6 @@ function DirectMessagePane(): React.JSX.Element {
           return allSame ? prev : final;
         });
 
-        // Merge reactions from server
         setReactions((prev) => {
           const merged: Record<string, ReactionEntry[]> = { ...prev };
           let changed = false;
@@ -2728,7 +2724,6 @@ function DirectMessagePane(): React.JSX.Element {
         const text = decrypted.plaintext ?? decrypted.content ?? '';
         const decoded = decodeIncoming(text);
 
-        // Handle reaction event
         if (decoded.isReaction) {
           const key = String(decoded.messageId);
           setReactions((prev) => {
@@ -3066,7 +3061,6 @@ function DirectMessagePane(): React.JSX.Element {
       );
       const action: 'add' | 'remove' = mine ? 'remove' : 'add';
 
-      // Optimistic local update
       setReactions((prev) => {
         const arr = [...(prev[key] ?? [])];
         if (action === 'remove') {
@@ -3075,7 +3069,6 @@ function DirectMessagePane(): React.JSX.Element {
           );
           if (idx >= 0) arr.splice(idx, 1);
         } else {
-          // remove my other reactions first (WhatsApp-style: one per person)
           const cleaned = arr.filter((r) => r.userId !== user.id);
           cleaned.push({ emoji, userId: user.id });
           return { ...prev, [key]: cleaned };
@@ -3083,7 +3076,6 @@ function DirectMessagePane(): React.JSX.Element {
         return { ...prev, [key]: arr };
       });
 
-      // Send control message
       try {
         const payload = encodeReaction(messageId, emoji, action);
         const pub = await getPublicKeyFor(userId);
@@ -3502,7 +3494,7 @@ function DirectMessagePane(): React.JSX.Element {
               Chats
             </h2>
             <span
-              className={`text-[11.5px] tabular-nums ${theme.textSecondary}`}
+              className={`text-[12px] tabular-nums font-semibold ${theme.textSecondary}`}
             >
               {friends.length}
             </span>
@@ -3519,7 +3511,7 @@ function DirectMessagePane(): React.JSX.Element {
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               placeholder="Search conversations"
-              className={`w-full h-11 pl-10 pr-3 rounded-2xl ${theme.subtleBg} border ${theme.subtleBorder} text-[13px] ${theme.textPrimary} focus:outline-none transition-colors placeholder:opacity-60`}
+              className={`w-full h-11 pl-10 pr-3 rounded-2xl ${theme.subtleBg} border ${theme.subtleBorder} text-[13.5px] ${theme.textPrimary} focus:outline-none transition-colors placeholder:opacity-60`}
             />
           </div>
         </div>
@@ -3527,9 +3519,9 @@ function DirectMessagePane(): React.JSX.Element {
         <div className="flex-1 overflow-y-auto px-2.5 pb-2 space-y-0.5">
           {filteredFriends.length === 0 ? (
             <div
-              className={`p-8 text-center text-[12.5px] ${theme.textSecondary}`}
+              className={`p-8 text-center text-[13px] font-medium ${theme.textSecondary}`}
             >
-              {friends.length === 0 ? 'No contacts yet.' : 'No matches.'}
+              {friends.length === 0 ? 'No contacts yet.' : 'No matches found.'}
             </div>
           ) : (
             filteredFriends.map((friend) => {
@@ -3568,11 +3560,11 @@ function DirectMessagePane(): React.JSX.Element {
                       <div className="flex items-center gap-1.5 min-w-0">
                         {isPinned && (
                           <Pin
-                            className={`w-3 h-3 shrink-0 ${theme.accentText}`}
+                            className={`w-3.5 h-3.5 shrink-0 ${theme.accentText}`}
                           />
                         )}
                         <p
-                          className={`text-[13.5px] font-bold truncate tracking-tight ${theme.textPrimary}`}
+                          className={`text-[14px] font-bold truncate tracking-tight ${theme.textPrimary}`}
                         >
                           {friend.displayName}
                         </p>
@@ -3584,7 +3576,7 @@ function DirectMessagePane(): React.JSX.Element {
                       </div>
                       {preview && (
                         <span
-                          className={`shrink-0 text-[10.5px] tabular-nums ${theme.textSecondary}`}
+                          className={`shrink-0 text-[10.5px] tabular-nums font-medium ${theme.textSecondary}`}
                         >
                           {formatRelativeShort(preview.sentAt)}
                         </span>
@@ -3594,7 +3586,7 @@ function DirectMessagePane(): React.JSX.Element {
                       <p
                         className={`text-[12px] truncate ${
                           unread > 0
-                            ? `${theme.textPrimary} font-medium`
+                            ? `${theme.textPrimary} font-semibold`
                             : theme.textSecondary
                         }`}
                       >
@@ -3604,7 +3596,7 @@ function DirectMessagePane(): React.JSX.Element {
                       </p>
                       {unread > 0 && (
                         <span
-                          className={`shrink-0 min-w-[20px] h-5 px-1.5 rounded-full ${theme.accent} text-[10.5px] font-bold tabular-nums flex items-center justify-center`}
+                          className={`shrink-0 min-w-[20px] h-5 px-1.5 rounded-full ${theme.accent} text-[10.5px] font-bold tabular-nums flex items-center justify-center shadow-sm`}
                         >
                           {unread > 99 ? '99+' : unread}
                         </span>
@@ -3618,7 +3610,7 @@ function DirectMessagePane(): React.JSX.Element {
         </div>
       </div>
 
-      {/* Chat */}
+      {/* Chat pane */}
       <div
         className={`${
           hasActiveChat ? 'flex' : 'hidden md:flex'
@@ -3650,7 +3642,7 @@ function DirectMessagePane(): React.JSX.Element {
                 <button
                   type="button"
                   onClick={() => setProfileModalUserId(targetUser.id)}
-                  className="shrink-0 rounded-full focus:outline-none transition-transform hover:scale-[1.03]"
+                  className="shrink-0 rounded-full focus:outline-none transition-transform hover:scale-105"
                   aria-label={`View ${targetUser.displayName}'s profile`}
                 >
                   <Avatar
@@ -3663,18 +3655,18 @@ function DirectMessagePane(): React.JSX.Element {
 
                 <div className="min-w-0">
                   <h3
-                    className={`text-[15px] font-bold truncate tracking-tight ${theme.textPrimary}`}
+                    className={`text-[15.5px] font-bold truncate tracking-tight ${theme.textPrimary}`}
                   >
                     {targetUser.displayName}
                   </h3>
                   <p
-                    className={`text-[11px] truncate mt-0.5 flex items-center gap-1.5 ${theme.textSecondary}`}
+                    className={`text-[11.5px] truncate mt-0.5 flex items-center gap-1.5 ${theme.textSecondary}`}
                   >
                     <span
-                      className={`w-1.5 h-1.5 rounded-full shrink-0 ${
+                      className={`w-2 h-2 rounded-full shrink-0 ${
                         isTargetOnline
                           ? 'bg-[#22C55E] shadow-[0_0_6px_rgba(34,197,94,0.6)]'
-                          : 'opacity-50 bg-current'
+                          : 'opacity-40 bg-current'
                       }`}
                     />
                     <span>
@@ -3714,7 +3706,7 @@ function DirectMessagePane(): React.JSX.Element {
             </div>
 
             {!isConfirmedFriend && (
-              <div className="shrink-0 px-4 sm:px-5 py-2.5 bg-[#D97706]/[0.06] border-b border-[#D97706]/20 flex flex-wrap items-center justify-between gap-3 text-[12.5px]">
+              <div className="shrink-0 px-4 sm:px-5 py-2.5 bg-[#D97706]/[0.08] border-b border-[#D97706]/20 flex flex-wrap items-center justify-between gap-3 text-[12.5px]">
                 <div
                   className={`flex items-center gap-2 min-w-0 ${theme.textSecondary}`}
                 >
@@ -3725,7 +3717,7 @@ function DirectMessagePane(): React.JSX.Element {
                 </div>
                 <div className="flex items-center gap-2 shrink-0">
                   {friendRequestStatus && (
-                    <span className="text-[11.5px] text-[#4ADE80]">
+                    <span className="text-[11.5px] font-semibold text-[#4ADE80]">
                       {friendRequestStatus}
                     </span>
                   )}
@@ -3733,7 +3725,7 @@ function DirectMessagePane(): React.JSX.Element {
                     onClick={() => void handleSendFriendRequest()}
                     className={`h-7 px-3 rounded-lg ${theme.accent} text-[11.5px] font-semibold inline-flex items-center gap-1.5 transition-colors`}
                   >
-                    <UserPlus className="w-3 h-3" />
+                    <UserPlus className="w-3.5 h-3.5" />
                     Add friend
                   </button>
                 </div>
@@ -3750,7 +3742,7 @@ function DirectMessagePane(): React.JSX.Element {
                   <button
                     onClick={() => void handleLoadEarlier()}
                     disabled={loadingMore}
-                    className={`px-4 py-2 rounded-full ${theme.subtleBg} border ${theme.subtleBorder} text-[11.5px] ${theme.textSecondary} ${theme.hoverBg} disabled:opacity-50 transition-colors`}
+                    className={`px-4 py-2 rounded-full ${theme.subtleBg} border ${theme.subtleBorder} text-[11.5px] font-medium ${theme.textSecondary} ${theme.hoverBg} disabled:opacity-50 transition-colors shadow-sm`}
                   >
                     {loadingMore ? 'Loading…' : 'Load earlier messages'}
                   </button>
@@ -3766,7 +3758,7 @@ function DirectMessagePane(): React.JSX.Element {
                   </div>
                   <div>
                     <p
-                      className={`text-[14px] font-bold tracking-tight ${theme.textPrimary}`}
+                      className={`text-[14.5px] font-bold tracking-tight ${theme.textPrimary}`}
                     >
                       Couldn't load messages
                     </p>
@@ -3804,11 +3796,11 @@ function DirectMessagePane(): React.JSX.Element {
                   </div>
                   <div>
                     <p
-                      className={`text-[15px] font-bold tracking-tight ${theme.textPrimary}`}
+                      className={`text-[15.5px] font-bold tracking-tight ${theme.textPrimary}`}
                     >
                       No messages yet
                     </p>
-                    <p className={`text-[12.5px] mt-1 ${theme.textSecondary}`}>
+                    <p className={`text-[13px] mt-1 ${theme.textSecondary}`}>
                       Say hi to {targetUser.displayName}.
                     </p>
                   </div>
@@ -3817,9 +3809,9 @@ function DirectMessagePane(): React.JSX.Element {
                 grouped.map((item) => {
                   if (item.type === 'date') {
                     return (
-                      <div key={item.key} className="flex justify-center my-5">
+                      <div key={item.key} className="flex justify-center my-5 select-none">
                         <span
-                          className={`px-3 py-1 rounded-full ${theme.subtleBg} border ${theme.subtleBorder} text-[10.5px] uppercase tracking-[0.14em] ${theme.textSecondary} font-semibold`}
+                          className={`px-3.5 py-1 rounded-full ${theme.subtleBg} border ${theme.subtleBorder} text-[10.5px] uppercase tracking-[0.14em] ${theme.textSecondary} font-bold shadow-sm`}
                         >
                           {item.label}
                         </span>
@@ -3873,7 +3865,7 @@ function DirectMessagePane(): React.JSX.Element {
                       />
                     </div>
                     <div
-                      className={`inline-flex items-center gap-1.5 px-4 py-3 rounded-[19px] rounded-bl-[6px] ${theme.bubbleReceived}`}
+                      className={`inline-flex items-center gap-1.5 px-4 py-3 rounded-[20px] rounded-bl-[4px] shadow-sm ${theme.bubbleReceived}`}
                     >
                       <span className="w-1.5 h-1.5 rounded-full bg-current opacity-60 animate-bounce [animation-delay:-0.32s]" />
                       <span className="w-1.5 h-1.5 rounded-full bg-current opacity-60 animate-bounce [animation-delay:-0.16s]" />
@@ -3899,7 +3891,7 @@ function DirectMessagePane(): React.JSX.Element {
                   }
                   transition={{ type: 'spring', stiffness: 400, damping: 30 }}
                   onClick={handleJumpToLatest}
-                  className={`absolute bottom-24 right-6 z-30 w-10 h-10 rounded-full ${theme.accent} shadow-lg flex items-center justify-center transition-colors`}
+                  className={`absolute bottom-24 right-6 z-30 w-10 h-10 rounded-full ${theme.accent} shadow-xl flex items-center justify-center transition-all`}
                   aria-label="Jump to latest"
                 >
                   <ChevronDown className="w-5 h-5" />
@@ -3949,20 +3941,20 @@ function DirectMessagePane(): React.JSX.Element {
                             transition={{ duration: 0.18 }}
                             className="pb-2 overflow-hidden"
                           >
-                            <div className="flex items-center gap-3 p-2.5 rounded-2xl bg-white/[0.04] border-l-[3px] border-[#D97706]">
+                            <div className="flex items-center gap-3 p-2.5 rounded-2xl bg-white/[0.05] border-l-[3px] border-[#D97706] shadow-sm">
                               <div className="flex-1 min-w-0">
                                 <div className="flex items-center gap-1.5 mb-0.5">
-                                  <CornerUpLeft className="w-3 h-3 text-[#D97706]" />
+                                  <CornerUpLeft className="w-3.5 h-3.5 text-[#D97706]" />
                                   <span className="text-[10.5px] uppercase tracking-[0.14em] font-bold text-[#D97706]">
                                     Reply
                                   </span>
                                 </div>
-                                <p className="text-[12.5px] text-[#EDE5D4] truncate">
+                                <p className="text-[12.5px] text-[#EDE5D4] truncate font-medium">
                                   {replyTo.plaintext ??
                                     replyTo.content ??
                                     (replyTo.mediaType === MediaType.Image
                                       ? '📷 Photo'
-                                      : 'Message')}
+                                      : 'Attachment')}
                                 </p>
                               </div>
                               <button
@@ -4004,7 +3996,7 @@ function DirectMessagePane(): React.JSX.Element {
                                 return (
                                   <div
                                     key={`${file.name}-${index}`}
-                                    className={`relative shrink-0 w-20 h-20 rounded-2xl overflow-hidden ${theme.subtleBg} border ${theme.subtleBorder}`}
+                                    className={`relative shrink-0 w-20 h-20 rounded-2xl overflow-hidden shadow-sm ${theme.subtleBg} border ${theme.subtleBorder}`}
                                   >
                                     {isImage && previewUrl ? (
                                       <img
@@ -4035,7 +4027,7 @@ function DirectMessagePane(): React.JSX.Element {
                                     <button
                                       type="button"
                                       onClick={() => removePendingFile(index)}
-                                      className="absolute top-1 right-1 w-5 h-5 rounded-full bg-black/70 hover:bg-[#B91C1C] text-white flex items-center justify-center transition-colors"
+                                      className="absolute top-1 right-1 w-5 h-5 rounded-full bg-black/75 hover:bg-[#B91C1C] text-white flex items-center justify-center transition-colors"
                                       aria-label={`Remove ${file.name}`}
                                     >
                                       <X className="w-3 h-3" />
@@ -4046,7 +4038,7 @@ function DirectMessagePane(): React.JSX.Element {
                             </div>
                             <div className="flex items-center justify-between gap-2 mt-1.5">
                               <p
-                                className={`text-[11px] ${theme.textSecondary}`}
+                                className={`text-[11.5px] font-medium ${theme.textSecondary}`}
                               >
                                 {pendingFiles.length} file
                                 {pendingFiles.length === 1 ? '' : 's'} ready
@@ -4054,10 +4046,10 @@ function DirectMessagePane(): React.JSX.Element {
                               <button
                                 type="button"
                                 onClick={() => setPendingViewOnce((v) => !v)}
-                                className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10.5px] font-semibold transition-colors ${
+                                className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10.5px] font-semibold transition-all shadow-sm ${
                                   pendingViewOnce
                                     ? 'bg-gradient-to-r from-[#7C3AED] to-[#A855F7] text-white'
-                                    : `${theme.subtleBg} border ${theme.subtleBorder} ${theme.textSecondary}`
+                                    : `${theme.subtleBg} border ${theme.subtleBorder}${theme.textSecondary}`
                                 }`}
                               >
                                 <Eye className="w-3 h-3" />
@@ -4079,7 +4071,7 @@ function DirectMessagePane(): React.JSX.Element {
                             transition={{ duration: 0.15 }}
                             className="pb-2 sm:pb-3"
                           >
-                            <div className="flex items-center gap-1.5 text-[12px] text-[#F87171] px-2">
+                            <div className="flex items-center gap-1.5 text-[12px] font-medium text-[#F87171] px-2">
                               <AlertCircle className="w-3.5 h-3.5 shrink-0" />
                               <span>{fileError}</span>
                             </div>
@@ -4091,7 +4083,6 @@ function DirectMessagePane(): React.JSX.Element {
                         onSubmit={handleSendMessage}
                         className="flex items-end gap-1.5 sm:gap-2"
                       >
-                        {/* Hidden file inputs */}
                         <input
                           type="file"
                           ref={fileInputRef}
@@ -4128,8 +4119,8 @@ function DirectMessagePane(): React.JSX.Element {
                           onClick={() => setEmojiPanelOpen((v) => !v)}
                           className={`shrink-0 w-10 h-10 rounded-full flex items-center justify-center transition-colors ${
                             emojiPanelOpen
-                              ? `${theme.accentText} ${theme.subtleBgStrong}`
-                              : `${theme.textSecondary} ${theme.hoverBg}`
+                              ? `${theme.accentText}${theme.subtleBgStrong}`
+                              : `${theme.textSecondary}${theme.hoverBg}`
                           }`}
                           title="Emoji, GIFs & stickers"
                         >
@@ -4199,7 +4190,7 @@ function DirectMessagePane(): React.JSX.Element {
                                 stiffness: 420,
                                 damping: 26,
                               }}
-                              className={`shrink-0 w-10 h-10 rounded-full ${theme.accent} disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center`}
+                              className={`shrink-0 w-10 h-10 rounded-full ${theme.accent} disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center shadow-md`}
                               aria-label="Send"
                             >
                               {isSending ? (
@@ -4229,7 +4220,7 @@ function DirectMessagePane(): React.JSX.Element {
                                 stiffness: 420,
                                 damping: 26,
                               }}
-                              className={`shrink-0 w-10 h-10 rounded-full ${theme.accent} flex items-center justify-center`}
+                              className={`shrink-0 w-10 h-10 rounded-full ${theme.accent} flex items-center justify-center shadow-md`}
                               aria-label="Record voice message"
                             >
                               <Mic className="w-[19px] h-[19px]" />
@@ -4244,7 +4235,7 @@ function DirectMessagePane(): React.JSX.Element {
             </motion.div>
           </>
         ) : (
-          <div className="h-full flex flex-col items-center justify-center text-center px-8 relative z-10">
+          <div className="h-full flex flex-col items-center justify-center text-center px-8 relative z-10 select-none">
             <div
               className="w-24 h-24 rounded-full flex items-center justify-center mb-6"
               style={{
@@ -4253,20 +4244,20 @@ function DirectMessagePane(): React.JSX.Element {
               }}
             >
               <div
-                className={`w-16 h-16 rounded-full ${theme.subtleBg} border ${theme.subtleBorder} flex items-center justify-center`}
+                className={`w-16 h-16 rounded-full ${theme.subtleBg} border ${theme.subtleBorder} flex items-center justify-center shadow-inner`}
               >
                 <User className={`w-7 h-7 ${theme.textSecondary}`} />
               </div>
             </div>
             <h3
-              className={`text-[17px] font-bold mb-2 tracking-tight ${theme.textPrimary}`}
+              className={`text-[18px] font-bold mb-2 tracking-tight ${theme.textPrimary}`}
             >
               Your messages
             </h3>
             <p
-              className={`text-[13px] max-w-[320px] leading-relaxed ${theme.textSecondary}`}
+              className={`text-[13.5px] max-w-[320px] leading-relaxed ${theme.textSecondary}`}
             >
-              Pick a conversation from the list to start chatting.
+              Pick a conversation from the sidebar to start chatting.
             </p>
           </div>
         )}
@@ -4284,7 +4275,7 @@ function DirectMessagePane(): React.JSX.Element {
         onAudioFile={() => audioFileInputRef.current?.click()}
       />
 
-      {/* Message menu (from desktop long-press) */}
+      {/* Message menu */}
       <AnimatePresence>
         {menuMessage && (
           <motion.div
@@ -4300,11 +4291,11 @@ function DirectMessagePane(): React.JSX.Element {
               exit={{ y: 40, opacity: 0, scale: 0.98 }}
               transition={{ type: 'spring', stiffness: 380, damping: 32 }}
               onClick={(e) => e.stopPropagation()}
-              className="w-full sm:max-w-xs rounded-t-[22px] sm:rounded-[22px] bg-[#1C1A17] border-t sm:border border-white/[0.08] shadow-[0_-24px_60px_-12px_rgba(0,0,0,0.95)] sm:shadow-[0_24px_60px_-12px_rgba(0,0,0,0.95)] overflow-hidden"
+              className="w-full sm:max-w-xs rounded-t-[22px] sm:rounded-[22px] bg-[#1C1A17] border-t sm:border border-white/[0.08] shadow-2xl overflow-hidden"
             >
               <div className="px-5 py-3 border-b border-white/[0.06]">
                 <span className="text-[11px] uppercase tracking-[0.16em] text-[#7A6F65] font-semibold">
-                  Message
+                  Message options
                 </span>
               </div>
               <button
@@ -4312,7 +4303,7 @@ function DirectMessagePane(): React.JSX.Element {
                   handleStartReply(menuMessage);
                   setMenuMessage(null);
                 }}
-                className="w-full flex items-center gap-3 px-5 py-3 text-[13px] text-[#EDE5D4] hover:bg-white/[0.04] transition-colors text-left"
+                className="w-full flex items-center gap-3 px-5 py-3 text-[13px] font-medium text-[#EDE5D4] hover:bg-white/[0.04] transition-colors text-left"
               >
                 <Reply className="w-4 h-4 text-[#A8A29E]" />
                 <span>Reply</span>
@@ -4323,7 +4314,7 @@ function DirectMessagePane(): React.JSX.Element {
                   if (t) void navigator.clipboard.writeText(t);
                   setMenuMessage(null);
                 }}
-                className="w-full flex items-center gap-3 px-5 py-3 text-[13px] text-[#EDE5D4] hover:bg-white/[0.04] transition-colors text-left"
+                className="w-full flex items-center gap-3 px-5 py-3 text-[13px] font-medium text-[#EDE5D4] hover:bg-white/[0.04] transition-colors text-left"
               >
                 <Copy className="w-4 h-4 text-[#A8A29E]" />
                 <span>Copy text</span>
@@ -4333,7 +4324,7 @@ function DirectMessagePane(): React.JSX.Element {
                   void handleDeleteForMe(menuMessage);
                   setMenuMessage(null);
                 }}
-                className="w-full flex items-center gap-3 px-5 py-3 text-[13px] text-[#EDE5D4] hover:bg-white/[0.04] transition-colors text-left"
+                className="w-full flex items-center gap-3 px-5 py-3 text-[13px] font-medium text-[#EDE5D4] hover:bg-white/[0.04] transition-colors text-left"
               >
                 <EyeOff className="w-4 h-4 text-[#A8A29E]" />
                 <span>Delete for me</span>
@@ -4346,7 +4337,7 @@ function DirectMessagePane(): React.JSX.Element {
                       handleRequestDeleteForEveryone(menuMessage);
                       setMenuMessage(null);
                     }}
-                    className="w-full flex items-center gap-3 px-5 py-3 text-[13px] text-[#F87171] hover:bg-[#B91C1C]/[0.10] transition-colors text-left border-t border-white/[0.04]"
+                    className="w-full flex items-center gap-3 px-5 py-3 text-[13px] font-medium text-[#F87171] hover:bg-[#B91C1C]/[0.10] transition-colors text-left border-t border-white/[0.04]"
                   >
                     <Trash2 className="w-4 h-4" />
                     <span>Delete for everyone</span>
@@ -4373,28 +4364,28 @@ function DirectMessagePane(): React.JSX.Element {
               exit={{ scale: 0.96, opacity: 0, y: 6 }}
               transition={{ type: 'spring', stiffness: 340, damping: 28 }}
               onClick={(e) => e.stopPropagation()}
-              className="w-full max-w-sm rounded-[22px] bg-[#1C1A17] border border-white/[0.08] shadow-[0_24px_60px_-12px_rgba(0,0,0,0.95)] overflow-hidden"
+              className="w-full max-w-sm rounded-[22px] bg-[#1C1A17] border border-white/[0.08] shadow-2xl overflow-hidden"
             >
               <div className="p-5">
-                <h3 className="text-[14.5px] font-semibold text-[#EDE5D4] mb-1.5">
+                <h3 className="text-[14.5px] font-bold text-[#EDE5D4] mb-1.5">
                   Delete for everyone?
                 </h3>
                 <p className="text-[12.5px] text-[#A8A29E] leading-relaxed">
                   This message will be removed for both you and{' '}
-                  {targetUser?.displayName ?? 'the other person'}. Cannot be
+                  {targetUser?.displayName ?? 'the other person'}. This cannot be
                   undone.
                 </p>
               </div>
               <div className="px-5 py-3.5 border-t border-white/[0.06] flex items-center justify-end gap-2">
                 <button
                   onClick={() => setPendingDeleteEveryoneId(null)}
-                  className="h-9 px-4 rounded-xl bg-white/[0.04] hover:bg-white/[0.08] text-[12.5px] text-[#EDE5D4] transition-colors"
+                  className="h-9 px-4 rounded-xl bg-white/[0.04] hover:bg-white/[0.08] text-[12.5px] font-medium text-[#EDE5D4] transition-colors"
                 >
                   Cancel
                 </button>
                 <button
                   onClick={() => void handleConfirmDeleteForEveryone()}
-                  className="h-9 px-4 rounded-xl bg-[#B91C1C] hover:bg-[#991B1B] text-white text-[12.5px] font-medium transition-colors"
+                  className="h-9 px-4 rounded-xl bg-[#B91C1C] hover:bg-[#991B1B] text-white text-[12.5px] font-semibold transition-colors"
                 >
                   Delete for everyone
                 </button>
