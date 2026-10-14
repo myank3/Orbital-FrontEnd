@@ -2083,7 +2083,6 @@ export function DirectMessagePane(): React.JSX.Element {
     [],
   );
 
-  /* ✅ Initial fetch — load everything (10,000 cap) */
   useEffect(() => {
     if (!userId || !user?.id) return;
     let active = true;
@@ -2120,7 +2119,6 @@ export function DirectMessagePane(): React.JSX.Element {
     return () => { active = false; };
   }, [userId, user?.id, decodeMessages]);
 
-  /* ✅ Poll — 4s, no olderThanPoll logic needed */
   useEffect(() => {
     if (!userId || !user?.id) return;
     let cancelled = false;
@@ -2211,7 +2209,6 @@ export function DirectMessagePane(): React.JSX.Element {
     };
   }, [userId, user?.id, decodeMessages]);
 
-  /* ✅ Real-time */
   useEffect(() => {
     const unsub = signalRService.onReceiveDirectMessage(
       async (msg: DirectMessageDto) => {
@@ -2302,8 +2299,6 @@ export function DirectMessagePane(): React.JSX.Element {
       if (isNearBottom) messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
     }
   }, [isPeerTyping]);
-
-  /* ── Send helpers ──────────────────────────────────────── */
 
   const sendImageOrMedia = useCallback(
     async (
@@ -2507,8 +2502,6 @@ export function DirectMessagePane(): React.JSX.Element {
   }, []);
 
   const handleOpenMenu = useCallback((m: LocalMessage) => { setMenuMessage(m); }, []);
-
-  /* ── Send text + files ──────────────────────────────────── */
 
   const doSendMessage = useCallback(async () => {
     if (!userId || !user?.id) return;
@@ -3076,7 +3069,7 @@ export function DirectMessagePane(): React.JSX.Element {
               )}
             </AnimatePresence>
 
-            {/* ✅ Composer — stable layout, no vertical shift */}
+            {/* Composer — stable layout, no collapse */}
             <div className="shrink-0 relative z-20">
               <div className={`border-t ${theme.subtleBorder} ${theme.composerBg} backdrop-blur-xl`}>
                 <AnimatePresence>
@@ -3097,129 +3090,60 @@ export function DirectMessagePane(): React.JSX.Element {
                       onCancel={() => setVoiceRecorderOpen(false)}
                     />
                   ) : (
-                    <>
-                      {/* ✅ Reply strip — fixed height, no layout shift */}
-                      <div className="relative h-0">
-                        <AnimatePresence>
-                          {replyTo && (
-                            <motion.div
-                              initial={{ opacity: 0, x: -12 }}
-                              animate={{ opacity: 1, x: 0 }}
-                              exit={{ opacity: 0, x: -12 }}
-                              transition={EASE_OUT}
-                              className="absolute left-0 right-0 top-0 mb-2"
-                              style={{ height: 56 }}
-                            >
-                              <div className="flex items-center gap-3 p-2.5 h-full rounded-2xl bg-white/[0.05] border-l-[3px] border-[#D97706] shadow-sm">
-                                <div className="flex-1 min-w-0">
-                                  <div className="flex items-center gap-1.5 mb-0.5">
-                                    <CornerUpLeft className="w-3.5 h-3.5 text-[#D97706]" />
-                                    <span className="text-[10.5px] uppercase tracking-[0.14em] font-bold text-[#D97706]">Reply</span>
-                                  </div>
-                                  <p className="text-[12.5px] text-[#EDE5D4] truncate font-medium">
-                                    {replyTo.plaintext ?? replyTo.content ??
-                                      (replyTo.mediaType === MediaType.Image
-                                        ? replyTo.sticker ? '🎨 Sticker' : '📷 Photo'
-                                        : replyTo.mediaType === MediaType.Audio
-                                          ? '🎤 Voice message'
-                                          : 'Attachment')}
-                                  </p>
-                                </div>
-                                <button
-                                  onClick={() => setReplyTo(null)}
-                                  className="shrink-0 w-7 h-7 rounded-full flex items-center justify-center text-[#7A6F65] hover:text-[#EDE5D4] hover:bg-white/[0.06] transition-colors"
-                                >
-                                  <X className="w-3.5 h-3.5" />
-                                </button>
-                              </div>
-                            </motion.div>
-                          )}
-                        </AnimatePresence>
-                      </div>
-
-                      {/* ✅ Pending files strip — fixed height */}
-                      <div className="relative h-0">
-                        <AnimatePresence>
-                          {pendingFiles.length > 0 && (
-                            <motion.div
-                              initial={{ opacity: 0, y: -8 }}
-                              animate={{ opacity: 1, y: 0 }}
-                              exit={{ opacity: 0, y: -8 }}
-                              transition={EASE_OUT}
-                              className="absolute left-0 right-0 top-0 mb-2"
-                            >
-                              <div className="flex gap-2 overflow-x-auto pb-1">
-                                {pendingFiles.map((file, index) => {
-                                  const isImage = file.type.startsWith('image/');
-                                  const previewUrl = isImage ? URL.createObjectURL(file) : null;
-                                  return (
-                                    <motion.div
-                                      key={`${file.name}-${index}`}
-                                      initial={{ scale: 0.85, opacity: 0 }}
-                                      animate={{ scale: 1, opacity: 1 }}
-                                      transition={SPRING_POP}
-                                      className={`relative shrink-0 w-20 h-20 rounded-2xl overflow-hidden shadow-sm ${theme.subtleBg} border ${theme.subtleBorder}`}
-                                    >
-                                      {isImage && previewUrl ? (
-                                        <img src={previewUrl} alt={file.name} className="w-full h-full object-cover" />
-                                      ) : (
-                                        <div className="w-full h-full flex flex-col items-center justify-center px-1 text-center">
-                                          <FileText className={`w-5 h-5 ${theme.accentText}`} />
-                                          <span className={`text-[9px] truncate w-full mt-1 ${theme.textSecondary}`}>{file.name}</span>
-                                        </div>
-                                      )}
-                                      {pendingViewOnce && index === 0 && (
-                                        <span className="absolute bottom-1 left-1 px-1.5 py-0.5 rounded-full bg-gradient-to-r from-[#7C3AED] to-[#A855F7] text-white text-[9px] font-bold">1x</span>
-                                      )}
-                                      <button
-                                        type="button"
-                                        onClick={() => removePendingFile(index)}
-                                        className="absolute top-1 right-1 w-5 h-5 rounded-full bg-black/75 hover:bg-[#B91C1C] text-white flex items-center justify-center transition-colors"
-                                      >
-                                        <X className="w-3 h-3" />
-                                      </button>
-                                    </motion.div>
-                                  );
-                                })}
-                              </div>
-                              <div className="flex items-center justify-between gap-2 mt-1.5">
-                                <p className={`text-[11.5px] font-medium ${theme.textSecondary}`}>
-                                  {pendingFiles.length} file{pendingFiles.length === 1 ? '' : 's'} ready
-                                </p>
-                                <button
-                                  type="button"
-                                  onClick={() => setPendingViewOnce((v) => !v)}
-                                  className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10.5px] font-semibold transition-all shadow-sm ${
-                                    pendingViewOnce
-                                      ? 'bg-gradient-to-r from-[#7C3AED] to-[#A855F7] text-white'
-                                      : `${theme.subtleBg} border ${theme.subtleBorder} ${theme.textSecondary}`
-                                  }`}
-                                >
-                                  <Eye className="w-3 h-3" /> View once
-                                </button>
-                              </div>
-                            </motion.div>
-                          )}
-                        </AnimatePresence>
-                      </div>
-
-                      <AnimatePresence>
-                        {fileError && (
+                    <div className="flex flex-col gap-2">
+                      {/* Reply strip — slim, one line */}
+                      <AnimatePresence initial={false}>
+                        {replyTo && (
                           <motion.div
-                            initial={reduceMotion ? false : { opacity: 0, y: 4 }}
-                            animate={{ opacity: 1, y: 0 }}
-                            exit={reduceMotion ? undefined : { opacity: 0, y: 4 }}
+                            key="reply-strip"
+                            initial={{ opacity: 0, x: -8, height: 0 }}
+                            animate={{ opacity: 1, x: 0, height: 32 }}
+                            exit={{ opacity: 0, x: -8, height: 0 }}
                             transition={EASE_OUT}
-                            className="pb-2 sm:pb-3"
+                            className="overflow-hidden"
                           >
-                            <div className="flex items-center gap-1.5 text-[12px] font-medium text-[#F87171] px-2">
-                              <AlertCircle className="w-3.5 h-3.5 shrink-0" />
-                              <span>{fileError}</span>
+                            <div className="flex items-center gap-2 h-8 px-2.5 rounded-lg bg-white/[0.06] border-l-[3px] border-[#D97706]">
+                              <CornerUpLeft className="w-3 h-3 text-[#D97706] shrink-0" />
+                              <p className="flex-1 min-w-0 text-[12px] text-[#EDE5D4]/90 truncate font-medium">
+                                {replyTo.plaintext ?? replyTo.content ??
+                                  (replyTo.mediaType === MediaType.Image
+                                    ? replyTo.sticker ? '🎨 Sticker' : '📷 Photo'
+                                    : replyTo.mediaType === MediaType.Audio
+                                      ? '🎤 Voice message'
+                                      : 'Attachment')}
+                              </p>
+                              <button
+                                type="button"
+                                onClick={() => setReplyTo(null)}
+                                className="shrink-0 w-5 h-5 rounded-full flex items-center justify-center text-[#7A6F65] hover:text-[#EDE5D4] hover:bg-white/[0.08] transition-colors"
+                                aria-label="Cancel reply"
+                              >
+                                <X className="w-3 h-3" />
+                              </button>
                             </div>
                           </motion.div>
                         )}
                       </AnimatePresence>
 
+                      {/* File error */}
+                      <AnimatePresence initial={false}>
+                        {fileError && (
+                          <motion.div
+                            initial={{ opacity: 0, height: 0 }}
+                            animate={{ opacity: 1, height: 'auto' }}
+                            exit={{ opacity: 0, height: 0 }}
+                            transition={EASE_OUT}
+                            className="overflow-hidden"
+                          >
+                            <div className="flex items-center gap-1.5 text-[11.5px] font-medium text-[#F87171] px-1">
+                              <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+                              <span className="truncate">{fileError}</span>
+                            </div>
+                          </motion.div>
+                        )}
+                      </AnimatePresence>
+
+                      {/* Composer row */}
                       <form onSubmit={handleSendMessage} className="flex items-end gap-1.5 sm:gap-2">
                         <input type="file" ref={fileInputRef} onChange={handleFileSelect} accept="image/*" className="hidden" multiple />
                         <input id="orbital-camera-input" type="file" onChange={(e) => void handleCameraCapture(e)} accept="image/*" capture="environment" className="hidden" />
@@ -3234,6 +3158,7 @@ export function DirectMessagePane(): React.JSX.Element {
                           className={`shrink-0 w-10 h-10 rounded-full flex items-center justify-center transition-colors ${
                             emojiPanelOpen ? `${theme.accentText} ${theme.subtleBgStrong}` : `${theme.textSecondary} ${theme.hoverBg}`
                           }`}
+                          title="Emoji, GIFs & stickers"
                         >
                           <Smile className="w-[20px] h-[20px]" />
                         </motion.button>
@@ -3244,11 +3169,55 @@ export function DirectMessagePane(): React.JSX.Element {
                           whileTap={{ scale: 0.94 }}
                           onClick={() => setAttachmentSheetOpen(true)}
                           className={`shrink-0 w-10 h-10 rounded-full flex items-center justify-center ${theme.textSecondary} ${theme.hoverBg} transition-colors`}
+                          title="Attach"
                         >
                           <Paperclip className="w-[19px] h-[19px]" />
                         </motion.button>
 
-                        <div className="flex-1 min-w-0 relative">
+                        {/* Unified pill: [thumbnails] [textarea] [1x toggle] */}
+                        <div
+                          className={`flex-1 min-w-0 flex items-end gap-2 rounded-[22px] ${theme.subtleBgStrong} border ${theme.subtleBorder} transition-colors px-2.5 py-1.5 min-h-[44px]`}
+                        >
+                          {pendingFiles.length > 0 && (
+                            <div className="flex items-end gap-1.5 shrink-0 pb-0.5">
+                              {pendingFiles.map((file, index) => {
+                                const isImage = file.type.startsWith('image/');
+                                const previewUrl = isImage ? URL.createObjectURL(file) : null;
+                                return (
+                                  <motion.div
+                                    key={`${file.name}-${index}`}
+                                    initial={{ scale: 0.7, opacity: 0 }}
+                                    animate={{ scale: 1, opacity: 1 }}
+                                    exit={{ scale: 0.7, opacity: 0 }}
+                                    transition={SPRING_POP}
+                                    className={`relative shrink-0 w-9 h-9 rounded-[10px] overflow-hidden shadow-sm ${theme.subtleBg} border ${theme.subtleBorder}`}
+                                  >
+                                    {isImage && previewUrl ? (
+                                      <img src={previewUrl} alt={file.name} className="w-full h-full object-cover" />
+                                    ) : (
+                                      <div className="w-full h-full flex items-center justify-center">
+                                        <FileText className={`w-4 h-4 ${theme.accentText}`} />
+                                      </div>
+                                    )}
+                                    {pendingViewOnce && index === 0 && (
+                                      <span className="absolute -top-1 -left-1 px-1 py-[1px] rounded-full bg-gradient-to-r from-[#7C3AED] to-[#A855F7] text-white text-[8px] font-bold leading-none">
+                                        1×
+                                      </span>
+                                    )}
+                                    <button
+                                      type="button"
+                                      onClick={() => removePendingFile(index)}
+                                      className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-black/85 hover:bg-[#B91C1C] text-white flex items-center justify-center transition-colors"
+                                      aria-label={`Remove ${file.name}`}
+                                    >
+                                      <X className="w-2.5 h-2.5" />
+                                    </button>
+                                  </motion.div>
+                                );
+                              })}
+                            </div>
+                          )}
+
                           <textarea
                             ref={composerRef}
                             value={inputContent}
@@ -3266,8 +3235,24 @@ export function DirectMessagePane(): React.JSX.Element {
                             }}
                             placeholder={replyTo ? `Reply to ${targetUser.displayName}…` : `Message ${targetUser.displayName}`}
                             rows={1}
-                            className={`w-full resize-none px-4 py-2.5 text-[14.5px] ${theme.textPrimary} focus:outline-none leading-[1.5] max-h-[140px] overflow-y-auto rounded-[22px] ${theme.subtleBgStrong} border ${theme.subtleBorder} transition-colors placeholder:opacity-60`}
+                            className={`flex-1 min-w-0 resize-none bg-transparent px-1 py-2 text-[14.5px] ${theme.textPrimary} focus:outline-none leading-[1.5] max-h-[140px] overflow-y-auto placeholder:opacity-60`}
                           />
+
+                          {pendingFiles.length > 0 && (
+                            <button
+                              type="button"
+                              onClick={() => setPendingViewOnce((v) => !v)}
+                              className={`shrink-0 self-center mb-0.5 inline-flex items-center gap-1 px-2 py-1 rounded-full text-[10px] font-semibold transition-all shadow-sm ${
+                                pendingViewOnce
+                                  ? 'bg-gradient-to-r from-[#7C3AED] to-[#A855F7] text-white'
+                                  : `${theme.subtleBg} border ${theme.subtleBorder} ${theme.textSecondary}`
+                              }`}
+                              title="Send as view-once"
+                            >
+                              <Eye className="w-3 h-3" />
+                              {pendingViewOnce ? '1×' : '1×'}
+                            </button>
+                          )}
                         </div>
 
                         <AnimatePresence mode="popLayout" initial={false}>
@@ -3283,6 +3268,7 @@ export function DirectMessagePane(): React.JSX.Element {
                               whileHover={{ scale: 1.06 }}
                               whileTap={{ scale: 0.92 }}
                               className={`shrink-0 w-10 h-10 rounded-full ${theme.accent} disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center shadow-md`}
+                              aria-label="Send"
                             >
                               {isSending ? <Loader2 className="w-[18px] h-[18px] animate-spin" /> : <Send className="w-[18px] h-[18px]" />}
                             </motion.button>
@@ -3298,13 +3284,14 @@ export function DirectMessagePane(): React.JSX.Element {
                               whileHover={{ scale: 1.06 }}
                               whileTap={{ scale: 0.92 }}
                               className={`shrink-0 w-10 h-10 rounded-full ${theme.accent} flex items-center justify-center shadow-md`}
+                              aria-label="Record voice message"
                             >
                               <Mic className="w-[19px] h-[19px]" />
                             </motion.button>
                           )}
                         </AnimatePresence>
                       </form>
-                    </>
+                    </div>
                   )}
                 </div>
               </div>
