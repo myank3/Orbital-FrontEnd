@@ -520,6 +520,7 @@ function getMessageTime(msg: DirectMessageDto): number {
 }
 
 function formatDuration(sec: number): string {
+  if (!isFinite(sec) || sec < 0) sec = 0;
   const m = Math.floor(sec / 60);
   const s = Math.floor(sec % 60);
   return `${m}:${s.toString().padStart(2, '0')}`;
@@ -548,7 +549,7 @@ function previewText(msg: DirectMessageDto, myUserId: string): LastMessagePrevie
 }
 
 /* ────────────────────────────────────────────────────────── */
-/* Link rendering                                             */
+/* Links                                                      */
 /* ────────────────────────────────────────────────────────── */
 
 const URL_REGEX = /https?:\/\/[^\s<>"']+/gi;
@@ -849,6 +850,97 @@ function ImageViewer({ images, startIndex, onClose }: ImageViewerProps) {
 }
 
 /* ────────────────────────────────────────────────────────── */
+/* View-once full-screen modal                                */
+/* ────────────────────────────────────────────────────────── */
+
+function ViewOnceViewerModal({
+  url,
+  senderName,
+  sentAt,
+  onClose,
+}: {
+  url: string;
+  senderName: string;
+  sentAt: string;
+  onClose: () => void;
+}) {
+  const reduceMotion = useReducedMotion();
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' || e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        onClose();
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+
+  useEffect(() => {
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => {
+      document.body.style.overflow = prev;
+    };
+  }, []);
+
+  return (
+    <motion.div
+      initial={reduceMotion ? false : { opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={reduceMotion ? undefined : { opacity: 0 }}
+      transition={{ duration: 0.18 }}
+      className="fixed inset-0 z-[210] bg-black/98 backdrop-blur-md flex flex-col items-center justify-center"
+      onClick={onClose}
+    >
+      <div className="absolute top-0 left-0 right-0 flex items-center justify-between px-4 py-3.5 bg-gradient-to-b from-black/90 via-black/40 to-transparent z-10">
+        <div className="min-w-0">
+          <div className="flex items-center gap-2">
+            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-gradient-to-r from-[#7C3AED] to-[#A855F7] text-white text-[10px] font-bold tracking-wide">
+              <Eye className="w-3 h-3" />
+              VIEW ONCE
+            </span>
+          </div>
+          <p className="text-[12px] text-white/60 tabular-nums mt-1.5">
+            {senderName} · {formatTime(sentAt)}
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            onClose();
+          }}
+          className="w-10 h-10 rounded-full flex items-center justify-center text-white/80 hover:text-white hover:bg-white/10 transition-colors"
+          aria-label="Close"
+        >
+          <X className="w-[18px] h-[18px]" />
+        </button>
+      </div>
+
+      <motion.img
+        initial={reduceMotion ? false : { opacity: 0, scale: 0.98 }}
+        animate={{ opacity: 1, scale: 1 }}
+        transition={{ duration: 0.18 }}
+        src={url}
+        alt=""
+        onClick={(e) => e.stopPropagation()}
+        className="max-w-[95vw] max-h-[80vh] object-contain select-none rounded-lg"
+        draggable={false}
+        onContextMenu={(e) => e.preventDefault()}
+      />
+
+      <div className="absolute bottom-8 left-0 right-0 flex flex-col items-center gap-2 pointer-events-none">
+        <p className="text-[12px] text-white/50">
+          Tap anywhere to close · Photo will disappear
+        </p>
+      </div>
+    </motion.div>
+  );
+}
+
+/* ────────────────────────────────────────────────────────── */
 /* Sidebar context menu                                       */
 /* ────────────────────────────────────────────────────────── */
 
@@ -1049,17 +1141,21 @@ function VoiceBubble({
     const a = audioRef.current;
     if (!a) return;
     const onTime = () => setProgress(a.currentTime);
-    const onMeta = () => setDuration(a.duration || 0);
+    const onMeta = () => {
+      if (isFinite(a.duration) && a.duration > 0) setDuration(a.duration);
+    };
     const onEnd = () => {
       setPlaying(false);
       setProgress(0);
     };
     a.addEventListener('timeupdate', onTime);
     a.addEventListener('loadedmetadata', onMeta);
+    a.addEventListener('durationchange', onMeta);
     a.addEventListener('ended', onEnd);
     return () => {
       a.removeEventListener('timeupdate', onTime);
       a.removeEventListener('loadedmetadata', onMeta);
+      a.removeEventListener('durationchange', onMeta);
       a.removeEventListener('ended', onEnd);
     };
   }, []);
@@ -1124,7 +1220,9 @@ function VoiceBubble({
         </div>
         <div className="flex justify-between mt-1">
           <span className="text-[10.5px] tabular-nums opacity-70">
-            {playing || progress > 0 ? formatDuration(progress) : '0:00'}
+            {playing || progress > 0
+              ? formatDuration(progress)
+              : '0:00'}
           </span>
           <span className="text-[10.5px] tabular-nums opacity-70">
             {duration > 0 ? formatDuration(duration) : '–:––'}
@@ -1200,13 +1298,10 @@ const MessageRow = React.memo(
     const hasText = Boolean(displayText);
     const urls = useMemo(() => extractUrls(displayText), [displayText]);
 
-    // Emoji-only → render big without bubble
     const isEmojiOnly = useMemo(() => {
       if (!hasText) return false;
       const stripped = displayText.replace(/\s/g, '');
       if (stripped.length === 0 || stripped.length > 12) return false;
-      // Basic emoji-only detection without Unicode property escapes
-      // (some toolchains don't enable /u flag with \p{...})
       const emojiCount = Array.from(stripped).filter((ch) => {
         const code = ch.codePointAt(0) ?? 0;
         return code >= 0x1f000 || (code >= 0x2600 && code <= 0x27bf);
@@ -1277,10 +1372,8 @@ const MessageRow = React.memo(
             </div>
           )}
 
-          {/* Media blocks */}
           {hasMedia && !isVoice && (
             <div className="relative group/media max-w-full">
-              {/* Regular image */}
               {message.mediaType === MediaType.Image && !isViewOnce && (
                 <button
                   type="button"
@@ -1305,7 +1398,6 @@ const MessageRow = React.memo(
                 </button>
               )}
 
-              {/* View-once — SENDER */}
               {message.mediaType === MediaType.Image && isViewOnce && isMe && (
                 <div
                   className={`inline-flex items-center gap-3 px-4 py-3.5 rounded-[20px] text-[13px] ${theme.subtleBg} border ${theme.subtleBorder}`}
@@ -1328,7 +1420,6 @@ const MessageRow = React.memo(
                 </div>
               )}
 
-              {/* View-once — RECEIVER */}
               {message.mediaType === MediaType.Image && isViewOnce && !isMe && (
                 <button
                   type="button"
@@ -1399,12 +1490,10 @@ const MessageRow = React.memo(
             </div>
           )}
 
-          {/* Voice message */}
           {isVoice && message.mediaUrl && (
             <VoiceBubble url={message.mediaUrl} isMe={isMe} theme={theme} />
           )}
 
-          {/* Text bubble */}
           {hasText && (
             <div
               className={`relative inline-flex items-end gap-1 max-w-full ${
@@ -1476,7 +1565,6 @@ const MessageRow = React.memo(
             </div>
           )}
 
-          {/* Long-press delete for media-only rows */}
           {!hasText && hasMedia && (
             <AnimatePresence>
               {menuOpen && (
@@ -1802,10 +1890,15 @@ function DirectMessagePane(): React.JSX.Element {
     null,
   );
   const [viewerOpenIndex, setViewerOpenIndex] = useState<number | null>(null);
+  const [viewOnceViewer, setViewOnceViewer] = useState<{
+    url: string;
+    senderName: string;
+    sentAt: string;
+    messageId: number;
+  } | null>(null);
   const [chatMenuFriend, setChatMenuFriend] = useState<FriendDto | null>(null);
   const sidebarLongPressRef = useRef<number | null>(null);
 
-  // Composer toolkit
   const [emojiPanelOpen, setEmojiPanelOpen] = useState(false);
   const [attachmentSheetOpen, setAttachmentSheetOpen] = useState(false);
   const [voiceRecorderOpen, setVoiceRecorderOpen] = useState(false);
@@ -1999,18 +2092,35 @@ function DirectMessagePane(): React.JSX.Element {
   const handleOpenImage = useCallback(
     (m: LocalMessage, _senderName: string) => {
       if (m.viewOnce && typeof m.id === 'number' && m.id > 0) {
-        setViewerOpenIndex(-1);
-        markV1Seen(currentUserIdRef.current, m.id);
-        setMessages((prev) =>
-          prev.map((x) => (x.id === m.id ? { ...x, viewed: true } : x)),
-        );
+        if (m.viewed) return;
+        setViewOnceViewer({
+          url: m.mediaUrl ?? '',
+          senderName:
+            m.senderId === currentUserIdRef.current
+              ? 'You'
+              : targetUser?.displayName ?? 'Them',
+          sentAt: m.sentAt,
+          messageId: m.id,
+        });
         return;
       }
       const idx = chatImages.findIndex((img) => img.url === m.mediaUrl);
       if (idx >= 0) setViewerOpenIndex(idx);
     },
-    [chatImages],
+    [chatImages, targetUser?.displayName],
   );
+
+  const handleCloseViewOnce = useCallback(() => {
+    if (viewOnceViewer && typeof viewOnceViewer.messageId === 'number') {
+      markV1Seen(currentUserIdRef.current, viewOnceViewer.messageId);
+      setMessages((prev) =>
+        prev.map((x) =>
+          x.id === viewOnceViewer.messageId ? { ...x, viewed: true } : x,
+        ),
+      );
+    }
+    setViewOnceViewer(null);
+  }, [viewOnceViewer]);
 
   useEffect(() => {
     if (!userId) {
@@ -2333,8 +2443,6 @@ function DirectMessagePane(): React.JSX.Element {
     }
   }, [isPeerTyping]);
 
-  /* ── Shared send helper for images/GIFs ─────────────────── */
-
   const sendImageOrMedia = useCallback(
     async (
       mediaUrl: string,
@@ -2422,8 +2530,6 @@ function DirectMessagePane(): React.JSX.Element {
     setPendingFiles((prev) => prev.filter((_, i) => i !== index));
   };
 
-  /* ── Camera capture → send immediately ─────────────────── */
-
   const handleCameraCapture = async (
     e: React.ChangeEvent<HTMLInputElement>,
   ) => {
@@ -2457,8 +2563,6 @@ function DirectMessagePane(): React.JSX.Element {
     }
   };
 
-  /* ── Document picker → send as File ────────────────────── */
-
   const handleDocumentSelect = async (
     e: React.ChangeEvent<HTMLInputElement>,
   ) => {
@@ -2486,8 +2590,6 @@ function DirectMessagePane(): React.JSX.Element {
       if (documentInputRef.current) documentInputRef.current.value = '';
     }
   };
-
-  /* ── Audio file → send as Audio ────────────────────────── */
 
   const handleAudioFileSelect = async (
     e: React.ChangeEvent<HTMLInputElement>,
@@ -2517,8 +2619,6 @@ function DirectMessagePane(): React.JSX.Element {
     }
   };
 
-  /* ── Voice recorder completion ─────────────────────────── */
-
   const handleVoiceComplete = useCallback(
     async (rec: VoiceRecording) => {
       setVoiceRecorderOpen(false);
@@ -2536,8 +2636,6 @@ function DirectMessagePane(): React.JSX.Element {
     [userId, sendImageOrMedia],
   );
 
-  /* ── Emoji / GIF / sticker handlers ────────────────────── */
-
   const handleEmojiPick = useCallback((emoji: string) => {
     setInputContent((prev) => prev + emoji);
     if (composerRef.current) {
@@ -2554,49 +2652,11 @@ function DirectMessagePane(): React.JSX.Element {
   );
 
   const handleSendSticker = useCallback(
-    (emoji: string) => {
-      if (!userId || !user?.id) return;
-      const tempId = -Date.now();
-      setMessages((prev) => [
-        ...prev,
-        {
-          id: tempId,
-          senderId: user.id,
-          recipientId: userId,
-          ciphertext: null,
-          nonce: null,
-          content: emoji,
-          plaintext: emoji,
-          isRead: false,
-          sentAt: new Date().toISOString(),
-          viewOnce: false,
-          viewed: false,
-        },
-      ]);
-      void (async () => {
-        try {
-          const pub = await getPublicKeyFor(userId);
-          const enc = await encryptFor(pub, emoji);
-          await signalRService.sendDirectMessage({
-            recipientId: userId,
-            ciphertext: enc.ciphertext,
-            nonce: enc.nonce,
-            mediaUrl: undefined,
-            mediaType: undefined,
-          });
-          playSend();
-        } catch (err) {
-          console.warn('Sticker send failed', err);
-        }
-      })();
-      setTimeout(() => {
-        messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-      }, 50);
+    (url: string) => {
+      void sendImageOrMedia(url, MediaType.Image);
     },
-    [userId, user?.id],
+    [sendImageOrMedia],
   );
-
-  /* ── Main text send ────────────────────────────────────── */
 
   const handleSendMessage = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -3349,7 +3409,6 @@ function DirectMessagePane(): React.JSX.Element {
               )}
             </AnimatePresence>
 
-            {/* ── Composer ─────────────────────────────────── */}
             <motion.div
               initial={false}
               animate={{
@@ -3363,7 +3422,6 @@ function DirectMessagePane(): React.JSX.Element {
               <div
                 className={`border-t ${theme.subtleBorder} ${theme.composerBg} backdrop-blur-xl`}
               >
-                {/* Emoji / GIF / sticker panel */}
                 <AnimatePresence>
                   {emojiPanelOpen && (
                     <EmojiPanel
@@ -3375,9 +3433,7 @@ function DirectMessagePane(): React.JSX.Element {
                   )}
                 </AnimatePresence>
 
-                {/* Composer row */}
                 <div className="px-2 sm:px-4 py-2.5 sm:py-3.5">
-                  {/* Voice recorder overlay */}
                   {voiceRecorderOpen ? (
                     <VoiceRecorder
                       onComplete={(rec) => void handleVoiceComplete(rec)}
@@ -3385,7 +3441,6 @@ function DirectMessagePane(): React.JSX.Element {
                     />
                   ) : (
                     <>
-                      {/* Pending files preview */}
                       <AnimatePresence>
                         {pendingFiles.length > 0 && (
                           <motion.div
@@ -3499,7 +3554,6 @@ function DirectMessagePane(): React.JSX.Element {
                         onSubmit={handleSendMessage}
                         className="flex items-end gap-1.5 sm:gap-2"
                       >
-                        {/* Hidden pickers */}
                         <input
                           type="file"
                           ref={fileInputRef}
@@ -3530,7 +3584,6 @@ function DirectMessagePane(): React.JSX.Element {
                           className="hidden"
                         />
 
-                        {/* Emoji button */}
                         <button
                           type="button"
                           onClick={() => setEmojiPanelOpen((v) => !v)}
@@ -3544,7 +3597,6 @@ function DirectMessagePane(): React.JSX.Element {
                           <Smile className="w-[19px] h-[19px]" />
                         </button>
 
-                        {/* Attach */}
                         <button
                           type="button"
                           onClick={() => setAttachmentSheetOpen(true)}
@@ -3554,7 +3606,6 @@ function DirectMessagePane(): React.JSX.Element {
                           <Paperclip className="w-[18px] h-[18px]" />
                         </button>
 
-                        {/* Camera shortcut */}
                         <button
                           type="button"
                           onClick={() => cameraInputRef.current?.click()}
@@ -3564,7 +3615,6 @@ function DirectMessagePane(): React.JSX.Element {
                           <Camera className="w-[18px] h-[18px]" />
                         </button>
 
-                        {/* Text input */}
                         <div className="flex-1 min-w-0 relative">
                           <textarea
                             ref={composerRef}
@@ -3590,7 +3640,6 @@ function DirectMessagePane(): React.JSX.Element {
                           />
                         </div>
 
-                        {/* Mic (empty) / Send (has content) */}
                         <AnimatePresence mode="popLayout" initial={false}>
                           {canSend ? (
                             <motion.button
@@ -3686,7 +3735,6 @@ function DirectMessagePane(): React.JSX.Element {
         )}
       </div>
 
-      {/* Attachment sheet */}
       <AttachmentSheet
         open={attachmentSheetOpen}
         onClose={() => setAttachmentSheetOpen(false)}
@@ -3696,7 +3744,6 @@ function DirectMessagePane(): React.JSX.Element {
         onAudioFile={() => audioFileInputRef.current?.click()}
       />
 
-      {/* Delete-for-everyone confirm */}
       <AnimatePresence>
         {pendingDeleteEveryoneId != null && (
           <motion.div
@@ -3744,7 +3791,6 @@ function DirectMessagePane(): React.JSX.Element {
         )}
       </AnimatePresence>
 
-      {/* Sidebar context menu */}
       <AnimatePresence>
         {chatMenuFriend && (
           <ChatContextMenu
@@ -3821,6 +3867,17 @@ function DirectMessagePane(): React.JSX.Element {
             images={chatImages}
             startIndex={viewerOpenIndex}
             onClose={() => setViewerOpenIndex(null)}
+          />
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {viewOnceViewer && (
+          <ViewOnceViewerModal
+            url={viewOnceViewer.url}
+            senderName={viewOnceViewer.senderName}
+            sentAt={viewOnceViewer.sentAt}
+            onClose={handleCloseViewOnce}
           />
         )}
       </AnimatePresence>
