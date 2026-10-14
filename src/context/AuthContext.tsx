@@ -12,7 +12,12 @@ import {
   useState,
   type ReactNode,
 } from 'react';
-import { apiService, getAccessToken, setAccessToken } from '../services/api';
+import {
+  apiService,
+  getAccessToken,
+  refreshAuthToken,
+  setAccessToken,
+} from '../services/api';
 import { authService } from '../services/auth';
 import { signalRService } from '../services/signalr';
 import type { RegisterDto, UserProfileDto } from '../types/api';
@@ -85,15 +90,23 @@ function AuthProviderComponent({ children }: AuthProviderProps) {
 
     const bootstrap = async () => {
       const storedToken = getAccessToken();
+
+      // If no token in localStorage, still try to refresh — the httpOnly
+      // refresh cookie may be valid even when the local token was cleared.
       if (!storedToken) {
-        if (isMounted) setLoading(false);
-        return;
+        const refreshed = await refreshAuthToken();
+        if (!refreshed) {
+          if (isMounted) setLoading(false);
+          return;
+        }
       }
+
       try {
         const profile = await apiService.getMyProfile();
         if (isMounted) {
           setUser(profile);
-          setTokenState(storedToken);
+          // Read the token again — request() may have set a fresh one
+          setTokenState(getAccessToken());
         }
         await startSignalR();
       } catch {
