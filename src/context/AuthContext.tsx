@@ -15,7 +15,6 @@ import {
 import { apiService, getAccessToken, setAccessToken } from '../services/api';
 import { authService } from '../services/auth';
 import { signalRService } from '../services/signalr';
-import { syncPublicKeyToServer } from '../services/cryptoService';
 import type { RegisterDto, UserProfileDto } from '../types/api';
 
 export interface AuthContextType {
@@ -117,14 +116,6 @@ function AuthProviderComponent({ children }: AuthProviderProps) {
       window.removeEventListener('auth:unauthorized', handleUnauthorized);
     };
   }, [clearAuthState, startSignalR, stopSignalR]);
-
-  /* ── E2EE: generate + upload public key once user is known ── */
-  useEffect(() => {
-    if (!user) return;
-    void syncPublicKeyToServer().catch((e) =>
-      console.warn('[E2EE] key sync failed', e),
-    );
-  }, [user]);
 
   const login = useCallback(
     async (identifier: string, password: string): Promise<UserProfileDto> => {

@@ -290,14 +290,6 @@ function Login(): React.JSX.Element {
   const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
   const [retryCountdown, setRetryCountdown] = useState<number | null>(null);
 
-  // Read the "you signed in on another device" message once on mount
-  const [authNotice, setAuthNotice] = useState<string | null>(() => {
-    if (typeof window === 'undefined') return null;
-    const msg = sessionStorage.getItem('orbital.auth.reason');
-    if (msg) sessionStorage.removeItem('orbital.auth.reason');
-    return msg;
-  });
-
   const identifierRef = useRef<HTMLDivElement | null>(null);
   const passwordRef = useRef<HTMLDivElement | null>(null);
 
@@ -343,9 +335,6 @@ function Login(): React.JSX.Element {
   const doLogin = useCallback(async () => {
     if (loading) return;
 
-    // Dismiss the auth notice as soon as the user tries to log in again
-    if (authNotice) setAuthNotice(null);
-
     const errs = validate();
     if (Object.keys(errs).length) {
       setFieldErrors(errs);
@@ -385,7 +374,7 @@ function Login(): React.JSX.Element {
     } finally {
       setLoading(false);
     }
-  }, [identifier, password, loading, login, navigate, validate, focusFirstError, authNotice]);
+  }, [identifier, password, loading, login, navigate, validate, focusFirstError]);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -433,25 +422,6 @@ function Login(): React.JSX.Element {
   return (
     <AuthShell title="Sign in" subtitle="Welcome back to Orbital.">
       <div className="space-y-5">
-        {/* Session-revoked notice — appears when the user was kicked by another device */}
-        <AnimatePresence initial={false}>
-          {authNotice && (
-            <motion.div
-              initial={{ opacity: 0, y: -6, height: 0 }}
-              animate={{ opacity: 1, y: 0, height: 'auto' }}
-              exit={{ opacity: 0, y: -6, height: 0 }}
-              transition={SOFT_SPRING}
-              className="overflow-hidden rounded-xl bg-[#D97706]/10 border border-[#D97706]/25 px-3.5 py-3 text-[12.5px] leading-relaxed text-[#FBBF24]"
-              role="alert"
-            >
-              <div className="flex items-start gap-2.5">
-                <AlertCircle className="w-4 h-4 mt-0.5 shrink-0" />
-                <span>{authNotice}</span>
-              </div>
-            </motion.div>
-          )}
-        </AnimatePresence>
-
         {/* Google button — CSS fade, no JS spring solver */}
         <div className="orbital-fade-up">
           <button
