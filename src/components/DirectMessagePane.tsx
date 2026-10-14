@@ -90,7 +90,7 @@ import {
 } from './dm/ComposerToolkit';
 
 /* ────────────────────────────────────────────────────────── */
-/* Animation constants — tuned for snappy feel                */
+/* Animation constants                                        */
 /* ────────────────────────────────────────────────────────── */
 
 const SPRING_FAST = { type: 'spring', stiffness: 520, damping: 32, mass: 0.7 } as const;
@@ -123,10 +123,6 @@ const THEME_ANIMATIONS = `
   0% { transform: scale(0.4); opacity: 0; }
   60% { transform: scale(1.15); }
   100% { transform: scale(1); opacity: 1; }
-}
-@keyframes reply-flash {
-  0%, 100% { background-color: transparent; }
-  30% { background-color: rgba(217,119,6,0.28); }
 }
 @keyframes highlight-ring {
   0% { box-shadow: 0 0 0 0 rgba(217,119,6,0); }
@@ -428,20 +424,11 @@ export function decodeIncoming(text: string): Decoded {
   let replyToId: number | null = null;
 
   const v1 = body.match(V1_RE);
-  if (v1) {
-    viewOnce = true;
-    body = body.slice(v1[0].length);
-  }
+  if (v1) { viewOnce = true; body = body.slice(v1[0].length); }
   const st = body.match(STICKER_RE);
-  if (st) {
-    sticker = true;
-    body = body.slice(st[0].length);
-  }
+  if (st) { sticker = true; body = body.slice(st[0].length); }
   const reply = body.match(REPLY_RE);
-  if (reply) {
-    replyToId = parseInt(reply[1], 10);
-    body = body.slice(reply[0].length);
-  }
+  if (reply) { replyToId = parseInt(reply[1], 10); body = body.slice(reply[0].length); }
 
   return { viewOnce, sticker, body, replyToId, isReaction: false };
 }
@@ -478,15 +465,11 @@ function lsGet<T>(key: string, fallback: T): T {
   try {
     const raw = localStorage.getItem(key);
     return raw ? (JSON.parse(raw) as T) : fallback;
-  } catch {
-    return fallback;
-  }
+  } catch { return fallback; }
 }
 function lsSet(key: string, value: unknown) {
   if (typeof window === 'undefined') return;
-  try {
-    localStorage.setItem(key, JSON.stringify(value));
-  } catch { /* quota */ }
+  try { localStorage.setItem(key, JSON.stringify(value)); } catch { /* quota */ }
 }
 
 function themeKey(u?: string, p?: string) { return `orbital.chatTheme.v3.${u ?? 'anon'}.${p ?? 'none'}`; }
@@ -658,7 +641,6 @@ function LinkifiedText({ text, isMe }: { text: string; isMe: boolean }) {
   );
 }
 
-/* ✅ Smaller GIF / link previews */
 function LinkPreviews({ urls }: { urls: string[]; theme: ChatTheme }) {
   if (urls.length === 0) return null;
 
@@ -1246,7 +1228,6 @@ function VoiceBubble({ url, isMe, theme }: { url: string; isMe: boolean; theme: 
   );
 }
 
-/* ✅ Sticker renderer — no bubble, transparent, 120px */
 function StickerBubble({ url }: { url: string }) {
   return (
     <motion.img
@@ -1372,7 +1353,6 @@ const MessageRow = React.memo(
           grouped ? 'mt-[3px]' : 'mt-3.5'
         } ${isMe ? 'justify-end' : 'justify-start'} ${isTemp ? 'opacity-80' : ''}`}
       >
-        {/* Swipe-to-reply indicator */}
         <div
           className={`absolute inset-y-0 flex items-center pointer-events-none transition-opacity ${isMe ? 'right-0' : 'left-0'}`}
           style={{ opacity: replyProgress }}
@@ -1382,7 +1362,6 @@ const MessageRow = React.memo(
           </div>
         </div>
 
-        {/* ✅ Inner row justify-* — fixes same-side bubble bug */}
         <div
           className={`relative flex w-full ${isMe ? 'justify-end' : 'justify-start'} transition-transform`}
           style={{
@@ -1425,7 +1404,6 @@ const MessageRow = React.memo(
               </div>
             )}
 
-            {/* ✅ Sticker rendering */}
             {hasMedia && isSticker && message.mediaType === MediaType.Image && (
               <StickerBubble url={message.mediaUrl ?? ''} />
             )}
@@ -1626,7 +1604,6 @@ const MessageRow = React.memo(
     );
   },
   (prev, next) => {
-    // Narrow compare — much faster
     return (
       prev.message.id === next.message.id &&
       prev.message.isRead === next.message.isRead &&
@@ -1805,8 +1782,6 @@ export function DirectMessagePane(): React.JSX.Element {
   const [messages, setMessages] = useState<LocalMessage[]>([]);
   const [loadingHistory, setLoadingHistory] = useState(false);
   const [historyError, setHistoryError] = useState<string | null>(null);
-  const [loadingMore, setLoadingMore] = useState(false);
-  const [hasMore, setHasMore] = useState(true);
   const [inputContent, setInputContent] = useState('');
 
   const [pendingFiles, setPendingFiles] = useState<File[]>([]);
@@ -2019,7 +1994,6 @@ export function DirectMessagePane(): React.JSX.Element {
     setViewOnceViewer(null);
   }, [viewOnceViewer]);
 
-  /* ✅ Reply → jump-to-message */
   const jumpToMessage = useCallback((id: number) => {
     const el = document.getElementById(`msg-${id}`);
     if (!el) return;
@@ -2109,6 +2083,7 @@ export function DirectMessagePane(): React.JSX.Element {
     [],
   );
 
+  /* ✅ Initial fetch — load everything (10,000 cap) */
   useEffect(() => {
     if (!userId || !user?.id) return;
     let active = true;
@@ -2116,7 +2091,7 @@ export function DirectMessagePane(): React.JSX.Element {
       setLoadingHistory(true);
       setHistoryError(null);
       try {
-        const history = await apiService.getDmHistory(userId, 50);
+        const history = await apiService.getDmHistory(userId, 10000);
         if (!active) return;
         const sorted = [...history].sort((a, b) => getMessageTime(a) - getMessageTime(b));
         const seen = readV1Seen(user.id);
@@ -2128,7 +2103,6 @@ export function DirectMessagePane(): React.JSX.Element {
           for (const [k, list] of Object.entries(reacts)) merged[k] = list;
           return merged;
         });
-        setHasMore(history.length >= 50);
         if (msgs.length > 0) {
           const latest = msgs[msgs.length - 1];
           setLastMessages((prev) => ({ ...prev, [userId]: latest }));
@@ -2146,7 +2120,7 @@ export function DirectMessagePane(): React.JSX.Element {
     return () => { active = false; };
   }, [userId, user?.id, decodeMessages]);
 
-  /* ✅ Polling slowed to 4s */
+  /* ✅ Poll — 4s, no olderThanPoll logic needed */
   useEffect(() => {
     if (!userId || !user?.id) return;
     let cancelled = false;
@@ -2156,7 +2130,7 @@ export function DirectMessagePane(): React.JSX.Element {
       if (cancelled || inFlight || document.hidden) return;
       inFlight = true;
       try {
-        const history = await apiService.getDmHistory(userId, 50);
+        const history = await apiService.getDmHistory(userId, 10000);
         if (cancelled) return;
         const sorted = [...history].sort((a, b) => getMessageTime(a) - getMessageTime(b));
         const seen = readV1Seen(user.id);
@@ -2237,31 +2211,7 @@ export function DirectMessagePane(): React.JSX.Element {
     };
   }, [userId, user?.id, decodeMessages]);
 
-  const handleLoadEarlier = async () => {
-    if (!userId || !user?.id || loadingMore || !hasMore || messages.length === 0) return;
-    const oldestId = messages[0].id;
-    setLoadingMore(true);
-    try {
-      const earlier = await apiService.getDmHistory(userId, 50, oldestId);
-      if (earlier.length > 0) {
-        const sortedEarlier = [...earlier].sort((a, b) => getMessageTime(a) - getMessageTime(b));
-        const seen = readV1Seen(user.id);
-        const { msgs, reactions: reacts } = await decodeMessages(sortedEarlier, user.id, seen);
-        startTransition(() => {
-          setMessages((prev) => [...msgs, ...prev]);
-          setReactions((prev) => {
-            const merged = { ...prev };
-            for (const [k, list] of Object.entries(reacts)) merged[k] = list;
-            return merged;
-          });
-        });
-        setHasMore(earlier.length >= 50);
-      } else setHasMore(false);
-    } catch (err) {
-      console.error('Error loading older messages:', err);
-    } finally { setLoadingMore(false); }
-  };
-
+  /* ✅ Real-time */
   useEffect(() => {
     const unsub = signalRService.onReceiveDirectMessage(
       async (msg: DirectMessageDto) => {
@@ -2692,7 +2642,6 @@ export function DirectMessagePane(): React.JSX.Element {
     try { await initiateCall(userId, CallType.Video); } catch (err) { alert(`Call failed: ${extractErrorMessage(err)}`); }
   };
 
-  /* ✅ Faster delete with startTransition */
   const handleDeleteForMe = useCallback(async (m: LocalMessage) => {
     startTransition(() => {
       setMessages((prev) => prev.filter((x) => x.id !== m.id));
@@ -2727,7 +2676,7 @@ export function DirectMessagePane(): React.JSX.Element {
     catch (err) {
       if (userIdRef.current && currentUserIdRef.current) {
         try {
-          const history = await apiService.getDmHistory(userIdRef.current, 50);
+          const history = await apiService.getDmHistory(userIdRef.current, 10000);
           const sorted = [...history].sort((a, b) => getMessageTime(a) - getMessageTime(b));
           const { msgs } = await decodeMessages(sorted, currentUserIdRef.current, readV1Seen(currentUserIdRef.current));
           setMessages(msgs);
@@ -2752,7 +2701,6 @@ export function DirectMessagePane(): React.JSX.Element {
     setLastMessages((prev) => { const next = { ...prev }; delete next[userId]; return next; });
   };
 
-  /* ✅ Composer no longer auto-hides */
   const handleMessagesScroll = (e: React.UIEvent<HTMLDivElement>) => {
     const el = e.currentTarget;
     const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 120;
@@ -2980,13 +2928,13 @@ export function DirectMessagePane(): React.JSX.Element {
                 </div>
               </div>
               <div className="flex items-center gap-0.5 sm:gap-1 shrink-0">
-                <motion.button whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }} onClick={() => void handleAudioCall()} className={`w-10 h-10 rounded-2xl flex items-center justify-center ${theme.textSecondary} ${theme.hoverBg} transition-colors`} title="Audio call">
+                <motion.button whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }} onClick={() => void handleAudioCall()} className={`w-10 h-10 rounded-2xl flex items-center justify-center ${theme.textSecondary} ${theme.hoverBg} transition-colors`}>
                   <Phone className="w-[18px] h-[18px]" />
                 </motion.button>
-                <motion.button whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }} onClick={() => void handleVideoCall()} className={`w-10 h-10 rounded-2xl flex items-center justify-center ${theme.textSecondary} ${theme.hoverBg} transition-colors`} title="Video call">
+                <motion.button whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }} onClick={() => void handleVideoCall()} className={`w-10 h-10 rounded-2xl flex items-center justify-center ${theme.textSecondary} ${theme.hoverBg} transition-colors`}>
                   <Video className="w-[18px] h-[18px]" />
                 </motion.button>
-                <motion.button whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }} onClick={() => setInfoOpen(true)} className={`w-10 h-10 rounded-2xl flex items-center justify-center ${theme.textSecondary} ${theme.hoverBg} transition-colors`} title="Chat info">
+                <motion.button whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }} onClick={() => setInfoOpen(true)} className={`w-10 h-10 rounded-2xl flex items-center justify-center ${theme.textSecondary} ${theme.hoverBg} transition-colors`}>
                   <Info className="w-[18px] h-[18px]" />
                 </motion.button>
               </div>
@@ -3019,18 +2967,6 @@ export function DirectMessagePane(): React.JSX.Element {
               onScroll={handleMessagesScroll}
               className="flex-1 overflow-y-auto px-3 sm:px-6 py-3 sm:py-5 relative z-10"
             >
-              {hasMore && !loadingHistory && (
-                <div className="text-center pb-4">
-                  <button
-                    onClick={() => void handleLoadEarlier()}
-                    disabled={loadingMore}
-                    className={`px-4 py-2 rounded-full ${theme.subtleBg} border ${theme.subtleBorder} text-[11.5px] font-medium ${theme.textSecondary} ${theme.hoverBg} disabled:opacity-50 transition-colors shadow-sm`}
-                  >
-                    {loadingMore ? 'Loading…' : 'Load earlier messages'}
-                  </button>
-                </div>
-              )}
-
               {loadingHistory ? (
                 <MessageSkeleton />
               ) : historyError ? (
@@ -3140,8 +3076,8 @@ export function DirectMessagePane(): React.JSX.Element {
               )}
             </AnimatePresence>
 
-            {/* ✅ Composer always visible — no auto-hide */}
-            <div className="shrink-0 overflow-hidden relative z-20">
+            {/* ✅ Composer — stable layout, no vertical shift */}
+            <div className="shrink-0 relative z-20">
               <div className={`border-t ${theme.subtleBorder} ${theme.composerBg} backdrop-blur-xl`}>
                 <AnimatePresence>
                   {emojiPanelOpen && (
@@ -3162,103 +3098,110 @@ export function DirectMessagePane(): React.JSX.Element {
                     />
                   ) : (
                     <>
-                      <AnimatePresence>
-                        {replyTo && (
-                          <motion.div
-                            initial={{ opacity: 0, y: 8, height: 0 }}
-                            animate={{ opacity: 1, y: 0, height: 'auto' }}
-                            exit={{ opacity: 0, y: 8, height: 0 }}
-                            transition={EASE_OUT}
-                            className="pb-2 overflow-hidden"
-                          >
-                            <div className="flex items-center gap-3 p-2.5 rounded-2xl bg-white/[0.05] border-l-[3px] border-[#D97706] shadow-sm">
-                              <div className="flex-1 min-w-0">
-                                <div className="flex items-center gap-1.5 mb-0.5">
-                                  <CornerUpLeft className="w-3.5 h-3.5 text-[#D97706]" />
-                                  <span className="text-[10.5px] uppercase tracking-[0.14em] font-bold text-[#D97706]">Reply</span>
+                      {/* ✅ Reply strip — fixed height, no layout shift */}
+                      <div className="relative h-0">
+                        <AnimatePresence>
+                          {replyTo && (
+                            <motion.div
+                              initial={{ opacity: 0, x: -12 }}
+                              animate={{ opacity: 1, x: 0 }}
+                              exit={{ opacity: 0, x: -12 }}
+                              transition={EASE_OUT}
+                              className="absolute left-0 right-0 top-0 mb-2"
+                              style={{ height: 56 }}
+                            >
+                              <div className="flex items-center gap-3 p-2.5 h-full rounded-2xl bg-white/[0.05] border-l-[3px] border-[#D97706] shadow-sm">
+                                <div className="flex-1 min-w-0">
+                                  <div className="flex items-center gap-1.5 mb-0.5">
+                                    <CornerUpLeft className="w-3.5 h-3.5 text-[#D97706]" />
+                                    <span className="text-[10.5px] uppercase tracking-[0.14em] font-bold text-[#D97706]">Reply</span>
+                                  </div>
+                                  <p className="text-[12.5px] text-[#EDE5D4] truncate font-medium">
+                                    {replyTo.plaintext ?? replyTo.content ??
+                                      (replyTo.mediaType === MediaType.Image
+                                        ? replyTo.sticker ? '🎨 Sticker' : '📷 Photo'
+                                        : replyTo.mediaType === MediaType.Audio
+                                          ? '🎤 Voice message'
+                                          : 'Attachment')}
+                                  </p>
                                 </div>
-                                <p className="text-[12.5px] text-[#EDE5D4] truncate font-medium">
-                                  {replyTo.plaintext ?? replyTo.content ??
-                                    (replyTo.mediaType === MediaType.Image
-                                      ? replyTo.sticker ? '🎨 Sticker' : '📷 Photo'
-                                      : replyTo.mediaType === MediaType.Audio
-                                        ? '🎤 Voice message'
-                                        : 'Attachment')}
-                                </p>
+                                <button
+                                  onClick={() => setReplyTo(null)}
+                                  className="shrink-0 w-7 h-7 rounded-full flex items-center justify-center text-[#7A6F65] hover:text-[#EDE5D4] hover:bg-white/[0.06] transition-colors"
+                                >
+                                  <X className="w-3.5 h-3.5" />
+                                </button>
                               </div>
-                              <button
-                                onClick={() => setReplyTo(null)}
-                                className="shrink-0 w-7 h-7 rounded-full flex items-center justify-center text-[#7A6F65] hover:text-[#EDE5D4] hover:bg-white/[0.06] transition-colors"
-                              >
-                                <X className="w-3.5 h-3.5" />
-                              </button>
-                            </div>
-                          </motion.div>
-                        )}
-                      </AnimatePresence>
+                            </motion.div>
+                          )}
+                        </AnimatePresence>
+                      </div>
 
-                      <AnimatePresence>
-                        {pendingFiles.length > 0 && (
-                          <motion.div
-                            initial={reduceMotion ? false : { opacity: 0, y: 6, height: 0 }}
-                            animate={{ opacity: 1, y: 0, height: 'auto' }}
-                            exit={reduceMotion ? undefined : { opacity: 0, y: 6, height: 0 }}
-                            transition={EASE_OUT}
-                            className="pb-2 sm:pb-3 overflow-hidden"
-                          >
-                            <div className="flex gap-2 overflow-x-auto pb-1">
-                              {pendingFiles.map((file, index) => {
-                                const isImage = file.type.startsWith('image/');
-                                const previewUrl = isImage ? URL.createObjectURL(file) : null;
-                                return (
-                                  <motion.div
-                                    key={`${file.name}-${index}`}
-                                    initial={{ scale: 0.85, opacity: 0 }}
-                                    animate={{ scale: 1, opacity: 1 }}
-                                    transition={SPRING_POP}
-                                    className={`relative shrink-0 w-20 h-20 rounded-2xl overflow-hidden shadow-sm ${theme.subtleBg} border ${theme.subtleBorder}`}
-                                  >
-                                    {isImage && previewUrl ? (
-                                      <img src={previewUrl} alt={file.name} className="w-full h-full object-cover" />
-                                    ) : (
-                                      <div className="w-full h-full flex flex-col items-center justify-center px-1 text-center">
-                                        <FileText className={`w-5 h-5 ${theme.accentText}`} />
-                                        <span className={`text-[9px] truncate w-full mt-1 ${theme.textSecondary}`}>{file.name}</span>
-                                      </div>
-                                    )}
-                                    {pendingViewOnce && index === 0 && (
-                                      <span className="absolute bottom-1 left-1 px-1.5 py-0.5 rounded-full bg-gradient-to-r from-[#7C3AED] to-[#A855F7] text-white text-[9px] font-bold">1x</span>
-                                    )}
-                                    <button
-                                      type="button"
-                                      onClick={() => removePendingFile(index)}
-                                      className="absolute top-1 right-1 w-5 h-5 rounded-full bg-black/75 hover:bg-[#B91C1C] text-white flex items-center justify-center transition-colors"
+                      {/* ✅ Pending files strip — fixed height */}
+                      <div className="relative h-0">
+                        <AnimatePresence>
+                          {pendingFiles.length > 0 && (
+                            <motion.div
+                              initial={{ opacity: 0, y: -8 }}
+                              animate={{ opacity: 1, y: 0 }}
+                              exit={{ opacity: 0, y: -8 }}
+                              transition={EASE_OUT}
+                              className="absolute left-0 right-0 top-0 mb-2"
+                            >
+                              <div className="flex gap-2 overflow-x-auto pb-1">
+                                {pendingFiles.map((file, index) => {
+                                  const isImage = file.type.startsWith('image/');
+                                  const previewUrl = isImage ? URL.createObjectURL(file) : null;
+                                  return (
+                                    <motion.div
+                                      key={`${file.name}-${index}`}
+                                      initial={{ scale: 0.85, opacity: 0 }}
+                                      animate={{ scale: 1, opacity: 1 }}
+                                      transition={SPRING_POP}
+                                      className={`relative shrink-0 w-20 h-20 rounded-2xl overflow-hidden shadow-sm ${theme.subtleBg} border ${theme.subtleBorder}`}
                                     >
-                                      <X className="w-3 h-3" />
-                                    </button>
-                                  </motion.div>
-                                );
-                              })}
-                            </div>
-                            <div className="flex items-center justify-between gap-2 mt-1.5">
-                              <p className={`text-[11.5px] font-medium ${theme.textSecondary}`}>
-                                {pendingFiles.length} file{pendingFiles.length === 1 ? '' : 's'} ready
-                              </p>
-                              <button
-                                type="button"
-                                onClick={() => setPendingViewOnce((v) => !v)}
-                                className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10.5px] font-semibold transition-all shadow-sm ${
-                                  pendingViewOnce
-                                    ? 'bg-gradient-to-r from-[#7C3AED] to-[#A855F7] text-white'
-                                    : `${theme.subtleBg} border ${theme.subtleBorder} ${theme.textSecondary}`
-                                }`}
-                              >
-                                <Eye className="w-3 h-3" /> View once
-                              </button>
-                            </div>
-                          </motion.div>
-                        )}
-                      </AnimatePresence>
+                                      {isImage && previewUrl ? (
+                                        <img src={previewUrl} alt={file.name} className="w-full h-full object-cover" />
+                                      ) : (
+                                        <div className="w-full h-full flex flex-col items-center justify-center px-1 text-center">
+                                          <FileText className={`w-5 h-5 ${theme.accentText}`} />
+                                          <span className={`text-[9px] truncate w-full mt-1 ${theme.textSecondary}`}>{file.name}</span>
+                                        </div>
+                                      )}
+                                      {pendingViewOnce && index === 0 && (
+                                        <span className="absolute bottom-1 left-1 px-1.5 py-0.5 rounded-full bg-gradient-to-r from-[#7C3AED] to-[#A855F7] text-white text-[9px] font-bold">1x</span>
+                                      )}
+                                      <button
+                                        type="button"
+                                        onClick={() => removePendingFile(index)}
+                                        className="absolute top-1 right-1 w-5 h-5 rounded-full bg-black/75 hover:bg-[#B91C1C] text-white flex items-center justify-center transition-colors"
+                                      >
+                                        <X className="w-3 h-3" />
+                                      </button>
+                                    </motion.div>
+                                  );
+                                })}
+                              </div>
+                              <div className="flex items-center justify-between gap-2 mt-1.5">
+                                <p className={`text-[11.5px] font-medium ${theme.textSecondary}`}>
+                                  {pendingFiles.length} file{pendingFiles.length === 1 ? '' : 's'} ready
+                                </p>
+                                <button
+                                  type="button"
+                                  onClick={() => setPendingViewOnce((v) => !v)}
+                                  className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10.5px] font-semibold transition-all shadow-sm ${
+                                    pendingViewOnce
+                                      ? 'bg-gradient-to-r from-[#7C3AED] to-[#A855F7] text-white'
+                                      : `${theme.subtleBg} border ${theme.subtleBorder} ${theme.textSecondary}`
+                                  }`}
+                                >
+                                  <Eye className="w-3 h-3" /> View once
+                                </button>
+                              </div>
+                            </motion.div>
+                          )}
+                        </AnimatePresence>
+                      </div>
 
                       <AnimatePresence>
                         {fileError && (
@@ -3291,7 +3234,6 @@ export function DirectMessagePane(): React.JSX.Element {
                           className={`shrink-0 w-10 h-10 rounded-full flex items-center justify-center transition-colors ${
                             emojiPanelOpen ? `${theme.accentText} ${theme.subtleBgStrong}` : `${theme.textSecondary} ${theme.hoverBg}`
                           }`}
-                          title="Emoji, GIFs & stickers"
                         >
                           <Smile className="w-[20px] h-[20px]" />
                         </motion.button>
@@ -3302,7 +3244,6 @@ export function DirectMessagePane(): React.JSX.Element {
                           whileTap={{ scale: 0.94 }}
                           onClick={() => setAttachmentSheetOpen(true)}
                           className={`shrink-0 w-10 h-10 rounded-full flex items-center justify-center ${theme.textSecondary} ${theme.hoverBg} transition-colors`}
-                          title="Attach"
                         >
                           <Paperclip className="w-[19px] h-[19px]" />
                         </motion.button>
