@@ -61,12 +61,14 @@ import {
   Search,
   ChevronLeft,
   ChevronDown,
+  ChevronRight,
   Trash2,
   EyeOff,
   Info,
   UserMinus,
   Eraser,
   Flag,
+  ZoomIn,
 } from 'lucide-react';
 
 /* ────────────────────────────────────────────────────────── */
@@ -144,6 +146,136 @@ function previewText(msg: DirectMessageDto, myUserId: string): LastMessagePrevie
 }
 
 /* ────────────────────────────────────────────────────────── */
+/* Full-size image viewer overlay                             */
+/* ────────────────────────────────────────────────────────── */
+
+interface ImageViewerProps {
+  images: Array<{ url: string; senderName: string; sentAt: string }>;
+  startIndex: number;
+  onClose: () => void;
+}
+
+function ImageViewer({ images, startIndex, onClose }: ImageViewerProps) {
+  const [index, setIndex] = useState(startIndex);
+  const reduceMotion = useReducedMotion();
+
+  const current = images[index];
+  const hasPrev = index > 0;
+  const hasNext = index < images.length - 1;
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+      else if (e.key === 'ArrowLeft' && hasPrev) setIndex((i) => i - 1);
+      else if (e.key === 'ArrowRight' && hasNext) setIndex((i) => i + 1);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose, hasPrev, hasNext]);
+
+  // Prevent page scroll while the viewer is open
+  useEffect(() => {
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => {
+      document.body.style.overflow = prev;
+    };
+  }, []);
+
+  if (!current) return null;
+
+  return (
+    <motion.div
+      initial={reduceMotion ? false : { opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={reduceMotion ? undefined : { opacity: 0 }}
+      transition={{ duration: 0.18 }}
+      className="fixed inset-0 z-[200] bg-black/95 backdrop-blur-sm flex items-center justify-center"
+      onClick={onClose}
+    >
+      {/* Top bar */}
+      <div className="absolute top-0 left-0 right-0 flex items-center justify-between px-4 py-3 bg-gradient-to-b from-black/80 to-transparent z-10">
+        <div className="min-w-0">
+          <p className="text-[13.5px] font-medium text-white truncate">
+            {current.senderName}
+          </p>
+          <p className="text-[11px] text-white/60 tabular-nums">
+            {formatTime(current.sentAt)}
+            {images.length > 1 ? ` · ${index + 1} / ${images.length}` : ''}
+          </p>
+        </div>
+        <div className="flex items-center gap-1 shrink-0">
+          <a
+            href={current.url}
+            download
+            onClick={(e) => e.stopPropagation()}
+            className="w-10 h-10 rounded-full flex items-center justify-center text-white/80 hover:text-white hover:bg-white/10 transition-colors"
+            title="Download"
+            aria-label="Download image"
+          >
+            <Download className="w-5 h-5" />
+          </a>
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              onClose();
+            }}
+            className="w-10 h-10 rounded-full flex items-center justify-center text-white/80 hover:text-white hover:bg-white/10 transition-colors"
+            aria-label="Close"
+            title="Close"
+          >
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+      </div>
+
+      {/* Prev button */}
+      {hasPrev && (
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            setIndex((i) => Math.max(0, i - 1));
+          }}
+          className="absolute left-3 top-1/2 -translate-y-1/2 w-11 h-11 rounded-full bg-black/60 hover:bg-black/80 text-white flex items-center justify-center z-10 transition-colors"
+          aria-label="Previous"
+        >
+          <ChevronLeft className="w-6 h-6" />
+        </button>
+      )}
+
+      {/* Next button */}
+      {hasNext && (
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            setIndex((i) => Math.min(images.length - 1, i + 1));
+          }}
+          className="absolute right-3 top-1/2 -translate-y-1/2 w-11 h-11 rounded-full bg-black/60 hover:bg-black/80 text-white flex items-center justify-center z-10 transition-colors"
+          aria-label="Next"
+        >
+          <ChevronRight className="w-6 h-6" />
+        </button>
+      )}
+
+      {/* Image */}
+      <motion.img
+        key={index}
+        initial={reduceMotion ? false : { opacity: 0, scale: 0.98 }}
+        animate={{ opacity: 1, scale: 1 }}
+        transition={{ duration: 0.18 }}
+        src={current.url}
+        alt=""
+        onClick={(e) => e.stopPropagation()}
+        className="max-w-[95vw] max-h-[88vh] object-contain select-none"
+      />
+    </motion.div>
+  );
+}
+
+/* ────────────────────────────────────────────────────────── */
 /* Message row                                                */
 /* ────────────────────────────────────────────────────────── */
 
@@ -157,6 +289,7 @@ interface MessageRowProps {
   onDeleteForMe: (m: DirectMessageDto) => void;
   onDeleteForEveryone: (m: DirectMessageDto) => void;
   onRequestProfile: (userId: string) => void;
+  onOpenImage: (m: DirectMessageDto, senderName: string) => void;
 }
 
 const MessageRow = React.memo(function MessageRow({
@@ -169,6 +302,7 @@ const MessageRow = React.memo(function MessageRow({
   onDeleteForMe,
   onDeleteForEveryone,
   onRequestProfile,
+  onOpenImage,
 }: MessageRowProps) {
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement | null>(null);
@@ -255,11 +389,24 @@ const MessageRow = React.memo(function MessageRow({
             {hasMedia && (
               <div className="mb-2 -mx-1">
                 {message.mediaType === MediaType.Image && (
-                  <img
-                    src={message.mediaUrl ?? undefined}
-                    alt=""
-                    className="rounded-xl max-h-72 w-auto object-cover"
-                  />
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onOpenImage(message, senderName);
+                    }}
+                    className="relative group cursor-zoom-in rounded-xl overflow-hidden block"
+                    aria-label="View full image"
+                  >
+                    <img
+                      src={message.mediaUrl ?? undefined}
+                      alt=""
+                      className="rounded-xl max-h-72 w-auto object-cover"
+                    />
+                    <span className="absolute top-2 right-2 w-7 h-7 rounded-full bg-black/50 text-white flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
+                      <ZoomIn className="w-3.5 h-3.5" />
+                    </span>
+                  </button>
                 )}
                 {message.mediaType === MediaType.Video && (
                   <video
@@ -551,13 +698,14 @@ function DirectMessagePane(): React.JSX.Element {
   const [loadingMore, setLoadingMore] = useState(false);
   const [hasMore, setHasMore] = useState(true);
   const [inputContent, setInputContent] = useState('');
-  const [pendingFile, setPendingFile] = useState<File | null>(null);
+
+  // Multiple files staged for sending
+  const [pendingFiles, setPendingFiles] = useState<File[]>([]);
   const [fileError, setFileError] = useState<string | null>(null);
   const [isSending, setIsSending] = useState(false);
   const [friendRequestStatus, setFriendRequestStatus] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
 
-  // Last message per peer userId — used for the sidebar preview line
   const [lastMessages, setLastMessages] = useState<Record<string, DirectMessageDto>>({});
 
   const [pendingDeleteEveryoneId, setPendingDeleteEveryoneId] = useState<
@@ -566,10 +714,12 @@ function DirectMessagePane(): React.JSX.Element {
   const [infoOpen, setInfoOpen] = useState(false);
   const [profileModalUserId, setProfileModalUserId] = useState<string | null>(null);
 
+  // Image viewer state
+  const [viewerOpenIndex, setViewerOpenIndex] = useState<number | null>(null);
+
   const [composerVisible, setComposerVisible] = useState(true);
   const [showJumpToLatest, setShowJumpToLatest] = useState(false);
 
-  // Local unread counters per friend (device-only)
   const UNREAD_KEY = `orbital.unreadDms.${user?.id ?? 'anon'}`;
   const [unreadCounts, setUnreadCounts] = useState<Record<string, number>>(() => {
     if (typeof window === 'undefined') return {};
@@ -603,7 +753,6 @@ function DirectMessagePane(): React.JSX.Element {
     el.style.height = Math.min(el.scrollHeight, 140) + 'px';
   };
 
-  // One-time audio unlock on first gesture
   useEffect(() => {
     const unlock = () => {
       unlockSounds();
@@ -644,7 +793,6 @@ function DirectMessagePane(): React.JSX.Element {
 
   const isTargetOnline = presenceStore.isOnline(userId);
 
-  // WhatsApp-style ordering: most recently messaged conversations on top
   const filteredFriends = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
     const base = [...friends];
@@ -666,6 +814,27 @@ function DirectMessagePane(): React.JSX.Element {
 
     return list;
   }, [friends, searchQuery, lastMessages]);
+
+  // Collect all image messages in the current chat for the viewer
+  const chatImages = useMemo(
+    () =>
+      messages
+        .filter((m) => m.mediaType === MediaType.Image && m.mediaUrl)
+        .map((m) => ({
+          url: m.mediaUrl as string,
+          senderName: m.senderId === user?.id ? 'You' : (targetUser?.displayName ?? 'Them'),
+          sentAt: m.sentAt,
+        })),
+    [messages, user?.id, targetUser?.displayName],
+  );
+
+  const handleOpenImage = useCallback(
+    (m: DirectMessageDto, _senderName: string) => {
+      const idx = chatImages.findIndex((img) => img.url === m.mediaUrl);
+      if (idx >= 0) setViewerOpenIndex(idx);
+    },
+    [chatImages],
+  );
 
   useEffect(() => {
     if (!userId) { setTargetUser(null); setMessages([]); return; }
@@ -703,7 +872,6 @@ function DirectMessagePane(): React.JSX.Element {
     return () => { active = false; };
   }, [userId, friends]);
 
-  // Clear unread badge when opening a conversation
   useEffect(() => {
     if (!userId) return;
     setUnreadCounts((prev) => {
@@ -733,7 +901,6 @@ function DirectMessagePane(): React.JSX.Element {
         setMessages(decrypted);
         setHasMore(history.length >= 50);
 
-        // Stash the newest message for the sidebar preview
         if (decrypted.length > 0) {
           const latest = decrypted[decrypted.length - 1];
           setLastMessages((prev) => ({ ...prev, [userId]: latest }));
@@ -780,7 +947,6 @@ function DirectMessagePane(): React.JSX.Element {
     const unsub = signalRService.onReceiveDirectMessage(async (msg: DirectMessageDto) => {
       const decrypted = await decryptOne(msg, user?.id ?? '');
 
-      // Bump the conversation to the top of the sidebar on any traffic
       const otherId = msg.senderId === user?.id ? msg.recipientId : msg.senderId;
       if (otherId) {
         setLastMessages((prev) => {
@@ -834,78 +1000,111 @@ function DirectMessagePane(): React.JSX.Element {
 
   const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
     setFileError(null);
-    const file = e.target.files?.[0];
-    if (!file) return;
+    const files = Array.from(e.target.files ?? []);
+    if (files.length === 0) return;
 
-    const validation = validateFileSize(file);
-    if (!validation.valid) {
-      setFileError('File is too large (max 25 MB).');
-      setPendingFile(null);
-      if (fileInputRef.current) fileInputRef.current.value = '';
-      return;
-    }
-
-    if (file.type.startsWith('image/')) {
-      try {
-        const compressed = await compressImage(file);
-        setPendingFile(compressed);
-      } catch {
-        setPendingFile(file);
+    const accepted: File[] = [];
+    for (const file of files) {
+      const validation = validateFileSize(file);
+      if (!validation.valid) {
+        setFileError(`${file.name}: File is too large (max 25 MB).`);
+        continue;
       }
-    } else {
-      setPendingFile(file);
+      if (file.type.startsWith('image/')) {
+        try {
+          const compressed = await compressImage(file);
+          accepted.push(compressed);
+        } catch {
+          accepted.push(file);
+        }
+      } else {
+        accepted.push(file);
+      }
     }
+
+    if (accepted.length > 0) {
+      setPendingFiles((prev) => [...prev, ...accepted]);
+    }
+
+    // Reset the file input so the same file can be re-selected
+    if (fileInputRef.current) fileInputRef.current.value = '';
+  };
+
+  const removePendingFile = (index: number) => {
+    setPendingFiles((prev) => prev.filter((_, i) => i !== index));
   };
 
   const handleSendMessage = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!userId) return;
-    if (!inputContent.trim() && !pendingFile) return;
+    if (!inputContent.trim() && pendingFiles.length === 0) return;
 
     stopTyping();
     setIsSending(true);
     setFileError(null);
 
     try {
-      let mediaUrl: string | undefined;
-      let mediaType: number | undefined;
+      const text = inputContent.trim();
+      const filesToSend = [...pendingFiles];
 
-      if (pendingFile) {
-        const reader = new FileReader();
-        const dataUrlPromise = new Promise<string>((resolve, reject) => {
-          reader.onload = () => resolve(reader.result as string);
-          reader.onerror = () => reject(new Error('Failed to read file'));
-        });
-        reader.readAsDataURL(pendingFile);
-        mediaUrl = await dataUrlPromise;
-        mediaType = validateFileSize(pendingFile).mediaType;
-      }
-
-      let ciphertext = '';
-      let nonce = '';
-      if (inputContent.trim()) {
-        const recipientPub = await getPublicKeyFor(userId);
-        const enc = await encryptFor(recipientPub, inputContent.trim());
-        ciphertext = enc.ciphertext;
-        nonce = enc.nonce;
-      }
-
-      await signalRService.sendDirectMessage({
-        recipientId: userId,
-        ciphertext,
-        nonce,
-        mediaUrl,
-        mediaType,
-      });
-
-      playSend();
-
+      // Clear the composer immediately for a snappy feel
       setInputContent('');
-      setPendingFile(null);
+      setPendingFiles([]);
       if (fileInputRef.current) fileInputRef.current.value = '';
       if (composerRef.current) composerRef.current.style.height = 'auto';
-
       setComposerVisible(true);
+
+      // If there are files, send each as its own message.
+      // If there's text and files, the text accompanies the FIRST file.
+      if (filesToSend.length > 0) {
+        for (let i = 0; i < filesToSend.length; i++) {
+          const file = filesToSend[i];
+
+          const reader = new FileReader();
+          const dataUrlPromise = new Promise<string>((resolve, reject) => {
+            reader.onload = () => resolve(reader.result as string);
+            reader.onerror = () => reject(new Error('Failed to read file'));
+          });
+          reader.readAsDataURL(file);
+          const mediaUrl = await dataUrlPromise;
+          const mediaType = validateFileSize(file).mediaType;
+
+          // Attach the text to the first file, if any
+          const includeText = i === 0 && text.length > 0;
+          let ciphertext = '';
+          let nonce = '';
+          if (includeText) {
+            const recipientPub = await getPublicKeyFor(userId);
+            const enc = await encryptFor(recipientPub, text);
+            ciphertext = enc.ciphertext;
+            nonce = enc.nonce;
+          }
+
+          await signalRService.sendDirectMessage({
+            recipientId: userId,
+            ciphertext,
+            nonce,
+            mediaUrl,
+            mediaType,
+          });
+
+          playSend();
+        }
+      } else if (text.length > 0) {
+        // Text-only
+        const recipientPub = await getPublicKeyFor(userId);
+        const enc = await encryptFor(recipientPub, text);
+
+        await signalRService.sendDirectMessage({
+          recipientId: userId,
+          ciphertext: enc.ciphertext,
+          nonce: enc.nonce,
+          mediaUrl: undefined,
+          mediaType: undefined,
+        });
+
+        playSend();
+      }
 
       setTimeout(() => {
         messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -1346,6 +1545,7 @@ function DirectMessagePane(): React.JSX.Element {
                       onDeleteForMe={handleDeleteForMe}
                       onDeleteForEveryone={handleRequestDeleteForEveryone}
                       onRequestProfile={setProfileModalUserId}
+                      onOpenImage={handleOpenImage}
                     />
                   );
                 })
@@ -1409,7 +1609,7 @@ function DirectMessagePane(): React.JSX.Element {
             >
               <div className="border-t border-white/[0.05] bg-[#0B0A08] px-2 sm:px-4 py-2 sm:py-3">
                 <AnimatePresence>
-                  {pendingFile && (
+                  {pendingFiles.length > 0 && (
                     <motion.div
                       initial={reduceMotion ? false : { opacity: 0, y: 6, height: 0 }}
                       animate={{ opacity: 1, y: 0, height: 'auto' }}
@@ -1417,25 +1617,45 @@ function DirectMessagePane(): React.JSX.Element {
                       transition={{ duration: 0.18 }}
                       className="pb-2 sm:pb-3 overflow-hidden"
                     >
-                      <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg bg-white/[0.035] border border-white/[0.06] text-[12px] text-[#EDE5D4]">
-                        <Paperclip className="w-3.5 h-3.5 text-[#D97706]" />
-                        <span className="truncate max-w-[180px] sm:max-w-[240px]">
-                          {pendingFile.name}
-                        </span>
-                        <span className="text-[#6B6259] hidden sm:inline">
-                          ({formatFileSize(pendingFile.size)})
-                        </span>
-                        <button
-                          onClick={() => {
-                            setPendingFile(null);
-                            if (fileInputRef.current) fileInputRef.current.value = '';
-                          }}
-                          className="text-[#6B6259] hover:text-[#B91C1C] ml-1 transition-colors"
-                          aria-label="Remove attachment"
-                        >
-                          <X className="w-3.5 h-3.5" />
-                        </button>
+                      <div className="flex gap-2 overflow-x-auto pb-1">
+                        {pendingFiles.map((file, index) => {
+                          const isImage = file.type.startsWith('image/');
+                          const previewUrl = isImage ? URL.createObjectURL(file) : null;
+                          return (
+                            <div
+                              key={`${file.name}-${index}`}
+                              className="relative shrink-0 w-20 h-20 rounded-lg overflow-hidden bg-white/[0.035] border border-white/[0.06]"
+                            >
+                              {isImage && previewUrl ? (
+                                <img
+                                  src={previewUrl}
+                                  alt={file.name}
+                                  className="w-full h-full object-cover"
+                                  onLoad={() => URL.revokeObjectURL(previewUrl)}
+                                />
+                              ) : (
+                                <div className="w-full h-full flex flex-col items-center justify-center px-1 text-center">
+                                  <FileText className="w-5 h-5 text-[#D97706]" />
+                                  <span className="text-[9px] text-[#6B6259] truncate w-full mt-1">
+                                    {file.name}
+                                  </span>
+                                </div>
+                              )}
+                              <button
+                                type="button"
+                                onClick={() => removePendingFile(index)}
+                                className="absolute top-0.5 right-0.5 w-5 h-5 rounded-full bg-black/70 hover:bg-[#B91C1C] text-white flex items-center justify-center transition-colors"
+                                aria-label={`Remove ${file.name}`}
+                              >
+                                <X className="w-3 h-3" />
+                              </button>
+                            </div>
+                          );
+                        })}
                       </div>
+                      <p className="text-[11px] text-[#6B6259] mt-1.5">
+                        {pendingFiles.length} file{pendingFiles.length === 1 ? '' : 's'} ready to send
+                      </p>
                     </motion.div>
                   )}
                 </AnimatePresence>
@@ -1466,6 +1686,7 @@ function DirectMessagePane(): React.JSX.Element {
                     ref={fileInputRef}
                     onChange={handleFileSelect}
                     className="hidden"
+                    multiple
                   />
 
                   <button
@@ -1503,7 +1724,7 @@ function DirectMessagePane(): React.JSX.Element {
                   />
 
                   <AnimatePresence mode="popLayout" initial={false}>
-                    {(inputContent.trim().length > 0 || pendingFile) && (
+                    {(inputContent.trim().length > 0 || pendingFiles.length > 0) && (
                       <motion.button
                         key="send-btn"
                         type="submit"
@@ -1605,6 +1826,17 @@ function DirectMessagePane(): React.JSX.Element {
         userId={profileModalUserId}
         onClose={() => setProfileModalUserId(null)}
       />
+
+      {/* Full-screen image viewer */}
+      <AnimatePresence>
+        {viewerOpenIndex != null && (
+          <ImageViewer
+            images={chatImages}
+            startIndex={viewerOpenIndex}
+            onClose={() => setViewerOpenIndex(null)}
+          />
+        )}
+      </AnimatePresence>
     </div>
   );
 }
