@@ -43,7 +43,12 @@ import {
 import { Avatar } from './Avatar';
 import { UserProfileModal } from './UserProfileModal';
 import MessageSkeleton from './MessageSkeleton';
-import { validateFileSize, formatFileSize } from '../services/upload';
+import {
+  validateFileSize,
+  formatFileSize,
+  uploadAttachment,
+  MAX_FILE_SIZE,
+} from '../services/upload';
 import {
   Phone,
   Video,
@@ -56,7 +61,6 @@ import {
   X,
   User,
   UserPlus,
-  Check,
   CheckCheck,
   Search,
   ChevronLeft,
@@ -415,6 +419,8 @@ const MessageRow = React.memo(function MessageRow({
                     <img
                       src={message.mediaUrl ?? undefined}
                       alt=""
+                      loading="lazy"
+                      decoding="async"
                       className="rounded-xl max-h-72 w-auto object-cover"
                     />
                     <span className="absolute top-2 right-2 w-7 h-7 rounded-full bg-black/50 text-white flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
@@ -426,11 +432,17 @@ const MessageRow = React.memo(function MessageRow({
                   <video
                     src={message.mediaUrl ?? undefined}
                     controls
+                    preload="metadata"
                     className="rounded-xl max-h-72 w-full bg-black"
                   />
                 )}
                 {message.mediaType === MediaType.Audio && (
-                  <audio src={message.mediaUrl ?? undefined} controls className="w-full my-1" />
+                  <audio
+                    src={message.mediaUrl ?? undefined}
+                    controls
+                    preload="metadata"
+                    className="w-full my-1"
+                  />
                 )}
                 {message.mediaType === MediaType.File && (
                   <a
@@ -709,6 +721,7 @@ function DirectMessagePane(): React.JSX.Element {
   const [targetUser, setTargetUser] = useState<UserProfileDto | null>(null);
   const [messages, setMessages] = useState<DirectMessageDto[]>([]);
   const [loadingHistory, setLoadingHistory] = useState(false);
+  const [historyError, setHistoryError] = useState<string | null>(null);
   const [loadingMore, setLoadingMore] = useState(false);
   const [hasMore, setHasMore] = useState(true);
   const [inputContent, setInputContent] = useState('');
@@ -937,6 +950,7 @@ function DirectMessagePane(): React.JSX.Element {
 
     const fetchHistory = async () => {
       setLoadingHistory(true);
+      setHistoryError(null);
       try {
         const history = await apiService.getDmHistory(userId, 50);
         if (!active) return;
@@ -960,7 +974,11 @@ function DirectMessagePane(): React.JSX.Element {
           messagesEndRef.current?.scrollIntoView({ behavior: 'auto' });
         }, 50);
       } catch (err) {
+        if (!active) return;
         console.error('Error fetching DM history:', err);
+        setHistoryError(
+          extractErrorMessage(err, 'Could not load messages. Tap retry.'),
+        );
       } finally {
         if (active) setLoadingHistory(false);
       }
@@ -1051,18 +1069,30 @@ function DirectMessagePane(): React.JSX.Element {
 
     const accepted: File[] = [];
     for (const file of files) {
+      // Hard 5 MB cap — enforced before compression too, so a 50 MB video
+      // doesn't even start a canvas decode.
       const validation = validateFileSize(file);
       if (!validation.valid) {
-        setFileError(`${file.name}: File is too large (max 25 MB).`);
+        setFileError(validation.error ?? `${file.name}: file too large.`);
         continue;
       }
+
       if (file.type.startsWith('image/')) {
+        let toSend = file;
         try {
-          const compressed = await compressImage(file);
-          accepted.push(compressed);
+          toSend = await compressImage(file);
         } catch {
-          accepted.push(file);
+          toSend = file;
         }
+        // Re-check after compression. A 5 MB PNG can still exceed
+        // the limit if compression made it bigger, so guard again.
+        if (toSend.size > MAX_FILE_SIZE) {
+          setFileError(
+            `${file.name}: still ${formatFileSize(toSend.size)} after compression — max is ${formatFileSize(MAX_FILE_SIZE)}.`,
+          );
+          continue;
+        }
+        accepted.push(toSend);
       } else {
         accepted.push(file);
       }
@@ -1096,14 +1126,11 @@ function DirectMessagePane(): React.JSX.Element {
         for (let i = 0; i < filesToSend.length; i++) {
           const file = filesToSend[i];
 
-          const reader = new FileReader();
-          const dataUrlPromise = new Promise<string>((resolve, reject) => {
-            reader.onload = () => resolve(reader.result as string);
-            reader.onerror = () => reject(new Error('Failed to read file'));
-          });
-          reader.readAsDataURL(file);
-          const mediaUrl = await dataUrlPromise;
-          const mediaType = validateFileSize(file).mediaType;
+          // ── THE KEY CHANGE ─────────────────────────────────────
+          // Upload the file to the server and store only the returned
+          // short URL in MediaUrl. Previously we base64-encoded the
+          // entire file into the DB (a 26 MB video → 26 MB row).
+          const { mediaUrl, mediaType } = await uploadAttachment(file);
 
           const includeText = i === 0 && text.length > 0;
           let ciphertext = '';
@@ -1543,6 +1570,31 @@ function DirectMessagePane(): React.JSX.Element {
 
               {loadingHistory ? (
                 <MessageSkeleton />
+              ) : historyError ? (
+                <div className="h-full flex flex-col items-center justify-center text-center gap-3 py-12">
+                  <div className="w-14 h-14 rounded-2xl bg-[#B91C1C]/[0.10] border border-[#B91C1C]/30 flex items-center justify-center">
+                    <AlertCircle className="w-6 h-6 text-[#F87171]" />
+                  </div>
+                  <div>
+                    <p className="text-[14px] text-[#EDE5D4] font-semibold tracking-tight">
+                      Couldn't load messages
+                    </p>
+                    <p className="text-[12.5px] text-[#A8A29E] mt-1 max-w-[300px]">
+                      {historyError}
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => {
+                      // Trigger the effect again by re-navigating to same user
+                      const current = userId;
+                      navigate('/app/dm');
+                      setTimeout(() => navigate(`/app/dm/${current}`), 10);
+                    }}
+                    className="h-9 px-4 rounded-lg bg-[#D97706] hover:bg-[#B45309] text-[#0F0D0A] text-[12.5px] font-medium transition-colors"
+                  >
+                    Retry
+                  </button>
+                </div>
               ) : messages.length === 0 ? (
                 <div className="h-full flex flex-col items-center justify-center text-center gap-3 py-12">
                   <div className="w-16 h-16 rounded-2xl bg-white/[0.03] border border-white/[0.06] flex items-center justify-center">

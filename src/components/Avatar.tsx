@@ -28,9 +28,9 @@ export function getInitials(name: string): string {
 }
 
 // Read the same env var api.ts uses — but do NOT import from api.ts.
-// Importing from there creates a module cycle that crashes Vite.
 const API_ORIGIN: string =
-  (import.meta.env.VITE_API_BASE as string | undefined) ?? 'https://orbital.runasp.net';
+  (import.meta.env.VITE_API_BASE as string | undefined) ??
+  'https://orbital.runasp.net';
 
 /** Turn "/avatars/abc.png" into "https://orbital.runasp.net/avatars/abc.png". */
 function resolveAvatarUrl(raw: string | null | undefined): string | undefined {
@@ -46,6 +46,13 @@ function resolveAvatarUrl(raw: string | null | undefined): string | undefined {
   const base = API_ORIGIN.replace(/\/+$/, '');
   return `${base}${raw.startsWith('/') ? '' : '/'}${raw}`;
 }
+
+/**
+ * Legacy safety net: if an old avatar was stored as a base64 data URL
+ * larger than this threshold, refuse to render it inline. Rendering a
+ * multi-MB data URL inside a scrollable list destroys performance.
+ */
+const MAX_INLINE_DATA_URL_CHARS = 200_000;
 
 const sizeConfig: Record<
   AvatarSize,
@@ -94,7 +101,12 @@ function Avatar({
   const cfg = sizeConfig[size] ?? sizeConfig.md;
 
   const resolvedSrc = resolveAvatarUrl(src);
-  const showImage = Boolean(resolvedSrc) && !imageError;
+
+  const isOversizedDataUrl =
+    resolvedSrc?.startsWith('data:') === true &&
+    resolvedSrc.length > MAX_INLINE_DATA_URL_CHARS;
+
+  const showImage = Boolean(resolvedSrc) && !imageError && !isOversizedDataUrl;
 
   // Reset the error flag whenever the src changes. Without this, a
   // single 404 poisons the component forever — new uploads won't show.
@@ -111,6 +123,8 @@ function Avatar({
           <img
             src={resolvedSrc}
             alt={name}
+            loading="lazy"
+            decoding="async"
             onError={() => setImageError(true)}
             className="w-full h-full object-cover"
           />

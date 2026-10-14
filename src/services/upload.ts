@@ -6,7 +6,14 @@
 import { MediaType } from '../types/api';
 import { API_BASE_URL, extractErrorMessage, getAccessToken } from './api';
 
-export const MAX_FILE_SIZE = 25 * 1024 * 1024; // 25 MB ceiling
+/**
+ * Hard 5 MB ceiling across the board.
+ *
+ * The client enforces it here (instant feedback), the server enforces it
+ * again in web.config + the upload endpoint, and the DB has a CHECK
+ * constraint as the final backstop. None of these three is optional.
+ */
+export const MAX_FILE_SIZE = 5 * 1024 * 1024; // 5 MB
 
 export interface ValidationResult {
   valid: boolean;
@@ -40,14 +47,6 @@ export function determineMediaType(file: File): number {
 export function validateFileSize(file: File): ValidationResult {
   const mediaType = determineMediaType(file);
 
-  if (file.size > MAX_FILE_SIZE) {
-    return {
-      valid: false,
-      error: `File "${file.name}" exceeds the maximum limit of 25 MB (${formatFileSize(file.size)}).`,
-      mediaType,
-    };
-  }
-
   if (file.size <= 0) {
     return {
       valid: false,
@@ -56,10 +55,15 @@ export function validateFileSize(file: File): ValidationResult {
     };
   }
 
-  return {
-    valid: true,
-    mediaType,
-  };
+  if (file.size > MAX_FILE_SIZE) {
+    return {
+      valid: false,
+      error: `File "${file.name}" is ${formatFileSize(file.size)} — max is ${formatFileSize(MAX_FILE_SIZE)}.`,
+      mediaType,
+    };
+  }
+
+  return { valid: true, mediaType };
 }
 
 export function formatFileSize(bytes: number): string {
@@ -91,12 +95,28 @@ export async function uploadAttachment(file: File): Promise<UploadResponse> {
 
   const uploadEndpoint = `${API_BASE_URL.replace(/\/+$/, '')}/api/Upload`;
 
-  const response = await fetch(uploadEndpoint, {
-    method: 'POST',
-    credentials: 'include',
-    headers,
-    body: formData,
-  });
+  // 30 s timeout for uploads — bigger than the API default so slow
+  // connections don't fail spuriously, but still bounded.
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 30_000);
+
+  let response: Response;
+  try {
+    response = await fetch(uploadEndpoint, {
+      method: 'POST',
+      credentials: 'include',
+      headers,
+      body: formData,
+      signal: controller.signal,
+    });
+  } catch (err) {
+    if ((err as Error).name === 'AbortError') {
+      throw new Error('Upload timed out. Please try again.');
+    }
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
 
   if (response.status === 401) {
     if (typeof window !== 'undefined') {
@@ -112,7 +132,9 @@ export async function uploadAttachment(file: File): Promise<UploadResponse> {
     } catch {
       errorDetail = await response.text();
     }
-    throw new Error(extractErrorMessage(errorDetail) || `Upload failed with status ${response.status}`);
+    throw new Error(
+      extractErrorMessage(errorDetail) || `Upload failed with status ${response.status}`,
+    );
   }
 
   const data = (await response.json()) as {
@@ -125,6 +147,9 @@ export async function uploadAttachment(file: File): Promise<UploadResponse> {
   };
 
   const finalUrl = data.mediaUrl ?? data.url ?? data.fileUrl ?? '';
+  if (!finalUrl) {
+    throw new Error('Upload succeeded but server returned no URL.');
+  }
 
   return {
     mediaUrl: finalUrl,
