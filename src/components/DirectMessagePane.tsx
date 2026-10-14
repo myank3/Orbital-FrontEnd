@@ -1174,7 +1174,15 @@ function ReplyPreviewBubble({
   const body =
     replyTo.plaintext ??
     replyTo.content ??
-    (replyTo.mediaType === MediaType.Image ? '📷 Photo' : 'Attachment');
+    (replyTo.mediaType === MediaType.Image
+      ? '📷 Photo'
+      : replyTo.mediaType === MediaType.Audio
+        ? '🎤 Voice message'
+        : replyTo.mediaType === MediaType.Video
+          ? '🎥 Video'
+          : replyTo.mediaType === MediaType.File
+            ? '📎 File'
+            : 'Attachment');
   const isTargetMine = replyTo.senderId === currentUserId;
   const senderLabel = isTargetMine ? 'You' : 'Reply';
   const display = body.length > 80 ? body.slice(0, 80) + '…' : body;
@@ -1603,8 +1611,11 @@ const MessageRow = React.memo(
           </div>
         </div>
 
+        {/* ✅ FIX #1: inner row now carries justify-* so bubbles land on the correct side */}
         <div
-          className="relative flex w-full transition-transform"
+          className={`relative flex w-full ${
+            isMe ? 'justify-end' : 'justify-start'
+          } transition-transform`}
           style={{
             transform: swipeX > 0 ? `translateX(${swipeX}px)` : undefined,
             transitionDuration: swipingRef.current ? '0ms' : '180ms',
@@ -1779,7 +1790,7 @@ const MessageRow = React.memo(
               <div
                 className={`relative inline-flex items-end gap-1.5 max-w-full ${
                   hasMedia ? 'mt-1.5' : 'mt-0'
-                }`}
+                } ${isMe ? 'flex-row-reverse' : ''}`}
               >
                 <button
                   type="button"
@@ -3106,8 +3117,8 @@ export function DirectMessagePane(): React.JSX.Element {
 
   /* ── Send text + files ──────────────────────────────────── */
 
-  const handleSendMessage = async (e: React.FormEvent) => {
-    e.preventDefault();
+  // ✅ FIX #5 + #10: single send function, no fake FormEvent, precise rollback
+  const doSendMessage = useCallback(async () => {
     if (!userId || !user?.id) return;
     if (!inputContent.trim() && pendingFiles.length === 0) return;
 
@@ -3128,6 +3139,9 @@ export function DirectMessagePane(): React.JSX.Element {
     if (fileInputRef.current) fileInputRef.current.value = '';
     if (composerRef.current) composerRef.current.style.height = 'auto';
     setComposerVisible(true);
+
+    // Track only the temp IDs created in *this* send for precise rollback
+    const tempIds: number[] = [];
 
     try {
       if (filesToSend.length > 0) {
@@ -3155,6 +3169,7 @@ export function DirectMessagePane(): React.JSX.Element {
           if (markV1) payload = `[v1]${payload}`;
 
           const tempId = -Date.now() - i;
+          tempIds.push(tempId);
           setMessages((prev) => [
             ...prev,
             {
@@ -3203,6 +3218,7 @@ export function DirectMessagePane(): React.JSX.Element {
         }
 
         const tempId = -Date.now();
+        tempIds.push(tempId);
         setMessages((prev) => [
           ...prev,
           {
@@ -3240,11 +3256,27 @@ export function DirectMessagePane(): React.JSX.Element {
         messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
       }, 50);
     } catch (err) {
-      setMessages((prev) => prev.filter((m) => m.id > 0));
+      // Remove ONLY this send's temp messages — not all temp messages
+      setMessages((prev) =>
+        prev.filter((m) => !tempIds.includes(m.id as number)),
+      );
       setFileError(extractErrorMessage(err));
     } finally {
       setIsSending(false);
     }
+  }, [
+    userId,
+    user?.id,
+    inputContent,
+    pendingFiles,
+    pendingViewOnce,
+    replyTo,
+    stopTyping,
+  ]);
+
+  const handleSendMessage = (e: React.FormEvent) => {
+    e.preventDefault();
+    void doSendMessage();
   };
 
   const handleSendFriendRequest = async () => {
@@ -3473,6 +3505,19 @@ export function DirectMessagePane(): React.JSX.Element {
 
   const hasActiveChat = Boolean(userId && targetUser);
   const canSend = inputContent.trim().length > 0 || pendingFiles.length > 0;
+
+  // ✅ FIX #4: revoke object URLs for pending image previews on change/unmount
+  useEffect(() => {
+    const urls: string[] = [];
+    for (const f of pendingFiles) {
+      if (f.type.startsWith('image/')) {
+        urls.push(URL.createObjectURL(f));
+      }
+    }
+    return () => {
+      for (const u of urls) URL.revokeObjectURL(u);
+    };
+  }, [pendingFiles]);
 
   return (
     <div
@@ -3954,7 +3999,9 @@ export function DirectMessagePane(): React.JSX.Element {
                                     replyTo.content ??
                                     (replyTo.mediaType === MediaType.Image
                                       ? '📷 Photo'
-                                      : 'Attachment')}
+                                      : replyTo.mediaType === MediaType.Audio
+                                        ? '🎤 Voice message'
+                                        : 'Attachment')}
                                 </p>
                               </div>
                               <button
@@ -4003,9 +4050,6 @@ export function DirectMessagePane(): React.JSX.Element {
                                         src={previewUrl}
                                         alt={file.name}
                                         className="w-full h-full object-cover"
-                                        onLoad={() =>
-                                          URL.revokeObjectURL(previewUrl)
-                                        }
                                       />
                                     ) : (
                                       <div className="w-full h-full flex flex-col items-center justify-center px-1 text-center">
@@ -4043,13 +4087,14 @@ export function DirectMessagePane(): React.JSX.Element {
                                 {pendingFiles.length} file
                                 {pendingFiles.length === 1 ? '' : 's'} ready
                               </p>
+                              {/* ✅ FIX #2: space between border-* and text-* classes */}
                               <button
                                 type="button"
                                 onClick={() => setPendingViewOnce((v) => !v)}
                                 className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10.5px] font-semibold transition-all shadow-sm ${
                                   pendingViewOnce
                                     ? 'bg-gradient-to-r from-[#7C3AED] to-[#A855F7] text-white'
-                                    : `${theme.subtleBg} border ${theme.subtleBorder}${theme.textSecondary}`
+                                    : `${theme.subtleBg} border ${theme.subtleBorder} ${theme.textSecondary}`
                                 }`}
                               >
                                 <Eye className="w-3 h-3" />
@@ -4114,13 +4159,14 @@ export function DirectMessagePane(): React.JSX.Element {
                         />
 
                         {/* Emoji button */}
+                        {/* ✅ FIX #3: space between accentText and subtleBgStrong */}
                         <button
                           type="button"
                           onClick={() => setEmojiPanelOpen((v) => !v)}
                           className={`shrink-0 w-10 h-10 rounded-full flex items-center justify-center transition-colors ${
                             emojiPanelOpen
-                              ? `${theme.accentText}${theme.subtleBgStrong}`
-                              : `${theme.textSecondary}${theme.hoverBg}`
+                              ? `${theme.accentText} ${theme.subtleBgStrong}`
+                              : `${theme.textSecondary} ${theme.hoverBg}`
                           }`}
                           title="Emoji, GIFs & stickers"
                         >
@@ -4152,9 +4198,7 @@ export function DirectMessagePane(): React.JSX.Element {
                             onKeyDown={(e) => {
                               if (e.key === 'Enter' && !e.shiftKey) {
                                 e.preventDefault();
-                                void handleSendMessage(
-                                  e as unknown as React.FormEvent,
-                                );
+                                void doSendMessage();
                               }
                             }}
                             placeholder={
