@@ -33,7 +33,6 @@ import {
   X,
   ShieldOff,
   Inbox,
-  Trash2,
   Sparkles,
   ChevronRight,
   AtSign,
@@ -76,7 +75,6 @@ function SettingsPane(): React.JSX.Element {
   const [pendingFile, setPendingFile] = useState<File | null>(null);
   const [pendingPreview, setPendingPreview] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
-  const [removing, setRemoving] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [dragActive, setDragActive] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -104,14 +102,14 @@ function SettingsPane(): React.JSX.Element {
   };
 
   const closeAvatarModal = useCallback(() => {
-    if (uploading || removing) return;
+    if (uploading) return;
     if (pendingPreview) URL.revokeObjectURL(pendingPreview);
     setPendingFile(null);
     setPendingPreview(null);
     setUploadError(null);
     setAvatarModalOpen(false);
     if (fileInputRef.current) fileInputRef.current.value = '';
-  }, [pendingPreview, uploading, removing]);
+  }, [pendingPreview, uploading]);
 
   useEffect(() => {
     return () => {
@@ -234,23 +232,6 @@ function SettingsPane(): React.JSX.Element {
     }
   };
 
-  const handleRemoveAvatar = async () => {
-    setRemoving(true);
-    setUploadError(null);
-    try {
-      await apiService.updateProfile({ avatarUrl: '' });
-      await refreshUser();
-      if (pendingPreview) URL.revokeObjectURL(pendingPreview);
-      setPendingFile(null);
-      setPendingPreview(null);
-      setAvatarModalOpen(false);
-    } catch (err) {
-      setUploadError(extractErrorMessage(err, 'Could not remove photo.'));
-    } finally {
-      setRemoving(false);
-    }
-  };
-
   /* ── Blocked users ──────────────────────────────────────── */
   const openBlockedModal = useCallback(async () => {
     setBlockedModalOpen(true);
@@ -292,8 +273,6 @@ function SettingsPane(): React.JSX.Element {
           animate: { opacity: 1, y: 0 },
           transition: { ...SPRING, delay },
         };
-
-  const hasAvatar = Boolean(user?.avatarUrl);
 
   return (
     <div className="h-full overflow-y-auto bg-[#0F0D0A] text-[#EDE5D4]">
@@ -457,7 +436,7 @@ function SettingsPane(): React.JSX.Element {
             >
               <div className="flex items-center gap-1">
                 <span className="text-[13px] text-[#EDE5D4] font-medium truncate max-w-[180px] tabular-nums">
-                  @{user?.userHandle || 'guest'}
+                  {user?.userHandle || 'guest'}@orbit
                 </span>
                 <button
                   type="button"
@@ -609,7 +588,7 @@ function SettingsPane(): React.JSX.Element {
                 <button
                   type="button"
                   onClick={closeAvatarModal}
-                  disabled={uploading || removing}
+                  disabled={uploading}
                   className="w-8 h-8 rounded-lg flex items-center justify-center text-[#7A6F65] hover:text-[#EDE5D4] hover:bg-white/[0.05] disabled:opacity-40 transition-colors"
                   aria-label="Close"
                 >
@@ -675,29 +654,13 @@ function SettingsPane(): React.JSX.Element {
                     </motion.div>
                   )}
                 </AnimatePresence>
-
-                {hasAvatar && !pendingFile && (
-                  <button
-                    type="button"
-                    onClick={() => void handleRemoveAvatar()}
-                    disabled={removing || uploading}
-                    className="w-full h-11 rounded-xl bg-white/[0.03] hover:bg-[#B91C1C]/[0.10] border border-white/[0.06] hover:border-[#B91C1C]/30 disabled:opacity-40 text-[13px] font-medium text-[#F87171] inline-flex items-center justify-center gap-2 transition-colors"
-                  >
-                    {removing ? (
-                      <Loader2 className="w-4 h-4 animate-spin" />
-                    ) : (
-                      <Trash2 className="w-4 h-4" />
-                    )}
-                    <span>{removing ? 'Removing…' : 'Remove current photo'}</span>
-                  </button>
-                )}
               </div>
 
               <div className="px-5 py-3.5 border-t border-white/[0.06] flex items-center justify-end gap-2 bg-[#0F0D0A]/40">
                 <button
                   type="button"
                   onClick={closeAvatarModal}
-                  disabled={uploading || removing}
+                  disabled={uploading}
                   className="h-9 px-4 rounded-xl bg-white/[0.04] hover:bg-white/[0.08] border border-white/[0.06] text-[12.5px] text-[#EDE5D4] disabled:opacity-40 transition-colors"
                 >
                   Cancel
@@ -705,7 +668,7 @@ function SettingsPane(): React.JSX.Element {
                 <button
                   type="button"
                   onClick={() => void handleUpload()}
-                  disabled={!pendingFile || uploading || removing}
+                  disabled={!pendingFile || uploading}
                   className="h-9 px-4 rounded-xl bg-[#D97706] hover:bg-[#B45309] disabled:opacity-30 disabled:cursor-not-allowed text-[#171106] text-[12.5px] font-semibold inline-flex items-center gap-2 transition-colors"
                 >
                   {uploading ? (
