@@ -56,6 +56,7 @@ import {
   BellOff,
   Eraser,
   CheckCheck,
+  Check,
   EyeOff,
   Reply,
   Copy,
@@ -80,19 +81,27 @@ import { EmojiPanel } from './dm/ComposerToolkit';
 
 const PAGE_SIZE = 50;
 const PANEL_HEIGHT = 'h-[300px]';
-const MAX_RECORD_MS = 5 * 60 * 1000; // 5 minutes
+const MAX_RECORD_MS = 5 * 60 * 1000;
 
 /* ────────────────────────────────────────────────────────── */
 /* Codec                                                      */
+/*                                                            */
+/* Legacy wire markers. Delete-for-everyone now uses a real   */
+/* server endpoint (DELETE /api/Group/messages/{id}) and a    */
+/* SignalR `GroupMessageDeleted` event, but we still decode   */
+/* these to hide any old sentinel rows persisted before the   */
+/* server-side implementation shipped.                        */
 /* ────────────────────────────────────────────────────────── */
 
 const REACT_RE = /^\[react:(-?\d+):([^:\]]+)(?::(add|remove))?\]$/;
 const REPLY_RE = /^\[reply:(-?\d+)\]/;
+const DEL_RE = /^\[del:(-?\d+)\]$/;
 
 interface DecodedMessage {
   body: string;
   replyToId: number | null;
   isReaction: false;
+  isDelete: false;
 }
 interface DecodedReaction {
   isReaction: true;
@@ -100,7 +109,12 @@ interface DecodedReaction {
   emoji: string;
   action: 'add' | 'remove';
 }
-type Decoded = DecodedMessage | DecodedReaction;
+interface DecodedDelete {
+  isReaction: false;
+  isDelete: true;
+  messageId: number;
+}
+type Decoded = DecodedMessage | DecodedReaction | DecodedDelete;
 
 function decodeIncoming(text: string): Decoded {
   const react = text.match(REACT_RE);
@@ -112,11 +126,15 @@ function decodeIncoming(text: string): Decoded {
       action: (react[3] as 'add' | 'remove') ?? 'add',
     };
   }
+  const del = text.match(DEL_RE);
+  if (del) {
+    return { isDelete: true, isReaction: false, messageId: parseInt(del[1], 10) };
+  }
   let body = text;
   let replyToId: number | null = null;
   const reply = body.match(REPLY_RE);
   if (reply) { replyToId = parseInt(reply[1], 10); body = body.slice(reply[0].length); }
-  return { body, replyToId, isReaction: false };
+  return { body, replyToId, isReaction: false, isDelete: false };
 }
 
 function encodeReaction(messageId: number, emoji: string, action: 'add' | 'remove' = 'add') {
@@ -370,7 +388,7 @@ function formatDuration(sec: number): string {
 }
 
 /* ────────────────────────────────────────────────────────── */
-/* Local persistence: pin / mute / reactions                  */
+/* Local persistence: pin / mute / reactions / hidden         */
 /* ────────────────────────────────────────────────────────── */
 
 function lsGet<T>(key: string, fallback: T): T {
@@ -388,11 +406,19 @@ function lsSet(key: string, value: unknown) {
 function pinnedKey(u?: string) { return `orbital.groupPinned.${u ?? 'anon'}`; }
 function mutedKey(u?: string) { return `orbital.groupMuted.${u ?? 'anon'}`; }
 function reactionsKey(u?: string, g?: number) { return `orbital.groupReactions.${u ?? 'anon'}.${g ?? 'none'}`; }
+function hiddenKey(u?: string, g?: number) { return `orbital.groupHidden.${u ?? 'anon'}.${g ?? 'none'}`; }
 
 function readPinned(u?: string): Set<string> { return new Set(lsGet<string[]>(pinnedKey(u), [])); }
 function writePinned(u: string | undefined, s: Set<string>) { lsSet(pinnedKey(u), Array.from(s)); }
 function readMuted(u?: string): Set<string> { return new Set(lsGet<string[]>(mutedKey(u), [])); }
 function writeMuted(u: string | undefined, s: Set<string>) { lsSet(mutedKey(u), Array.from(s)); }
+
+function readHidden(u?: string, g?: number): Set<number> {
+  return new Set(lsGet<number[]>(hiddenKey(u, g), []));
+}
+function writeHidden(u: string | undefined, g: number | undefined, s: Set<number>) {
+  lsSet(hiddenKey(u, g), Array.from(s));
+}
 
 interface ReactionEntry { emoji: string; userId: string; }
 function readReactions(u?: string, g?: number): Record<string, ReactionEntry[]> {
@@ -540,9 +566,7 @@ function InlineVoiceRecorder({
   const rafRef = useRef<number | null>(null);
   const tickRef = useRef<number | null>(null);
   const stoppedRef = useRef(false);
-  const levelsRef = useRef<number[]>(new Array(BAR_COUNT).fill(2));
 
-  // Start the recording session on mount.
   useEffect(() => {
     let cancelled = false;
     stoppedRef.current = false;
@@ -561,7 +585,6 @@ function InlineVoiceRecorder({
         }
         streamRef.current = stream;
 
-        // Pick best mime type the browser supports.
         const candidates = [
           'audio/webm;codecs=opus',
           'audio/webm',
@@ -584,10 +607,9 @@ function InlineVoiceRecorder({
           if (e.data && e.data.size > 0) chunksRef.current.push(e.data);
         };
 
-        recorder.start(250); // gather a chunk every 250ms
+        recorder.start(250);
         startRef.current = Date.now();
 
-        // Analyser for live bars
         const Ctor = window.AudioContext ?? (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
         if (Ctor) {
           const ctx = new Ctor();
@@ -604,31 +626,25 @@ function InlineVoiceRecorder({
             const a = analyserRef.current;
             if (!a) return;
             a.getByteFrequencyData(data);
-            // Bucket into BAR_COUNT bands and normalize.
             const step = Math.floor(data.length / BAR_COUNT);
             const next: number[] = new Array(BAR_COUNT);
             for (let i = 0; i < BAR_COUNT; i++) {
               let sum = 0;
               for (let j = 0; j < step; j++) sum += data[i * step + j];
-              const avg = sum / step; // 0..255
+              const avg = sum / step;
               const h = Math.max(2, Math.min(34, Math.round(avg / 7)));
               next[i] = h;
             }
-            levelsRef.current = next;
             setLevels(next);
             rafRef.current = requestAnimationFrame(draw);
           };
           rafRef.current = requestAnimationFrame(draw);
         }
 
-        // Timer
         tickRef.current = window.setInterval(() => {
           const ms = Date.now() - startRef.current;
           setElapsedMs(ms);
-          if (ms >= MAX_RECORD_MS) {
-            // auto-stop & auto-send
-            stopAndSend();
-          }
+          if (ms >= MAX_RECORD_MS) stopAndSend();
         }, 100);
       } catch (err) {
         const msg =
@@ -648,9 +664,7 @@ function InlineVoiceRecorder({
       if (rafRef.current != null) cancelAnimationFrame(rafRef.current);
       if (tickRef.current != null) window.clearInterval(tickRef.current);
       const rec = mediaRecorderRef.current;
-      if (rec && rec.state !== 'inactive') {
-        try { rec.stop(); } catch { /* noop */ }
-      }
+      if (rec && rec.state !== 'inactive') { try { rec.stop(); } catch { /* noop */ } }
       const stream = streamRef.current;
       if (stream) stream.getTracks().forEach((t) => t.stop());
       const ctx = audioCtxRef.current;
@@ -686,7 +700,7 @@ function InlineVoiceRecorder({
 
     if (durationMs < 700 || blob.size < 512) {
       setError('Recording too short — hold the mic a bit longer.');
-      stoppedRef.current = false; // allow retry by re-mount
+      stoppedRef.current = false;
       return;
     }
     if (blob.size > MAX_FILE_SIZE) {
@@ -723,7 +737,6 @@ function InlineVoiceRecorder({
 
   return (
     <div className="flex items-center gap-2 sm:gap-3">
-      {/* Cancel */}
       <button
         type="button"
         onClick={cancel}
@@ -734,41 +747,31 @@ function InlineVoiceRecorder({
         <X className="w-[18px] h-[18px]" />
       </button>
 
-      {/* Recording surface */}
       <div className="flex-1 min-w-0 flex items-center gap-3 h-[44px] px-3 rounded-[22px] bg-[#1A1816] border border-[#EF4444]/40">
-        {/* Pulsing red dot */}
         <span className="relative shrink-0 flex w-3 h-3">
           <span className="absolute inset-0 rounded-full bg-[#EF4444] opacity-40 animate-ping" />
           <span className="relative inline-flex w-3 h-3 rounded-full bg-[#EF4444]" />
         </span>
 
-        {/* Live waveform */}
         <div className="flex-1 min-w-0 flex items-center gap-[2px] h-7">
           {levels.map((h, i) => {
-            // Rightmost bar = newest; fade older bars slightly.
             const age = (BAR_COUNT - 1 - i) / BAR_COUNT;
             const opacity = 0.55 + (1 - age) * 0.45;
             return (
               <span
                 key={i}
                 className="flex-1 rounded-full bg-[#EF4444]"
-                style={{
-                  height: `${h}px`,
-                  opacity,
-                  transition: 'height 80ms linear',
-                }}
+                style={{ height: `${h}px`, opacity, transition: 'height 80ms linear' }}
               />
             );
           })}
         </div>
 
-        {/* Timer */}
         <span className="shrink-0 tabular-nums text-[12.5px] font-semibold text-[#EDE5D4] min-w-[42px] text-right">
           {formatDuration(elapsedMs / 1000)}
         </span>
       </div>
 
-      {/* Send */}
       <button
         type="button"
         onClick={() => void stopAndSend()}
@@ -779,7 +782,6 @@ function InlineVoiceRecorder({
         {sending || busy ? <Loader2 className="w-[18px] h-[18px] animate-spin" /> : <Send className="w-[18px] h-[18px]" />}
       </button>
 
-      {/* Error strip / hint */}
       {error && (
         <div className="absolute left-0 right-0 top-full mt-2 px-3 py-1.5 rounded-lg bg-[#B91C1C]/[0.12] border border-[#B91C1C]/30 text-[11.5px] text-[#F87171] flex items-center gap-2">
           <AlertCircle className="w-3.5 h-3.5 shrink-0" />
@@ -1014,10 +1016,8 @@ const GroupMessageItem = React.memo(function GroupMessageItem({
             </button>
           )}
 
-          {/* Voice note */}
           {isVoice && <VoiceBubble url={message.mediaUrl as string} isMe={isMe} />}
 
-          {/* Other media */}
           {hasMedia && !isVoice && (
             <div className="mb-2 -mx-1">
               {message.mediaType === MediaType.Image && (
@@ -1086,7 +1086,7 @@ const GroupMessageItem = React.memo(function GroupMessageItem({
         {isMe && isLastOfGroup && (
           <div className="flex items-center gap-1 mt-1 px-1 select-none">
             <span className="text-[10px] text-[#6B6259] tabular-nums">{formatTime(message.sentAt)}</span>
-            <CheckCheck className="w-3.5 h-3.5 text-[#4ADE80]" />
+            <Check className="w-3.5 h-3.5 text-[#4ADE80]" />
           </div>
         )}
       </div>
@@ -1112,7 +1112,7 @@ const GroupMessageItem = React.memo(function GroupMessageItem({
 
 function MessageMenu({
   message, isMe, reactions, currentUserId,
-  onClose, onReact, onReply, onCopy, onDeleteForMe,
+  onClose, onReact, onReply, onCopy, onDeleteForMe, onDeleteForEveryone,
 }: {
   message: GroupMessageDto;
   isMe: boolean;
@@ -1123,6 +1123,7 @@ function MessageMenu({
   onReply: () => void;
   onCopy: () => void;
   onDeleteForMe: () => void;
+  onDeleteForEveryone: () => void;
 }) {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
@@ -1171,7 +1172,7 @@ function MessageMenu({
           <p className="line-clamp-4 whitespace-pre-wrap break-words">{messageSnippet(message)}</p>
         </div>
 
-        <div className={`${side} w-[240px] rounded-2xl bg-[#1C1A17] border border-white/[0.08] shadow-2xl overflow-hidden`}>
+        <div className={`${side} w-[250px] rounded-2xl bg-[#1C1A17] border border-white/[0.08] shadow-2xl overflow-hidden`}>
           {canAct && (
             <button onClick={run(onReply)} className={itemCls}>
               <Reply className="w-4 h-4 text-[#A8A29E]" /><span>Reply</span>
@@ -1184,7 +1185,15 @@ function MessageMenu({
           )}
           {canAct && (
             <button onClick={run(onDeleteForMe)} className={`${itemCls} border-t border-white/[0.05]`}>
-              <EyeOff className="w-4 h-4 text-[#A8A29E]" /><span>Hide for me</span>
+              <EyeOff className="w-4 h-4 text-[#A8A29E]" /><span>Delete for me</span>
+            </button>
+          )}
+          {canAct && isMe && (
+            <button
+              onClick={run(onDeleteForEveryone)}
+              className="w-full flex items-center gap-3 px-4 py-3 text-[13.5px] font-medium text-left text-[#F87171] hover:bg-[#B91C1C]/[0.12] active:bg-[#B91C1C]/[0.2]"
+            >
+              <Trash2 className="w-4 h-4" /><span>Delete for everyone</span>
             </button>
           )}
         </div>
@@ -1946,8 +1955,14 @@ export default function GroupPane(): React.JSX.Element {
   const [highlightedMessageId, setHighlightedMessageId] = useState<number | null>(null);
   const [showJumpToLatest, setShowJumpToLatest] = useState(false);
 
+  const [pendingDeleteEveryoneId, setPendingDeleteEveryoneId] =
+    useState<number | null>(null);
+
   const [pinnedIds, setPinnedIds] = useState<Set<string>>(() => readPinned(user?.id));
   const [mutedIds, setMutedIds] = useState<Set<string>>(() => readMuted(user?.id));
+  const [hiddenIds, setHiddenIds] = useState<Set<number>>(() =>
+    readHidden(user?.id, activeGroupId),
+  );
   const [reactions, setReactions] = useState<Record<string, ReactionEntry[]>>(
     () => readReactions(user?.id, activeGroupId),
   );
@@ -1959,9 +1974,11 @@ export default function GroupPane(): React.JSX.Element {
 
   useEffect(() => {
     setReactions(readReactions(user?.id, activeGroupId));
+    setHiddenIds(readHidden(user?.id, activeGroupId));
   }, [activeGroupId, user?.id]);
 
   useEffect(() => { writeReactions(user?.id, activeGroupId, reactions); }, [user?.id, activeGroupId, reactions]);
+  useEffect(() => { writeHidden(user?.id, activeGroupId, hiddenIds); }, [user?.id, activeGroupId, hiddenIds]);
 
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
   const messagesContainerRef = useRef<HTMLDivElement | null>(null);
@@ -2038,6 +2055,7 @@ export default function GroupPane(): React.JSX.Element {
         const sorted = [...msgs].sort((a, b) => getMessageTime(a) - getMessageTime(b));
 
         const reactionEvents: Array<{ messageId: number; emoji: string; action: 'add' | 'remove'; userId: string }> = [];
+        const deleteEvents: number[] = [];
         const visible: GroupMessageDto[] = [];
         for (const m of sorted) {
           const d = decodeIncoming(m.content ?? '');
@@ -2045,11 +2063,16 @@ export default function GroupPane(): React.JSX.Element {
             reactionEvents.push({ messageId: d.messageId, emoji: d.emoji, action: d.action, userId: m.senderId });
             continue;
           }
+          if (d.isDelete) { deleteEvents.push(d.messageId); continue; }
           visible.push({ ...m, content: d.body, replyToId: d.replyToId } as GroupMessageDto & { replyToId?: number | null });
         }
 
+        // Filter out legacy [del:...] targets from old sentinel rows.
+        const deletedSet = new Set(deleteEvents);
+        const filtered = visible.filter((m) => !deletedSet.has(Number(m.id)));
+
         processedIdsRef.current = new Set(sorted.map((m) => m.id));
-        setMessages(visible);
+        setMessages(filtered);
         if (reactionEvents.length > 0) {
           setReactions((prev) => applyReactionEvents(prev, reactionEvents));
         }
@@ -2077,6 +2100,7 @@ export default function GroupPane(): React.JSX.Element {
       if (earlier.length > 0) {
         const sortedEarlier = [...earlier].sort((a, b) => getMessageTime(a) - getMessageTime(b));
         const reactionEvents: Array<{ messageId: number; emoji: string; action: 'add' | 'remove'; userId: string }> = [];
+        const deleteEvents: number[] = [];
         const visible: GroupMessageDto[] = [];
         for (const m of sortedEarlier) {
           const d = decodeIncoming(m.content ?? '');
@@ -2084,9 +2108,13 @@ export default function GroupPane(): React.JSX.Element {
             reactionEvents.push({ messageId: d.messageId, emoji: d.emoji, action: d.action, userId: m.senderId });
             continue;
           }
+          if (d.isDelete) { deleteEvents.push(d.messageId); continue; }
           visible.push({ ...m, content: d.body, replyToId: d.replyToId } as GroupMessageDto & { replyToId?: number | null });
         }
-        setMessages((prev) => [...visible, ...prev]);
+        const deletedSet = new Set(deleteEvents);
+        const filtered = visible.filter((m) => !deletedSet.has(Number(m.id)));
+
+        setMessages((prev) => [...filtered, ...prev]);
         if (reactionEvents.length > 0) {
           setReactions((prev) => applyReactionEvents(prev, reactionEvents));
         }
@@ -2112,6 +2140,21 @@ export default function GroupPane(): React.JSX.Element {
         return;
       }
 
+      // Legacy [del:...] sentinel handling. Kept for one release cycle to
+      // hide any sentinel rows persisted in the DB before the server-side
+      // delete endpoint shipped. New deletes go through GroupMessageDeleted
+      // (bound below) instead of this codec.
+      if (d.isDelete) {
+        const targetId = d.messageId;
+        setMessages((prev) => prev.filter((m) => Number(m.id) !== targetId));
+        setReactions((prev) => {
+          const next = { ...prev };
+          delete next[String(targetId)];
+          return next;
+        });
+        return;
+      }
+
       if (activeGroupId && msg.groupId === activeGroupId) {
         if (processedIdsRef.current.has(msg.id)) return;
         processedIdsRef.current.add(msg.id);
@@ -2125,6 +2168,49 @@ export default function GroupPane(): React.JSX.Element {
     });
     return () => { unsub(); };
   }, [activeGroupId, user?.id]);
+
+  /* ── Real-time delete-for-everyone ───────────────────────
+   *
+   * The signalRService wrapper doesn't expose an onGroupMessageDeleted
+   * subscription yet (and we're not touching signalr.ts), so we bind
+   * directly on the raw HubConnection. `start()` is idempotent — it
+   * returns the existing connection if already connected.
+   */
+  useEffect(() => {
+    let cancelled = false;
+    let unsub: (() => void) | null = null;
+
+    (async () => {
+      try {
+        const conn = await signalRService.start();
+        if (cancelled) return;
+
+        const handler = (groupId: number, messageId: number) => {
+          if (groupId !== activeGroupId) return;
+          const targetStr = String(messageId);
+          setMessages((prev) => prev.filter((m) => String(m.id) !== targetStr));
+          setReactions((prev) => {
+            const next = { ...prev };
+            delete next[targetStr];
+            return next;
+          });
+        };
+
+        conn.on('GroupMessageDeleted', handler);
+        unsub = () => {
+          try { conn.off('GroupMessageDeleted', handler); } catch { /* noop */ }
+        };
+      } catch {
+        /* connection failed — real-time deletes won't fire, but the
+           API call in handleConfirmDeleteForEveryone still works. */
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+      unsub?.();
+    };
+  }, [activeGroupId]);
 
   useLayoutEffect(() => {
     const el = messagesContainerRef.current;
@@ -2258,7 +2344,7 @@ export default function GroupPane(): React.JSX.Element {
     setActiveGroup(detail);
   };
 
-  /* ── Reactions / replies / hidden messages ──────────────── */
+  /* ── Reactions / replies / deletes ──────────────────────── */
 
   const handleReact = useCallback((messageId: number, emoji: string) => {
     if (!user?.id) return;
@@ -2288,16 +2374,69 @@ export default function GroupPane(): React.JSX.Element {
   const handleCancelReply = useCallback(() => setReplyTo(null), []);
   const handleOpenMenu = useCallback((m: GroupMessageDto) => { setMenuMessage(m); }, []);
 
+  /** Delete for me — persisted per user+group in localStorage so it survives reloads. */
   const handleDeleteForMe = useCallback((m: GroupMessageDto) => {
+    if (typeof m.id !== 'number' || m.id <= 0) return;
     setMessages((prev) => prev.filter((x) => x.id !== m.id));
     setReactions((prev) => {
       const next = { ...prev };
       delete next[String(m.id)];
       return next;
     });
+    setHiddenIds((prev) => {
+      const next = new Set(prev);
+      next.add(m.id as number);
+      return next;
+    });
   }, []);
 
+  /** Delete for everyone — opens the confirmation modal. */
+  const handleRequestDeleteForEveryone = useCallback((m: GroupMessageDto) => {
+    if (typeof m.id !== 'number' || m.id <= 0) return;
+    setPendingDeleteEveryoneId(m.id as number);
+  }, []);
+
+  /**
+   * Confirms delete-for-everyone. Calls the real server endpoint
+   * (DELETE /api/Group/messages/{id}); the server soft-deletes the row
+   * and broadcasts GroupMessageDeleted to every connected client.
+   * Falls back to restoring the message locally if the API call fails.
+   */
+  const handleConfirmDeleteForEveryone = useCallback(async () => {
+    if (pendingDeleteEveryoneId == null || !activeGroupId) return;
+    const targetId = pendingDeleteEveryoneId;
+    setPendingDeleteEveryoneId(null);
+
+    const targetStr = String(targetId);
+    const removed = messages.find((m) => String(m.id) === targetStr);
+
+    // Optimistic local removal.
+    setMessages((prev) => prev.filter((m) => String(m.id) !== targetStr));
+    setReactions((prev) => {
+      const next = { ...prev };
+      delete next[targetStr];
+      return next;
+    });
+
+    try {
+      await apiService.deleteGroupMessageForEveryone(targetId);
+    } catch (err) {
+      // Restore on failure.
+      if (removed) {
+        setMessages((prev) =>
+          [...prev, removed].sort((a, b) => getMessageTime(a) - getMessageTime(b)),
+        );
+      }
+      alert(`Delete for everyone failed: ${extractErrorMessage(err)}`);
+    }
+  }, [pendingDeleteEveryoneId, activeGroupId, messages]);
+
   /* ── Derived data ───────────────────────────────────────── */
+
+  const visibleMessages = useMemo(
+    () => messages.filter((m) => typeof m.id !== 'number' || !hiddenIds.has(m.id as number)),
+    [messages, hiddenIds],
+  );
 
   const grouped = useMemo(() => {
     type Item =
@@ -2309,7 +2448,7 @@ export default function GroupPane(): React.JSX.Element {
     let lastSenderId = '';
     let lastTs = 0;
 
-    for (const m of messages) {
+    for (const m of visibleMessages) {
       const day = parseUtc(m.sentAt).toDateString();
       if (day !== lastDate) {
         out.push({ type: 'date', key: `d-${day}`, label: formatDayDivider(m.sentAt) });
@@ -2330,13 +2469,13 @@ export default function GroupPane(): React.JSX.Element {
       it.last = !(next && next.type === 'msg' && next.message.senderId === it.message.senderId);
     }
     return out;
-  }, [messages]);
+  }, [visibleMessages]);
 
   const messagesById = useMemo(() => {
     const map = new Map<GroupMessageDto['id'], GroupMessageDto>();
-    for (const m of messages) map.set(m.id, m);
+    for (const m of visibleMessages) map.set(m.id, m);
     return map;
-  }, [messages]);
+  }, [visibleMessages]);
 
   const filteredGroups = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
@@ -2503,7 +2642,7 @@ export default function GroupPane(): React.JSX.Element {
             >
               {loadingHistory ? (
                 <MessageSkeleton />
-              ) : historyError && messages.length === 0 ? (
+              ) : historyError && visibleMessages.length === 0 ? (
                 <div className="h-full flex flex-col items-center justify-center text-center gap-3 py-12">
                   <div className="w-14 h-14 rounded-2xl bg-[#B91C1C]/[0.10] border border-[#B91C1C]/30 flex items-center justify-center">
                     <AlertCircle className="w-6 h-6 text-[#F87171]" />
@@ -2521,7 +2660,7 @@ export default function GroupPane(): React.JSX.Element {
                     Retry
                   </button>
                 </div>
-              ) : messages.length === 0 ? (
+              ) : visibleMessages.length === 0 ? (
                 <div className="h-full flex flex-col items-center justify-center text-center gap-3 py-12">
                   <GroupAvatar name={activeGroup.name} groupId={activeGroup.id} size="lg" />
                   <div>
@@ -2655,7 +2794,42 @@ export default function GroupPane(): React.JSX.Element {
             if (t) void navigator.clipboard.writeText(t);
           }}
           onDeleteForMe={() => handleDeleteForMe(menuMessage)}
+          onDeleteForEveryone={() => handleRequestDeleteForEveryone(menuMessage)}
         />
+      )}
+
+      {/* Delete-for-everyone confirm modal */}
+      {pendingDeleteEveryoneId != null && (
+        <div
+          className="fixed inset-0 z-[190] bg-black/65 flex items-center justify-center p-4"
+          onClick={() => setPendingDeleteEveryoneId(null)}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="w-full max-w-sm rounded-[22px] bg-[#1C1A17] border border-white/[0.08] shadow-2xl overflow-hidden"
+          >
+            <div className="p-5">
+              <h3 className="text-[14.5px] font-bold text-[#EDE5D4] mb-1.5">Delete for everyone?</h3>
+              <p className="text-[12.5px] text-[#A8A29E] leading-relaxed">
+                This message will be removed for every member of {activeGroup?.name ?? 'the group'}. This cannot be undone.
+              </p>
+            </div>
+            <div className="px-5 py-3.5 border-t border-white/[0.06] flex items-center justify-end gap-2">
+              <button
+                onClick={() => setPendingDeleteEveryoneId(null)}
+                className="h-9 px-4 rounded-xl bg-white/[0.04] hover:bg-white/[0.08] text-[12.5px] font-medium text-[#EDE5D4]"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => void handleConfirmDeleteForEveryone()}
+                className="h-9 px-4 rounded-xl bg-[#B91C1C] hover:bg-[#991B1B] text-white text-[12.5px] font-semibold"
+              >
+                Delete for everyone
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {chatMenuGroup && (
@@ -2668,7 +2842,10 @@ export default function GroupPane(): React.JSX.Element {
           onMute={() => toggleMute(String(chatMenuGroup.id))}
           onMarkRead={() => { /* not tracked server-side for groups */ }}
           onClearChat={() => {
-            if (chatMenuGroup.id === activeGroupId) setMessages([]);
+            if (chatMenuGroup.id === activeGroupId) {
+              setMessages([]);
+              setHiddenIds(new Set());
+            }
           }}
           onLeave={async () => {
             try { await apiService.leaveGroup(chatMenuGroup.id); await fetchGroups(); }

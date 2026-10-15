@@ -578,6 +578,19 @@ const apiService = {
     await request<void>(`/api/Group/${groupId}`, { method: 'DELETE' });
   },
 
+  /**
+   * Soft-delete a single group message for everyone.
+   * Server checks that the caller is either the original sender or
+   * the group creator, then marks the row DeletedAt and broadcasts a
+   * "GroupMessageDeleted" event to the group channel.
+   */
+  async deleteGroupMessageForEveryone(messageId: string | number): Promise<void> {
+    await request<void>(
+      `/api/Group/messages/${encodeURIComponent(String(messageId))}`,
+      { method: 'DELETE' },
+    );
+  },
+
   /* ── Calls ───────────────────────────────────────────── */
 
   async getIceServers(): Promise<IceServerConfigDto[]> {
