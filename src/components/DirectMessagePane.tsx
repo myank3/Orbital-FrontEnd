@@ -887,34 +887,168 @@ function ViewOnceViewerModal({
 
 const QUICK_REACTIONS = ['❤️', '😂', '👍', '😮', '😢', '🙏'];
 
-function ReactionPicker({
-  onPick, onClose, isMe,
-}: { onPick: (e: string) => void; onClose: () => void; isMe: boolean }) {
-  const ref = useRef<HTMLDivElement | null>(null);
+function messageTypeLabel(m: LocalMessage): string {
+  if (m.sticker) return 'Sticker';
+  if (m.mediaType === MediaType.Image) return m.viewOnce ? 'View-once photo' : 'Photo';
+  if (m.mediaType === MediaType.Audio) return 'Voice message';
+  if (m.mediaType === MediaType.Video) return 'Video';
+  if (m.mediaType === MediaType.File) return 'File';
+  return 'Text';
+}
+
+/** WhatsApp-style message menu: reactions on top, message preview, actions below. */
+function MessageMenu({
+  message, isMe, theme, reactions, currentUserId,
+  onClose, onReact, onReply, onCopy, onInfo, onDeleteForMe, onDeleteForEveryone,
+}: {
+  message: LocalMessage;
+  isMe: boolean;
+  theme: ChatTheme;
+  reactions: ReactionEntry[];
+  currentUserId: string | undefined;
+  onClose: () => void;
+  onReact: (emoji: string) => void;
+  onReply: () => void;
+  onCopy: () => void;
+  onInfo: () => void;
+  onDeleteForMe: () => void;
+  onDeleteForEveryone: () => void;
+}) {
   useEffect(() => {
-    const onDoc = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) onClose();
-    };
-    window.addEventListener('mousedown', onDoc);
-    return () => window.removeEventListener('mousedown', onDoc);
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
   }, [onClose]);
+
+  const canAct = typeof message.id === 'number' && message.id > 0;
+  const text = message.plaintext ?? message.content ?? '';
+  const mine = new Set(reactions.filter((r) => r.userId === currentUserId).map((r) => r.emoji));
+  const side = isMe ? 'self-end' : 'self-start';
+  const itemCls = 'w-full flex items-center gap-3 px-4 py-3 text-[13.5px] font-medium text-left text-[#EDE5D4] hover:bg-white/[0.06] active:bg-white/[0.1]';
+  const run = (fn: () => void) => () => { fn(); onClose(); };
 
   return (
     <div
-      ref={ref}
-      className={`absolute z-50 bottom-full mb-2 ${
-        isMe ? 'right-0' : 'left-0'
-      } flex items-center gap-1 px-2.5 py-1.5 rounded-full bg-[#1A1816] border border-white/[0.12] shadow-xl`}
+      className="fixed inset-0 z-[170] bg-black/65 flex items-center justify-center p-4"
+      onClick={onClose}
+      onContextMenu={(e) => { e.preventDefault(); onClose(); }}
     >
-      {QUICK_REACTIONS.map((e) => (
-        <button
-          key={e}
-          onClick={() => { onPick(e); onClose(); }}
-          className="w-9 h-9 rounded-full flex items-center justify-center text-[22px] hover:bg-white/[0.1] active:bg-white/[0.16]"
+      <div
+        onClick={(e) => e.stopPropagation()}
+        className="w-full max-w-[340px] flex flex-col gap-2.5 max-h-full overflow-y-auto"
+      >
+        {canAct && (
+          <div className={`${side} flex items-center gap-0.5 px-2 py-1.5 rounded-full bg-[#1C1A17] border border-white/[0.1] shadow-2xl`}>
+            {QUICK_REACTIONS.map((e) => (
+              <button
+                key={e}
+                onClick={run(() => onReact(e))}
+                className={`w-10 h-10 rounded-full flex items-center justify-center text-[22px] hover:bg-white/[0.1] active:bg-white/[0.16] ${
+                  mine.has(e) ? 'bg-white/[0.14]' : ''
+                }`}
+              >
+                {e}
+              </button>
+            ))}
+          </div>
+        )}
+
+        <div
+          className={`${side} max-w-[85%] rounded-[20px] px-4 py-2 text-[14px] leading-[1.45] shadow-lg ${
+            isMe ? theme.bubbleSent : theme.bubbleReceived
+          }`}
         >
-          {e}
-        </button>
-      ))}
+          <p className="line-clamp-4 whitespace-pre-wrap break-words">{messageSnippet(message)}</p>
+        </div>
+
+        <div className={`${side} w-[250px] rounded-2xl bg-[#1C1A17] border border-white/[0.08] shadow-2xl overflow-hidden`}>
+          {canAct && (
+            <button onClick={run(onReply)} className={itemCls}>
+              <Reply className="w-4 h-4 text-[#A8A29E]" /><span>Reply</span>
+            </button>
+          )}
+          {text && (
+            <button onClick={run(onCopy)} className={itemCls}>
+              <Copy className="w-4 h-4 text-[#A8A29E]" /><span>Copy text</span>
+            </button>
+          )}
+          {canAct && (
+            <button onClick={run(onInfo)} className={itemCls}>
+              <Info className="w-4 h-4 text-[#A8A29E]" /><span>Info</span>
+            </button>
+          )}
+          {canAct && (
+            <button onClick={run(onDeleteForMe)} className={`${itemCls} border-t border-white/[0.05]`}>
+              <EyeOff className="w-4 h-4 text-[#A8A29E]" /><span>Delete for me</span>
+            </button>
+          )}
+          {canAct && isMe && (
+            <button
+              onClick={run(onDeleteForEveryone)}
+              className="w-full flex items-center gap-3 px-4 py-3 text-[13.5px] font-medium text-left text-[#F87171] hover:bg-[#B91C1C]/[0.12] active:bg-[#B91C1C]/[0.2]"
+            >
+              <Trash2 className="w-4 h-4" /><span>Delete for everyone</span>
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function MessageInfoModal({
+  message, isMe, targetName, onClose,
+}: { message: LocalMessage; isMe: boolean; targetName: string; onClose: () => void }) {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+
+  const sentAt = (() => {
+    try {
+      return parseUtc(message.sentAt).toLocaleString([], {
+        day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit',
+      });
+    } catch { return ''; }
+  })();
+  const isTemp = typeof message.id === 'number' && message.id < 0;
+  const status = !isMe ? 'Received' : isTemp ? 'Sending…' : message.isRead ? 'Read' : 'Sent';
+
+  const rows: Array<[string, string]> = [
+    [isMe ? 'Sent to' : 'From', targetName],
+    ['Time', sentAt],
+    ['Status', status],
+    ['Type', messageTypeLabel(message)],
+  ];
+
+  return (
+    <div className="fixed inset-0 z-[175] bg-black/60 flex items-center justify-center p-4" onClick={onClose}>
+      <div
+        onClick={(e) => e.stopPropagation()}
+        className="w-full max-w-sm rounded-[22px] bg-[#1C1A17] border border-white/[0.08] shadow-2xl overflow-hidden"
+      >
+        <div className="px-5 py-4 border-b border-white/[0.06] flex items-center justify-between">
+          <h3 className="text-[14.5px] font-bold text-[#EDE5D4]">Message info</h3>
+          <button
+            onClick={onClose}
+            className="w-8 h-8 rounded-lg flex items-center justify-center text-[#7A6F65] hover:bg-white/[0.05]"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+        <div className="px-5 py-3 divide-y divide-white/[0.05]">
+          {rows.map(([k, v]) => (
+            <div key={k} className="flex items-center justify-between gap-4 py-2.5 text-[13px]">
+              <span className="text-[#7A6F65]">{k}</span>
+              <span className="text-[#EDE5D4] font-medium flex items-center gap-1.5 text-right">
+                {k === 'Status' && status === 'Read' && <CheckCheck className="w-4 h-4 text-[#4ADE80]" />}
+                {v}
+              </span>
+            </div>
+          ))}
+        </div>
+      </div>
     </div>
   );
 }
@@ -1216,7 +1350,6 @@ const MessageRow = React.memo(
     reactions, currentUserId, replyTarget, highlighted,
     onRequestProfile, onOpenImage, onReact, onStartReply, onOpenMenu, onJumpToReply, onMediaLoad,
   }: MessageRowProps) {
-    const [pickerOpen, setPickerOpen] = useState(false);
     const innerRef = useRef<HTMLDivElement | null>(null);
     const iconRef = useRef<HTMLDivElement | null>(null);
     const swipeRef = useRef(0);
@@ -1245,7 +1378,7 @@ const MessageRow = React.memo(
       swipingRef.current = false;
       longPressRef.current = window.setTimeout(() => {
         if (!swipingRef.current) {
-          setPickerOpen(true);
+          onOpenMenu(message);
           if (navigator.vibrate) navigator.vibrate(10);
         }
       }, 420);
@@ -1297,14 +1430,6 @@ const MessageRow = React.memo(
     const tailClass = isLastOfGroup ? (isMe ? 'rounded-br-[4px]' : 'rounded-bl-[4px]') : '';
     const canAct = typeof message.id === 'number' && message.id > 0;
 
-    const picker = pickerOpen ? (
-      <ReactionPicker
-        isMe={isMe}
-        onPick={(emoji) => { if (canAct) onReact(message.id as number, emoji); }}
-        onClose={() => setPickerOpen(false)}
-      />
-    ) : null;
-
     return (
       <div
         className={`group/row relative flex w-full ${
@@ -1328,7 +1453,7 @@ const MessageRow = React.memo(
           onTouchMove={onTouchMove}
           onTouchEnd={onTouchEnd}
           onTouchCancel={onTouchEnd}
-          onContextMenu={(e) => { e.preventDefault(); setPickerOpen(true); }}
+          onContextMenu={(e) => { e.preventDefault(); onOpenMenu(message); }}
         >
           {!isMe && (
             <div className="w-8 shrink-0 pt-0.5 mr-2.5">
@@ -1348,10 +1473,35 @@ const MessageRow = React.memo(
 
           <div
             id={`msg-${message.id}`}
-            className={`flex flex-col min-w-0 max-w-[85%] sm:max-w-[74%] md:max-w-[65%] ${
+            className={`relative flex flex-col min-w-0 max-w-[85%] sm:max-w-[74%] md:max-w-[65%] ${
               isMe ? 'items-end' : 'items-start'
             } rounded-2xl ${highlighted ? 'ring-2 ring-[#D97706]/60' : ''}`}
           >
+            {canAct && (
+              <div
+                className={`hidden sm:flex absolute top-1 ${
+                  isMe ? 'right-full mr-1.5' : 'left-full ml-1.5'
+                } items-center gap-0.5 opacity-0 group-hover/row:opacity-100`}
+              >
+                <button
+                  type="button"
+                  onClick={() => onStartReply(message)}
+                  title="Reply"
+                  className={`w-7 h-7 rounded-full flex items-center justify-center ${theme.textSecondary} ${theme.hoverBg}`}
+                >
+                  <Reply className="w-4 h-4" />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onOpenMenu(message)}
+                  title="More"
+                  className={`w-7 h-7 rounded-full flex items-center justify-center ${theme.textSecondary} ${theme.hoverBg}`}
+                >
+                  <MoreHorizontal className="w-4 h-4" />
+                </button>
+              </div>
+            )}
+
             {!grouped && !isMe && (
               <div className="flex items-baseline gap-2 mb-1 px-1.5">
                 <span className={`text-[12px] font-semibold tracking-tight ${theme.textSecondary}`}>{senderName}</span>
@@ -1452,16 +1602,6 @@ const MessageRow = React.memo(
 
             {hasText && (
               <div className={`relative inline-flex items-end gap-1.5 max-w-full ${hasMedia ? 'mt-1.5' : 'mt-0'}`}>
-                <button
-                  type="button"
-                  onClick={() => setPickerOpen((v) => !v)}
-                  className={`hidden sm:flex absolute top-1/2 -translate-y-1/2 ${
-                    isMe ? '-left-8' : '-right-8'
-                  } w-6 h-6 rounded-full items-center justify-center opacity-0 group-hover/row:opacity-100 ${theme.textSecondary} ${theme.hoverBg}`}
-                >
-                  <MoreHorizontal className="w-4 h-4" />
-                </button>
-
                 {isEmojiOnly ? (
                   <div className="px-1 py-0.5 text-[44px] leading-[1.15] break-words max-w-full">{displayText}</div>
                 ) : (
@@ -1481,11 +1621,8 @@ const MessageRow = React.memo(
                     <LinkifiedText text={displayText} isMe={isMe} />
                   </div>
                 )}
-                {picker}
               </div>
             )}
-
-            {!hasText && hasMedia && <div className="relative">{picker}</div>}
 
             {reactions.length > 0 && (
               <ReactionChips
@@ -1512,13 +1649,6 @@ const MessageRow = React.memo(
             )}
           </div>
 
-          {pickerOpen && (
-            <button
-              key="menu-backdrop"
-              onClick={() => { setPickerOpen(false); onOpenMenu(message); }}
-              className="fixed inset-0 z-40 cursor-default bg-transparent"
-            />
-          )}
         </div>
       </div>
     );
@@ -2270,6 +2400,7 @@ export function DirectMessagePane(): React.JSX.Element {
 
   const [replyTo, setReplyTo] = useState<LocalMessage | null>(null);
   const [menuMessage, setMenuMessage] = useState<LocalMessage | null>(null);
+  const [infoMessage, setInfoMessage] = useState<LocalMessage | null>(null);
   const [pendingDeleteEveryoneId, setPendingDeleteEveryoneId] = useState<string | number | null>(null);
   const [infoOpen, setInfoOpen] = useState(false);
   const [profileModalUserId, setProfileModalUserId] = useState<string | null>(null);
@@ -3331,49 +3462,32 @@ export function DirectMessagePane(): React.JSX.Element {
       </div>
 
       {menuMessage && (
-        <div
-          className="fixed inset-0 z-[170] bg-black/60 flex items-end sm:items-center justify-center p-0 sm:p-4"
-          onClick={() => setMenuMessage(null)}
-        >
-          <div
-            onClick={(e) => e.stopPropagation()}
-            className="w-full sm:max-w-xs rounded-t-[22px] sm:rounded-[22px] bg-[#1C1A17] border-t sm:border border-white/[0.08] shadow-2xl overflow-hidden"
-          >
-            <div className="px-5 py-3 border-b border-white/[0.06]">
-              <span className="text-[11px] uppercase tracking-[0.16em] text-[#7A6F65] font-semibold">Message options</span>
-            </div>
-            <button
-              onClick={() => { handleStartReply(menuMessage); setMenuMessage(null); }}
-              className="w-full flex items-center gap-3 px-5 py-3 text-[13px] font-medium text-[#EDE5D4] hover:bg-white/[0.04] text-left"
-            >
-              <Reply className="w-4 h-4 text-[#A8A29E]" /><span>Reply</span>
-            </button>
-            <button
-              onClick={() => {
-                const t = menuMessage.plaintext ?? menuMessage.content ?? '';
-                if (t) void navigator.clipboard.writeText(t);
-                setMenuMessage(null);
-              }}
-              className="w-full flex items-center gap-3 px-5 py-3 text-[13px] font-medium text-[#EDE5D4] hover:bg-white/[0.04] text-left"
-            >
-              <Copy className="w-4 h-4 text-[#A8A29E]" /><span>Copy text</span>
-            </button>
-            <button
-              onClick={() => { void handleDeleteForMe(menuMessage); setMenuMessage(null); }}
-              className="w-full flex items-center gap-3 px-5 py-3 text-[13px] font-medium text-[#EDE5D4] hover:bg-white/[0.04] text-left"
-            >
-              <EyeOff className="w-4 h-4 text-[#A8A29E]" /><span>Delete for me</span>
-            </button>
-            {menuMessage.senderId === user?.id && typeof menuMessage.id === 'number' && menuMessage.id > 0 && (
-              <button
-                onClick={() => { handleRequestDeleteForEveryone(menuMessage); setMenuMessage(null); }}
-                className="w-full flex items-center gap-3 px-5 py-3 text-[13px] font-medium text-[#F87171] hover:bg-[#B91C1C]/[0.10] text-left border-t border-white/[0.04]"
-              >
-                <Trash2 className="w-4 h-4" /><span>Delete for everyone</span>
-              </button>
-            )}
-          </div>
-        </div>
+        <MessageMenu
+          message={menuMessage}
+          isMe={menuMessage.senderId === user?.id}
+          theme={theme}
+          reactions={reactions[String(menuMessage.id)] ?? EMPTY_REACTIONS}
+          currentUserId={user?.id}
+          onClose={() => setMenuMessage(null)}
+          onReact={(emoji) => { void handleReact(menuMessage.id as number, emoji); }}
+          onReply={() => handleStartReply(menuMessage)}
+          onCopy={() => {
+            const t = menuMessage.plaintext ?? menuMessage.content ?? '';
+            if (t) void navigator.clipboard.writeText(t);
+          }}
+          onInfo={() => setInfoMessage(menuMessage)}
+          onDeleteForMe={() => { void handleDeleteForMe(menuMessage); }}
+          onDeleteForEveryone={() => handleRequestDeleteForEveryone(menuMessage)}
+        />
+      )}
+
+      {infoMessage && (
+        <MessageInfoModal
+          message={infoMessage}
+          isMe={infoMessage.senderId === user?.id}
+          targetName={targetUser?.displayName ?? 'Contact'}
+          onClose={() => setInfoMessage(null)}
+        />
       )}
 
       {pendingDeleteEveryoneId != null && (
