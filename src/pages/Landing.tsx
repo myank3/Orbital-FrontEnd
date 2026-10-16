@@ -1,37 +1,20 @@
 /**
  * @file src/pages/Landing.tsx
- * Orbital — v11 · "The Thread"
+ * Orbital — v14 · "The Thread"
+ *   v14: new photos · no grain · HD · Lenis smooth scroll · 144 Hz budget
  *
- * ⚡ v11 deltas — smoother rope · no section collapse · better refresh
- *   (nothing else changed):
+ * ⚡ v13 deltas — text-only conversation (nothing else changed):
+ *   · LIVE TAB REMOVED — the video call demo is gone. Tabs are now
+ *     Chats · Faces only. PanelLive() deleted; PhoneOff / Volume2 / Zap
+ *     imports dropped (they were only used inside it).
+ *   · CHAT REWRITTEN — 16-message logical exchange between two people
+ *     (Ava checks in on a friend who just landed, catches up about the
+ *     flight, a callback to a film Ava recommended, then an invitation
+ *     to visit). Pure text bubbles — no voice notes, no image bubbles,
+ *     no third person. Every message flows from the previous one.
+ *   · CHAT_STEPS 12 → 16 · CHAT_STAGGER_MS 1100 → 850 (≈13 s run).
  *
- *   · ROPE: the visible edges had two sources.
- *       a) Tube cross-section: 6–8 radial segments → visibly faceted.
- *          Now 12 (mobile) / 16 (desktop) — round at every zoom.
- *       b) Shader aliasing: the `packets` wave ran at 260 cycles over a
- *          700-segment tube = 2.7 tris/cycle. Each triangle showed a
- *          chunk of the sine, reading as edges. Frequency now 180 and
- *          tubular segments up to 800/1200 → ~5 tris/cycle. Clean.
- *     Strands also thicker (0.011 → 0.013) and helix wider (46 → 40
- *     turns) so they read as rope, not wire.
- *
- *   · MOBILE SECTIONS: `.section-safe` — min-height 100svh + safe-area
- *     padding. Content grows when stacked; desktop `lg:` reset keeps the
- *     pinned one-screen-per-beat layout byte-identical.
- *
- *   · REFRESH: AdaptiveResolution drops less (0.1 → 0.06 mobile, 0.1 → 0.08
- *     desktop), recovers faster (0.03 → 0.05 mobile, 0.05 → 0.06 desktop).
- *     minDpr floor on mobile raised 0.5 → 0.65 — never visibly soft.
- *
- * No planets. The world is a single ribbon of light — your message —
- * flying through six chambers made of photographs, glass and sound.
- *
- *   0 Origin     a constellation of faces orbits the sender
- *   1 Signal     the cipher runs a corridor of light gates and film frames
- *   2 Vault      inside a faceted glass cage, the key floats beside you
- *   3 Circle     a helix of faces winds around the thread
- *   4 Resonance  concentric rings of sound bars pulse around the camera
- *   5 Arrival    the thread opens a portal ringed with portraits
+ * Earlier: no blur on Reveal · HD images · 144 Hz springs · mobile safe areas.
  *
  * ROUTES PRESERVED   /login  /register  /downloads/orbital.apk
  */
@@ -45,6 +28,7 @@ import React, {
   useState,
 } from "react";
 import { Link } from "react-router-dom";
+import Lenis from "lenis";
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import * as THREE from "three";
 import {
@@ -77,7 +61,6 @@ import {
   MoreVertical,
   Paperclip,
   Phone,
-  PhoneOff,
   Play,
   Plus,
   Search,
@@ -86,46 +69,44 @@ import {
   Smile,
   Sparkles,
   Video,
-  Volume2,
   Wifi,
-  Zap,
 } from "lucide-react";
 
 /* ═══════════════════════════════════════════════════════════
-   IMAGE MANIFEST — bucketed by display size
+   IMAGE MANIFEST
    ═══════════════════════════════════════════════════════════ */
 
-const u = (id: string, w: number, q = 88) =>
+const u = (id: string, w: number, q = 92) =>
   `https://images.unsplash.com/photo-${id}?w=${w}&q=${q}&auto=format&fit=crop`;
 
 const FACE_IDS = {
-  ava:    "1529626455594-4ff0802cfb7e",
-  sienna: "1524504388940-b1c1722653e1",
-  lyra:   "1531123897727-8f129e1688ce",
-  nova:   "1488426862026-3ee34a7d66df",
-  iris:   "1524253482453-3fed8d2fe12b",
-  anita:  "1494790108377-be9c29b29330",
-  taylor: "1438761681033-6461ffad8d80",
-  emery:  "1521119989659-a83eee488004",
-  john:   "1500648767791-00dcc994a43e",
-  sam:    "1507003211169-0a1dd7228f2d",
-  finn:   "1507591064344-4c6ce005b128",
-  rowan:  "1492562080023-ab3db95bfbce",
+  ava:    "1534528741775-53994a69daeb",
+  sienna: "1544005313-94ddf0286df2",
+  lyra:   "1580489944761-15a19d654956",
+  nova:   "1573496359142-b8d87734a5a2",
+  iris:   "1531746020798-e6953c6e8e04",
+  anita:  "1517841905240-472988babdf9",
+  taylor: "1567532939604-b6b5b0db2604",
+  emery:  "1489424731084-a5d8b219a5bb",
+  john:   "1506794778202-cad84cf45f1d",
+  sam:    "1560250097-0b93528c311a",
+  finn:   "1463453091185-61582044d556",
+  rowan:  "1539571696357-5a69c17a67c6",
 } as const;
 
 const SCENE_IDS = {
-  runway:    "1490481651871-ab68de25d43d",
-  milan:     "1469334031218-e382a71b716b",
-  nyfw:      "1483985988355-763728e1935b",
-  group1:    "1529156069898-49953e39b3ac",
-  manChat:   "1519345182560-3f2917c472ef",
-  manCall:   "1507003211169-0a1dd7228f2d",
-  tokyo:     "1540959733332-eab4deabeeaf",
-  paris:     "1502602898657-3e91760cbb34",
-  aurora:    "1531366936337-7c912a4589a7",
-  milkyway:  "1419242902214-272b3f66ee7a",
-  mountains: "1464822759023-fed622ff2c3b",
-  ocean:     "1505118380757-91f5f5632de0",
+  runway:    "1514565131-fce0801e5785",
+  milan:     "1477959858617-67f85cf4f1df",
+  nyfw:      "1449824913935-59a10b8d2000",
+  group1:    "1523580494863-6f3031224c94",
+  manChat:   "1552374196-c4e7ffc6e126",
+  manCall:   "1519085360753-af0119f7cbe7",
+  tokyo:     "1503899036084-c55cdd92da26",
+  paris:     "1499856871958-5b9627545d1a",
+  aurora:    "1483347756197-71ef80e95f73",
+  milkyway:  "1519681393784-d120267933ba",
+  mountains: "1506905925346-21bda4d32df4",
+  ocean:     "1518837695005-2083093ee35b",
 } as const;
 
 function toUrls<T extends Record<string, string>>(
@@ -138,13 +119,13 @@ function toUrls<T extends Record<string, string>>(
   return out as { [K in keyof T]: string };
 }
 
-const FACE = toUrls(FACE_IDS, 640, 90);
-const SCENE = toUrls(SCENE_IDS, 1200, 85);
+const FACE = toUrls(FACE_IDS, 1024, 92);
+const SCENE = toUrls(SCENE_IDS, 1600, 90);
 
 const GALLERY: string[] = [
   ...Object.values(FACE_IDS),
   ...Object.values(SCENE_IDS),
-].map((id) => u(id, 1024, 84));
+].map((id) => u(id, 1600, 90));
 
 /* ═══════════════════════════════════════════════════════════
    CONFIGURATION
@@ -154,13 +135,13 @@ const AMBER = "#C8883A";
 const CREAM = "#E5D6B8";
 const DEEP = "#04060A";
 
-const DOWNLOAD_HREF = "/downloads/orbital.apk";
+const DOWNLOAD_HREF = "/downloads/myapp.apk";
 
-const UI_SPRING = { type: "spring", stiffness: 420, damping: 32 } as const;
+const UI_SPRING = { type: "spring", stiffness: 520, damping: 36 } as const;
 const CINEMATIC_SPRING = {
   type: "spring",
-  stiffness: 180,
-  damping: 26,
+  stiffness: 240,
+  damping: 28,
   mass: 0.5,
 } as const;
 
@@ -200,7 +181,7 @@ function mulberry32(seed: number) {
 }
 
 /* ═══════════════════════════════════════════════════════════
-   DEVICE TIER + MOBILE DETECTION
+   DEVICE TIER
    ═══════════════════════════════════════════════════════════ */
 
 type Tier = "low" | "mid" | "high";
@@ -239,17 +220,14 @@ const REFRESH_STEPS = [60, 75, 90, 100, 120, 144, 165, 240];
 
 function useRefreshRate() {
   const [hz, setHz] = useState(60);
-
   useEffect(() => {
     let raf = 0;
     let frames = 0;
     let start = 0;
-
     const loop = (t: number) => {
       if (frames === 0) start = t;
       frames += 1;
       const span = t - start;
-
       if (span >= 420 && frames > 8) {
         const measured = (frames * 1000) / span;
         if (measured >= 50) {
@@ -265,11 +243,9 @@ function useRefreshRate() {
       }
       raf = requestAnimationFrame(loop);
     };
-
     raf = requestAnimationFrame(loop);
     return () => cancelAnimationFrame(raf);
   }, []);
-
   return hz;
 }
 
@@ -308,6 +284,20 @@ let lastBeatIndex = -1;
 let _fast = 0;
 let _slow = 0;
 
+let lenisInstance: Lenis | null = null;
+
+function useSmoothScroll(enabled: boolean) {
+  useEffect(() => {
+    if (!enabled) return;
+    const lenis = new Lenis({ lerp: 0.1, wheelMultiplier: 1, touchMultiplier: 1.5, smoothWheel: true, autoRaf: false });
+    lenisInstance = lenis;
+    let raf = 0;
+    const loop = (t: number) => { lenis.raf(t); raf = requestAnimationFrame(loop); };
+    raf = requestAnimationFrame(loop);
+    return () => { cancelAnimationFrame(raf); lenis.destroy(); lenisInstance = null; };
+  }, [enabled]);
+}
+
 function ScrollDriver() {
   const prev = useRef(0);
 
@@ -323,7 +313,6 @@ function ScrollDriver() {
       );
       store.raw = clamp01(window.scrollY / max);
     };
-
     const read = () => {
       if (raf) return;
       raf = requestAnimationFrame(() => {
@@ -331,7 +320,6 @@ function ScrollDriver() {
         store.raw = clamp01(window.scrollY / max);
       });
     };
-
     const onResize = () => {
       if (window.innerWidth === lastW) return;
       lastW = window.innerWidth;
@@ -355,16 +343,15 @@ function ScrollDriver() {
 
   useFrame((state, delta) => {
     const dt = Math.min(delta, 1 / 30);
-
-    store.smooth = damp(store.smooth, store.raw, 8, dt);
+    store.smooth = damp(store.smooth, store.raw, 20, dt);
     if (Math.abs(store.raw - store.smooth) < 0.0004) store.smooth = store.raw;
 
     const raw = (store.smooth - prev.current) / Math.max(dt, 1e-4);
     prev.current = store.smooth;
-    store.velocity = damp(store.velocity, raw, 7, dt);
+    store.velocity = damp(store.velocity, raw, 9, dt);
 
-    _fast = damp(_fast, store.velocity, 9, dt);
-    _slow = damp(_slow, store.velocity, 2.4, dt);
+    _fast = damp(_fast, store.velocity, 11, dt);
+    _slow = damp(_slow, store.velocity, 3, dt);
     store.lag = clampN(_fast - _slow, -0.35, 0.35);
 
     const beatF = store.smooth * 5;
@@ -386,7 +373,7 @@ function ScrollDriver() {
 }
 
 /* ═══════════════════════════════════════════════════════════
-   ADAPTIVE RESOLUTION  ⚡ gentler drops, quicker recovery
+   ADAPTIVE RESOLUTION
    ═══════════════════════════════════════════════════════════ */
 
 function AdaptiveResolution({
@@ -401,7 +388,6 @@ function AdaptiveResolution({
   mobile: boolean;
 }) {
   const setDpr = useThree((s) => s.setDpr);
-
   const cur = useRef(max);
   const acc = useRef(0);
   const frames = useRef(0);
@@ -434,7 +420,6 @@ function AdaptiveResolution({
     }
 
     const target = targetFps * 0.95;
-
     if (fps < target * (mobile ? 0.9 : 0.85)) {
       low.current += 1;
       high.current = 0;
@@ -446,8 +431,6 @@ function AdaptiveResolution({
       high.current = 0;
     }
 
-    // ⚡ Drop LESS but still correctly; recover faster. Bounces hurt more
-    //    than staying 1 step below max.
     const dropStep = mobile ? 0.06 : 0.08;
     const upStep = mobile ? 0.05 : 0.06;
     const lowNeed = mobile ? 1 : 2;
@@ -601,7 +584,7 @@ function CameraRig() {
 }
 
 /* ═══════════════════════════════════════════════════════════
-   BACKDROP — 2-octave fbm on mobile, 5-octave on desktop
+   BACKDROP
    ═══════════════════════════════════════════════════════════ */
 
 const BG_VERT = /* glsl */ `
@@ -618,13 +601,11 @@ const BG_COMMON = /* glsl */ `
   uniform float uTime;
   uniform float uScroll;
   uniform vec2  uRes;
-
   float hash(vec2 p) {
     p = fract(p * vec2(123.34, 456.21));
     p += dot(p, p + 45.32);
     return fract(p.x * p.y);
   }
-
   float vnoise(vec2 p) {
     vec2 i = floor(p);
     vec2 f = fract(p);
@@ -669,41 +650,32 @@ const BG_BODY_HIGH = /* glsl */ `
     vec2 uv = vUv - 0.5;
     uv.x *= uRes.x / uRes.y;
     float t = uTime * 0.018;
-
     vec2 q = vec2(
       fbm(uv * 1.5 + vec2(0.0, t)),
       fbm(uv * 1.5 + vec2(5.2, 1.3) - t * 0.8));
     vec2 r = vec2(
       fbm(uv * 1.3 + 2.8 * q + vec2(1.7, 9.2) + t * 0.44),
       fbm(uv * 1.3 + 2.8 * q + vec2(8.3, 2.8) - t * 0.32));
-
     vec2 m = vec2(
       fbm(uv * 4.2 + r * 1.6 + vec2(3.1, 7.7) + t * 0.9),
       fbm(uv * 4.2 + r * 1.6 + vec2(9.4, 1.2) - t * 0.7));
     float f = fbm(uv * 1.15 + 2.5 * r + 0.3 * (m - 0.5));
-
     vec3 obsidian = vec3(0.012, 0.014, 0.024);
     vec3 ember = vec3(0.784, 0.502, 0.235);
     vec3 steel = vec3(0.439, 0.588, 0.706);
     vec3 accent = mix(ember, steel, clamp(uScroll, 0.0, 1.0));
-
     float cloudFar  = smoothstep(0.22, 0.94, f + uScroll * 0.10);
     float cloudMid  = smoothstep(0.60, 1.02, length(r));
     float filament  = smoothstep(0.52, 0.80, m.x) * 0.5;
     float dustLane  = smoothstep(0.55, 0.15, f * 0.8 + cloudMid * 0.4);
-
     vec3 col = obsidian;
     col = mix(col, accent * 0.10, cloudFar  * 0.65);
     col = mix(col, accent * 0.22, cloudMid  * 0.42);
     col += accent * 0.035 * filament * cloudFar;
     col *= mix(0.45, 1.0, dustLane);
-
     float vig = 1.0 - smoothstep(0.36, 1.30, length(vUv - 0.5) * 1.62);
     col *= mix(0.55, 1.0, vig);
-
-    float grain = hash(vUv * 917.0 + uTime) * 0.020;
-    col += (grain - 0.010);
-
+    col += (hash(gl_FragCoord.xy) - 0.5) / 255.0;
     gl_FragColor = vec4(col, 1.0);
   }
 `;
@@ -713,33 +685,26 @@ const BG_BODY_LOW = /* glsl */ `
     vec2 uv = vUv - 0.5;
     uv.x *= uRes.x / uRes.y;
     float t = uTime * 0.018;
-
     vec2 q = vec2(
       fbm(uv * 1.5 + vec2(0.0, t)),
       fbm(uv * 1.5 + vec2(5.2, 1.3) - t * 0.8));
     vec2 r = vec2(
       fbm(uv * 1.3 + 2.8 * q + vec2(1.7, 9.2) + t * 0.44),
       fbm(uv * 1.3 + 2.8 * q + vec2(8.3, 2.8) - t * 0.32));
-
     float f = fbm(uv * 1.15 + 2.5 * r);
-
     vec3 obsidian = vec3(0.012, 0.014, 0.024);
     vec3 ember = vec3(0.784, 0.502, 0.235);
     vec3 steel = vec3(0.439, 0.588, 0.706);
     vec3 accent = mix(ember, steel, clamp(uScroll, 0.0, 1.0));
-
     float cloudFar  = smoothstep(0.22, 0.94, f + uScroll * 0.10);
     float cloudMid  = smoothstep(0.60, 1.02, length(r));
     float dustLane  = smoothstep(0.55, 0.15, f * 0.8 + cloudMid * 0.4);
-
     vec3 col = obsidian;
     col = mix(col, accent * 0.10, cloudFar  * 0.65);
     col = mix(col, accent * 0.22, cloudMid  * 0.42);
     col *= mix(0.45, 1.0, dustLane);
-
     float vig = 1.0 - smoothstep(0.36, 1.30, length(vUv - 0.5) * 1.62);
     col *= mix(0.55, 1.0, vig);
-
     gl_FragColor = vec4(col, 1.0);
   }
 `;
@@ -757,15 +722,12 @@ function Backdrop({ mobile }: { mobile: boolean }) {
     }),
     [],
   );
-
   useEffect(() => {
     uniforms.uRes.value.set(size.width, size.height);
   }, [size, uniforms]);
-
   useFrame(() => {
     uniforms.uScroll.value = store.smooth;
   });
-
   return (
     <mesh frustumCulled={false} renderOrder={-20}>
       <planeGeometry args={[2, 2]} />
@@ -783,18 +745,7 @@ function Backdrop({ mobile }: { mobile: boolean }) {
 }
 
 /* ═══════════════════════════════════════════════════════════
-   THE THREAD  ⚡ smoother rope
-   ────────────────────────────────────────────────────────────
-   Two changes kill the visible edges:
-     1. Radial segments: 6–8 → 12–16. The cross-section is now round
-        at every zoom and lighting angle.
-     2. Shader packet frequency: 260 → 180. At 260 cycles over ~700
-        tubular segments that was 2.7 tris/cycle — every triangle
-        showed a chunk of the sine, reading as banding. Now the tube
-        has 800–1200 segments and the wave runs at 180, so ~5 tris
-        per cycle. Clean.
-   Strands also thicker (0.011 → 0.013) and helix wider (46 → 40)
-   so they read as rope, not wire.
+   THE THREAD
    ═══════════════════════════════════════════════════════════ */
 
 const THREAD_VERT = /* glsl */ `
@@ -816,26 +767,19 @@ const THREAD_FRAG = /* glsl */ `
   uniform float uHead;
   uniform float uPhase;
   uniform float uGain;
-
   void main() {
     float s = vUv.x;
     float d = s - uHead;
-
-    // ⚡ 180 (was 260) — matches the mesh's tubular resolution.
     float packets = pow(0.5 + 0.5 * sin(s * 180.0 - uTime * 3.2 + uPhase), 7.0);
     float behind = 1.0 - smoothstep(0.0, 0.46, -d);
-
     float lit   = d < 0.0 ? mix(0.30, 1.0, behind) : 0.0;
     float ghost = d >= 0.0 ? 0.08 + 0.22 * packets * exp(-d * 5.0) : 0.0;
     float head  = exp(-pow(d * 70.0, 2.0)) * 2.4;
-
     float inten = lit * (0.5 + 1.25 * packets) + ghost + head;
-
     vec3 ember = vec3(0.784, 0.502, 0.235);
     vec3 steel = vec3(0.50, 0.70, 0.90);
     vec3 col = mix(ember, steel, clamp(s, 0.0, 1.0));
     col = mix(col, vec3(1.0, 0.93, 0.78), clamp(head * 0.3, 0.0, 1.0));
-
     float nearF = smoothstep(1.2, 5.0, distance(cameraPosition, vW));
     gl_FragColor = vec4(col * inten * uGain * nearF, 1.0);
   }
@@ -843,25 +787,15 @@ const THREAD_FRAG = /* glsl */ `
 
 function Thread({ mobile }: { mobile: boolean }) {
   const parts = useMemo(() => {
-    // ⚡ tubular segments ≈ 5–8× the shader packet frequency so the
-    //    sine resolves cleanly. Radial segments 12/16 → round tube.
     const mainTubular = mobile ? 800 : 1200;
     const mainRadial = mobile ? 12 : 16;
-
     const N = mobile ? 400 : 600;
     const strandTubular = mobile ? 1200 : 2500;
     const strandRadial = mobile ? 8 : 10;
     const turns = mobile ? 36 : 40;
     const strandRadius = 0.013;
 
-    const main = new THREE.TubeGeometry(
-      PATH,
-      mainTubular,
-      0.03,
-      mainRadial,
-      false,
-    );
-
+    const main = new THREE.TubeGeometry(PATH, mainTubular, 0.03, mainRadial, false);
     const frames = PATH.computeFrenetFrames(N, false);
     const strands: THREE.TubeGeometry[] = [];
     for (let s = 0; s < 2; s++) {
@@ -884,13 +818,7 @@ function Thread({ mobile }: { mobile: boolean }) {
       const curve = new THREE.CatmullRomCurve3(pts, false, "catmullrom", 0.5);
       curve.arcLengthDivisions = mobile ? 1800 : 3000;
       strands.push(
-        new THREE.TubeGeometry(
-          curve,
-          strandTubular,
-          strandRadius,
-          strandRadial,
-          false,
-        ),
+        new THREE.TubeGeometry(curve, strandTubular, strandRadius, strandRadial, false),
       );
     }
 
@@ -974,8 +902,7 @@ const DUST_FRAG = /* glsl */ `
 
 function Dust({ tier, mobile }: { tier: Tier; mobile: boolean }) {
   const { size, gl } = useThree();
-  const count = mobile ? 260 : tier === "low" ? 500 : tier === "mid" ? 1000 : 1700;
-
+  const count = mobile ? 200 : tier === "low" ? 260 : tier === "mid" ? 480 : 800;
   const geo = useMemo(() => {
     const rng = mulberry32(99);
     const pos = new Float32Array(count * 3);
@@ -1103,7 +1030,6 @@ const sceneT = (k: number) => 12 + (k % 12);
 function buildCards(): CardSpec[] {
   const rng = mulberry32(20261016);
   const out: CardSpec[] = [];
-
   for (let k = 0; k < 12; k++) {
     const h = 1.5 + rng() * 1.0;
     out.push(
@@ -1117,7 +1043,6 @@ function buildCards(): CardSpec[] {
       }),
     );
   }
-
   for (let k = 0; k < 7; k++) {
     const w = 2.5 + rng() * 1.0;
     const left = k % 2 === 0;
@@ -1133,7 +1058,6 @@ function buildCards(): CardSpec[] {
       }),
     );
   }
-
   const vault = [faceT(4), sceneT(2), faceT(8), sceneT(3)];
   for (let k = 0; k < 4; k++) {
     out.push(
@@ -1148,7 +1072,6 @@ function buildCards(): CardSpec[] {
       }),
     );
   }
-
   for (let k = 0; k < 11; k++) {
     out.push(
       makeCard(rng, faceT(k * 7 + 2), 0.505 + k * 0.0135, {
@@ -1161,7 +1084,6 @@ function buildCards(): CardSpec[] {
       }),
     );
   }
-
   for (let k = 0; k < 5; k++) {
     out.push(
       makeCard(rng, sceneT(k * 2 + 4), 0.7 + k * 0.032, {
@@ -1175,7 +1097,6 @@ function buildCards(): CardSpec[] {
       }),
     );
   }
-
   for (let k = 0; k < 10; k++) {
     out.push(
       makeCard(rng, faceT(k * 5 + 3), 1.0, {
@@ -1232,7 +1153,6 @@ function fallbackTexture(idx: number) {
 function useGallery(wanted: number[]) {
   const [, bump] = useState(0);
   const ref = useRef<Record<number, THREE.Texture>>({});
-
   useEffect(() => {
     let alive = true;
     const loader = new THREE.TextureLoader();
@@ -1244,7 +1164,7 @@ function useGallery(wanted: number[]) {
           return;
         }
         t.colorSpace = THREE.SRGBColorSpace;
-        t.anisotropy = 4;
+        t.anisotropy = 8;
         store_[idx] = t;
         bump((v) => v + 1);
       };
@@ -1258,7 +1178,6 @@ function useGallery(wanted: number[]) {
       ref.current = {};
     };
   }, [wanted]);
-
   return ref.current;
 }
 
@@ -1273,7 +1192,6 @@ function makeCardMaterial(
     uAppear: { value: 0 },
     uTint: SHARED.uTint,
   };
-
   const mat = new THREE.MeshBasicMaterial({
     map: tex,
     transparent: true,
@@ -1281,12 +1199,9 @@ function makeCardMaterial(
     depthWrite: false,
     fog: false,
   });
-
-  mat.customProgramCacheKey = () => "orbital-card-v11";
-
+  mat.customProgramCacheKey = () => "orbital-card-v13";
   mat.onBeforeCompile = (shader) => {
     Object.assign(shader.uniforms, uniforms);
-
     shader.vertexShader = shader.vertexShader
       .replace(
         "#include <common>",
@@ -1298,7 +1213,6 @@ function makeCardMaterial(
         `#include <begin_vertex>
          vCW = (modelMatrix * vec4(transformed, 1.0)).xyz;`,
       );
-
     shader.fragmentShader = shader.fragmentShader
       .replace(
         "#include <common>",
@@ -1317,7 +1231,6 @@ function makeCardMaterial(
           else                      { cuv.x *= uAspect / uTexAspect; }
           cuv = cuv * 0.92 + 0.5;
           vec4 texel = texture2D(map, cuv);
-
           vec2 hs = vec2(uAspect, 1.0) * 0.5;
           vec2 pp = (vMapUv - 0.5) * vec2(uAspect, 1.0);
           float rr = 0.07;
@@ -1325,19 +1238,15 @@ function makeCardMaterial(
           float sd = length(max(qq, 0.0)) + min(max(qq.x, qq.y), 0.0) - rr;
           float edge = 1.0 - smoothstep(-0.004, 0.004, sd);
           float rim = smoothstep(-0.016, -0.002, sd);
-
           float dcam = distance(cameraPosition, vCW);
           float fade = smoothstep(1.1, 3.6, dcam) * (1.0 - smoothstep(30.0, 54.0, dcam));
-
           vec3 grade = mix(vec3(1.06, 0.95, 0.84), vec3(0.86, 0.95, 1.08), uTint);
           vec3 col = texel.rgb * grade * 0.86;
           col += vec3(0.78, 0.53, 0.23) * rim * 0.45;
-
           diffuseColor = vec4(col, edge * fade * uAppear);
         `,
       );
   };
-
   return { mat, uniforms };
 }
 
@@ -1349,7 +1258,6 @@ const PhotoCard = memo(function PhotoCard({
   tex: THREE.Texture;
 }) {
   const ref = useRef<THREE.Mesh>(null);
-
   const built = useMemo(() => {
     const img = tex.image as { width?: number; height?: number } | undefined;
     const ta = img && img.width && img.height ? img.width / img.height : 0.8;
@@ -1363,25 +1271,20 @@ const PhotoCard = memo(function PhotoCard({
     if (!m) return;
     const dt = Math.min(delta, 1 / 30);
     const t = state.clock.elapsedTime;
-
     built.uniforms.uAppear.value = damp(built.uniforms.uAppear.value, 1, 2.2, dt);
-
     const a = spec.phase + t * spec.speed;
     const ca = Math.cos(a) * spec.radius;
     const sa = Math.sin(a) * spec.radius * spec.squash;
     const lag = store.lag * spec.par * 14;
     const dx = Math.sin(t * 0.31 + spec.seed) * 0.16;
     const dy = Math.cos(t * 0.27 + spec.seed * 1.3) * 0.2;
-
     m.position.set(
       spec.cx + spec.rx * ca + spec.ux * sa + dx + spec.tx * lag,
       spec.cy + spec.ry * ca + spec.uy * sa + dy + spec.ty * lag,
       spec.cz + spec.rz * ca + spec.uz * sa + spec.tz * lag,
     );
-
     const s = 1 + spec.pulse * Math.max(0, Math.sin(t * 5.2 + spec.seed));
     m.scale.set(spec.w * s, spec.h * s, 1);
-
     m.lookAt(spec.fx, spec.fy, spec.fz);
     m.rotateZ(spec.tilt);
   });
@@ -1399,13 +1302,11 @@ function Gallery({ tier, mobile }: { tier: Tier; mobile: boolean }) {
     if (tier === "low") return ALL_CARDS.filter((_, i) => i % 2 === 0);
     return ALL_CARDS;
   }, [tier, mobile]);
-
   const wanted = useMemo(
     () => Array.from(new Set(specs.map((s) => s.tex))),
     [specs],
   );
   const tex = useGallery(wanted);
-
   return (
     <>
       {specs.map((s, i) =>
@@ -1416,7 +1317,7 @@ function Gallery({ tier, mobile }: { tier: Tier; mobile: boolean }) {
 }
 
 /* ═══════════════════════════════════════════════════════════
-   SIGNAL — gates (instanced)
+   SIGNAL — gates
    ═══════════════════════════════════════════════════════════ */
 
 const _m4 = new THREE.Matrix4();
@@ -1428,7 +1329,6 @@ const GATE_N = 12;
 
 function Gates({ mobile }: { mobile: boolean }) {
   const ref = useRef<THREE.InstancedMesh>(null);
-
   const data = useMemo(() => {
     const pos = new Float32Array(GATE_N * 3);
     const quat = new Float32Array(GATE_N * 4);
@@ -1471,11 +1371,7 @@ function Gates({ mobile }: { mobile: boolean }) {
   });
 
   return (
-    <instancedMesh
-      ref={ref}
-      args={[undefined, undefined, GATE_N]}
-      frustumCulled={false}
-    >
+    <instancedMesh ref={ref} args={[undefined, undefined, GATE_N]} frustumCulled={false}>
       <torusGeometry args={[3.3, 0.02, mobile ? 6 : 8, mobile ? 56 : 96]} />
       <meshBasicMaterial
         color={AMBER}
@@ -1545,12 +1441,10 @@ const GLOW_FRAG = /* glsl */ `
 
 function VaultCrystal({ mobile }: { mobile: boolean }) {
   const SHARD_N = mobile ? 10 : 24;
-
   const cageRef = useRef<THREE.LineSegments>(null);
   const shardRef = useRef<THREE.InstancedMesh>(null);
   const coreRef = useRef<THREE.Group>(null);
   const dummy = useMemo(() => new THREE.Object3D(), []);
-
   const B = useMemo(() => basisAt(0.4), []);
 
   const cage = useMemo(() => {
@@ -1633,12 +1527,10 @@ function VaultCrystal({ mobile }: { mobile: boolean }) {
   useFrame((state, delta) => {
     const dt = Math.min(delta, 1 / 30);
     const t = state.clock.elapsedTime;
-
     if (cageRef.current) {
       cageRef.current.rotation.y = t * 0.03;
       cageRef.current.rotation.x = t * 0.017;
     }
-
     const sm = shardRef.current;
     if (sm) {
       for (let i = 0; i < SHARD_N; i++) {
@@ -1655,7 +1547,6 @@ function VaultCrystal({ mobile }: { mobile: boolean }) {
       }
       sm.instanceMatrix.needsUpdate = true;
     }
-
     const c = coreRef.current;
     if (c) {
       c.rotation.y += dt * 0.25;
@@ -1673,7 +1564,6 @@ function VaultCrystal({ mobile }: { mobile: boolean }) {
         position={B.p}
         frustumCulled={false}
       />
-
       <instancedMesh
         ref={shardRef}
         args={[undefined, undefined, SHARD_N]}
@@ -1682,7 +1572,6 @@ function VaultCrystal({ mobile }: { mobile: boolean }) {
       >
         <octahedronGeometry args={[1, 0]} />
       </instancedMesh>
-
       <group ref={coreRef} position={corePos}>
         <mesh>
           <icosahedronGeometry args={[0.42, mobile ? 0 : 1]} />
@@ -1710,14 +1599,13 @@ function VaultCrystal({ mobile }: { mobile: boolean }) {
 }
 
 /* ═══════════════════════════════════════════════════════════
-   RESONANCE — sound bars (instanced)
+   RESONANCE
    ═══════════════════════════════════════════════════════════ */
 
 function SoundRings({ mobile }: { mobile: boolean }) {
   const RINGS = mobile ? 4 : 6;
   const PER = mobile ? 28 : 44;
   const N = RINGS * PER;
-
   const ref = useRef<THREE.InstancedMesh>(null);
 
   const data = useMemo(() => {
@@ -1784,12 +1672,7 @@ function SoundRings({ mobile }: { mobile: boolean }) {
   });
 
   return (
-    <instancedMesh
-      ref={ref}
-      args={[undefined, undefined, N]}
-      geometry={geo}
-      frustumCulled={false}
-    >
+    <instancedMesh ref={ref} args={[undefined, undefined, N]} geometry={geo} frustumCulled={false}>
       <meshBasicMaterial
         color="#E8C890"
         transparent
@@ -1842,17 +1725,14 @@ function Portal({ mobile }: { mobile: boolean }) {
       q: new THREE.Quaternion().setFromUnitVectors(AXIS_Z, b.t),
     };
   }, []);
-
   const uniforms = useMemo(
     () => ({ uTime: SHARED.uTime, uHead: SHARED.uHead }),
     [],
   );
-
   useFrame((_, delta) => {
     const dt = Math.min(delta, 1 / 30);
     if (ringRef.current) ringRef.current.rotation.z += dt * 0.05;
   });
-
   return (
     <group position={p} quaternion={q}>
       <group ref={ringRef}>
@@ -1862,12 +1742,7 @@ function Portal({ mobile }: { mobile: boolean }) {
         </mesh>
         <mesh>
           <torusGeometry args={[3.95, 0.012, mobile ? 6 : 8, mobile ? 72 : 128]} />
-          <meshBasicMaterial
-            color={CREAM}
-            transparent
-            opacity={0.55}
-            toneMapped={false}
-          />
+          <meshBasicMaterial color={CREAM} transparent opacity={0.55} toneMapped={false} />
         </mesh>
       </group>
       <mesh>
@@ -1888,52 +1763,36 @@ function Portal({ mobile }: { mobile: boolean }) {
 }
 
 /* ═══════════════════════════════════════════════════════════
-   POST FX — off on mobile & low tier, bloom resolution scales
-   with panel refresh on desktop.
+   POST FX
    ═══════════════════════════════════════════════════════════ */
 
-function PostFX({
-  tier,
-  hz,
-  mobile,
-}: {
-  tier: Tier;
-  hz: number;
-  mobile: boolean;
-}) {
+function PostFX({ tier, hz, mobile }: { tier: Tier; hz: number; mobile: boolean }) {
   if (mobile || tier === "low") return null;
-
   const fast = hz >= 120;
-
   if (tier === "mid") {
     return (
-      <EffectComposer multisampling={0} enableNormalPass={false}>
+      <EffectComposer multisampling={fast ? 0 : 2} enableNormalPass={false}>
         <Bloom
           intensity={0.55}
           luminanceThreshold={0.55}
           luminanceSmoothing={0.25}
           mipmapBlur
-          resolutionScale={fast ? 0.4 : 0.55}
+          resolutionScale={fast ? 0.5 : 0.65}
         />
         <ToneMapping mode={ToneMappingMode.ACES_FILMIC} />
       </EffectComposer>
     );
   }
-
   return (
-    <EffectComposer multisampling={0} enableNormalPass={false}>
+    <EffectComposer multisampling={fast ? 2 : 4} enableNormalPass={false}>
       <Bloom
         intensity={0.7}
         luminanceThreshold={0.55}
         luminanceSmoothing={0.25}
         mipmapBlur
-        resolutionScale={fast ? 0.5 : 0.75}
+        resolutionScale={fast ? 0.6 : 0.85}
       />
-      <Vignette
-        offset={0.28}
-        darkness={0.55}
-        blendFunction={BlendFunction.NORMAL}
-      />
+      <Vignette offset={0.28} darkness={0.55} blendFunction={BlendFunction.NORMAL} />
       <ToneMapping mode={ToneMappingMode.ACES_FILMIC} />
     </EffectComposer>
   );
@@ -1956,10 +1815,8 @@ function OrbitalWorld({
     <>
       <ScrollDriver />
       <CameraRig />
-
       <color attach="background" args={[DEEP]} />
       <fog attach="fog" args={[DEEP, 8, 42]} />
-
       <Backdrop mobile={mobile} />
       <Dust tier={tier} mobile={mobile} />
       <Thread mobile={mobile} />
@@ -1968,7 +1825,6 @@ function OrbitalWorld({
       <SoundRings mobile={mobile} />
       <Portal mobile={mobile} />
       <Gallery tier={tier} mobile={mobile} />
-
       <PostFX tier={tier} hz={hz} mobile={mobile} />
     </>
   );
@@ -1989,7 +1845,7 @@ function PhoneMockup({
     <div
       className="relative mx-auto select-none"
       style={{
-        width: "clamp(248px, 23vw, 348px)",
+        width: "clamp(258px, 24vw, 356px)",
         aspectRatio: "0.4779",
         transform: "translateZ(0)",
         contain: "layout paint style",
@@ -2103,10 +1959,10 @@ function PhoneMockup({
 }
 
 /* ═══════════════════════════════════════════════════════════
-   PHONE UI — tabs: Chats / Live / Faces
+   PHONE UI — tabs: Chats / Faces
    ═══════════════════════════════════════════════════════════ */
 
-type TabKey = "chats" | "live" | "faces";
+type TabKey = "chats" | "faces";
 
 const TAB_ITEMS: {
   key: TabKey;
@@ -2114,7 +1970,6 @@ const TAB_ITEMS: {
   icon: React.ComponentType<{ size?: number | string; className?: string }>;
 }[] = [
   { key: "chats", label: "Chats", icon: MessageCircle },
-  { key: "live",  label: "Live",  icon: Video },
   { key: "faces", label: "Faces", icon: Sparkles },
 ];
 
@@ -2150,7 +2005,7 @@ function Arrive({
 }) {
   return (
     <motion.div
-      initial={{ opacity: 0, scale: 0.92, x: side * 8, y: side === 0 ? 8 : 0 }}
+      initial={{ opacity: 0, scale: 0.94, x: side * 6, y: side === 0 ? 6 : 0 }}
       animate={{ opacity: 1, scale: 1, x: 0, y: 0 }}
       transition={UI_SPRING}
       className={className}
@@ -2161,38 +2016,7 @@ function Arrive({
   );
 }
 
-const WAVE = [4, 8, 12, 6, 10, 8, 14, 6, 9, 5, 11, 7, 8, 4];
-
-function Waveform() {
-  const [idx, setIdx] = useState(0);
-  useEffect(() => {
-    const id = window.setInterval(
-      () => setIdx((v) => (v + 1) % WAVE.length),
-      140,
-    );
-    return () => window.clearInterval(id);
-  }, []);
-
-  return (
-    <div className="flex items-end gap-[2px]">
-      {WAVE.map((h, i) => (
-        <span
-          key={i}
-          className={`block w-[2px] rounded-full transition-colors duration-150 ${
-            i === idx
-              ? "bg-[#E5D6B8]"
-              : i < idx
-                ? "bg-amber-400/80"
-                : "bg-[#E5D6B8]/35"
-          }`}
-          style={{ height: `${h}px` }}
-        />
-      ))}
-    </div>
-  );
-}
-
-/* ── Panel: Chats ── */
+/* ── Panel: Chats — one logical conversation between two people ── */
 
 function PanelChats({ step }: { step: number }) {
   return (
@@ -2278,40 +2102,35 @@ function PanelChats({ step }: { step: number }) {
           </span>
         </div>
 
+        {/* 1 · incoming — Ava opens */}
         {step >= 1 && (
-          <>
-            <Arrive side={-1} className="flex items-start gap-2">
-              <img
-                src={FACE.ava}
-                alt=""
-                className="mt-0.5 h-5 w-5 shrink-0 rounded-full object-cover ring-1 ring-white/10"
-                loading="lazy"
-                decoding="async"
-              />
-              <div className="max-w-[200px] rounded-[14px] rounded-bl-[4px] border border-white/[0.06] bg-white/[0.055] px-3 py-2 text-[10.5px] leading-[1.5] text-[#E5D6B8]/90">
-                Backstage was unreal tonight ✦
-              </div>
-            </Arrive>
-            <div className="-mt-1 pl-7 text-[8.5px] tabular-nums text-[#E5D6B8]/30">
-              9:12 PM
+          <Arrive side={-1} className="flex items-start gap-2">
+            <img
+              src={FACE.ava}
+              alt=""
+              className="mt-0.5 h-5 w-5 shrink-0 rounded-full object-cover ring-1 ring-white/10"
+              loading="lazy"
+              decoding="async"
+            />
+            <div className="max-w-[220px] rounded-[14px] rounded-bl-[4px] border border-white/[0.06] bg-white/[0.055] px-3 py-2 text-[10.5px] leading-[1.5] text-[#E5D6B8]/90">
+              hey, you land okay?
             </div>
-          </>
+          </Arrive>
         )}
 
+        {/* 2 · outgoing — I confirm */}
         {step >= 2 && (
           <Arrive side={1} className="flex flex-col items-end">
             <div className="max-w-[82%] rounded-[14px] rounded-br-[4px] bg-gradient-to-br from-[#C8883A] to-[#9E6A2A] px-3 py-2 text-[10.5px] font-medium leading-[1.5] text-[#1A1105]">
-              You owned that runway. Sending the edit now.
+              yeah, just got to the hotel
             </div>
             <div className="mt-1 flex items-center gap-1 pr-1">
-              <span className="text-[8.5px] tabular-nums text-[#E5D6B8]/30">
-                9:13 PM
-              </span>
               <CheckCheck size={9} className="text-amber-400" />
             </div>
           </Arrive>
         )}
 
+        {/* 3 · incoming — follow-up question */}
         {step >= 3 && (
           <Arrive side={-1} className="flex items-start gap-2">
             <img
@@ -2321,23 +2140,26 @@ function PanelChats({ step }: { step: number }) {
               loading="lazy"
               decoding="async"
             />
-            <div className="max-w-[200px] overflow-hidden rounded-[14px] border border-white/[0.07] bg-white/[0.04]">
-              <img
-                src={SCENE.runway}
-                alt=""
-                className="h-[96px] w-full object-cover"
-                loading="lazy"
-                decoding="async"
-              />
-              <div className="flex items-center justify-between px-2.5 py-1.5">
-                <span className="text-[8.5px] text-[#E5D6B8]/55">Paris · F/W</span>
-                <Check size={9} className="text-amber-400" />
-              </div>
+            <div className="max-w-[220px] rounded-[14px] rounded-bl-[4px] border border-white/[0.06] bg-white/[0.055] px-3 py-2 text-[10.5px] leading-[1.5] text-[#E5D6B8]/90">
+              how was the flight?
             </div>
           </Arrive>
         )}
 
+        {/* 4 · outgoing — answer */}
         {step >= 4 && (
+          <Arrive side={1} className="flex flex-col items-end">
+            <div className="max-w-[82%] rounded-[14px] rounded-br-[4px] bg-gradient-to-br from-[#C8883A] to-[#9E6A2A] px-3 py-2 text-[10.5px] font-medium leading-[1.5] text-[#1A1105]">
+              long. watched two films back to back
+            </div>
+            <div className="mt-1 flex items-center gap-1 pr-1">
+              <CheckCheck size={9} className="text-amber-400" />
+            </div>
+          </Arrive>
+        )}
+
+        {/* 5 · incoming — follow-up */}
+        {step >= 5 && (
           <Arrive side={-1} className="flex items-start gap-2">
             <img
               src={FACE.ava}
@@ -2346,53 +2168,169 @@ function PanelChats({ step }: { step: number }) {
               loading="lazy"
               decoding="async"
             />
-            <div className="max-w-[200px] rounded-[14px] rounded-bl-[4px] border border-white/[0.06] bg-white/[0.055] px-3 py-2 text-[10.5px] leading-[1.5] text-[#E5D6B8]/90">
-              Obsessed. Send the raw files?
+            <div className="max-w-[220px] rounded-[14px] rounded-bl-[4px] border border-white/[0.06] bg-white/[0.055] px-3 py-2 text-[10.5px] leading-[1.5] text-[#E5D6B8]/90">
+              which ones?
             </div>
           </Arrive>
         )}
 
-        {step >= 5 && (
-          <Arrive
-            side={0}
-            className="-mt-1.5 ml-7 inline-flex items-center gap-1 rounded-full border border-white/[0.08] bg-[#0E0E12] px-1.5 py-[2px]"
-          >
-            <span className="text-[10px] leading-none">🔥</span>
-            <span className="text-[8.5px] font-medium leading-none tabular-nums text-[#E5D6B8]/70">
-              4
-            </span>
-            <span className="text-[10px] leading-none">❤️</span>
-            <span className="text-[8.5px] font-medium leading-none tabular-nums text-[#E5D6B8]/70">
-              2
-            </span>
+        {/* 6 · outgoing — the answer sets up the callback */}
+        {step >= 6 && (
+          <Arrive side={1} className="flex flex-col items-end">
+            <div className="max-w-[82%] rounded-[14px] rounded-br-[4px] bg-gradient-to-br from-[#C8883A] to-[#9E6A2A] px-3 py-2 text-[10.5px] font-medium leading-[1.5] text-[#1A1105]">
+              the new Villeneuve, and that French film you told me about
+            </div>
+            <div className="mt-1 flex items-center gap-1 pr-1">
+              <CheckCheck size={9} className="text-amber-400" />
+            </div>
           </Arrive>
         )}
 
-        {step >= 6 && (
+        {/* 7 · incoming — callback payoff */}
+        {step >= 7 && (
           <Arrive side={-1} className="flex items-start gap-2">
             <img
-              src={FACE.john}
+              src={FACE.ava}
               alt=""
               className="mt-0.5 h-5 w-5 shrink-0 rounded-full object-cover ring-1 ring-white/10"
               loading="lazy"
               decoding="async"
             />
-            <div className="flex max-w-[200px] items-center gap-2 rounded-[14px] rounded-bl-[4px] border border-white/[0.06] bg-white/[0.055] px-2 py-1.5">
-              <span className="flex h-5 w-5 items-center justify-center rounded-full bg-amber-400/20">
-                <Play size={8} className="text-amber-400" fill="currentColor" />
-              </span>
-              <Waveform />
-              <span className="shrink-0 text-[8.5px] tabular-nums text-[#E5D6B8]/55">
-                0:14
-              </span>
+            <div className="max-w-[220px] rounded-[14px] rounded-bl-[4px] border border-white/[0.06] bg-white/[0.055] px-3 py-2 text-[10.5px] leading-[1.5] text-[#E5D6B8]/90">
+              wait, you actually watched it 🥹
             </div>
           </Arrive>
         )}
 
-        {step >= 7 && (
+        {/* 8 · outgoing */}
+        {step >= 8 && (
+          <Arrive side={1} className="flex flex-col items-end">
+            <div className="max-w-[82%] rounded-[14px] rounded-br-[4px] bg-gradient-to-br from-[#C8883A] to-[#9E6A2A] px-3 py-2 text-[10.5px] font-medium leading-[1.5] text-[#1A1105]">
+              it was gorgeous. you were right
+            </div>
+            <div className="mt-1 flex items-center gap-1 pr-1">
+              <CheckCheck size={9} className="text-amber-400" />
+            </div>
+          </Arrive>
+        )}
+
+        {/* 9 · incoming */}
+        {step >= 9 && (
+          <Arrive side={-1} className="flex items-start gap-2">
+            <img
+              src={FACE.ava}
+              alt=""
+              className="mt-0.5 h-5 w-5 shrink-0 rounded-full object-cover ring-1 ring-white/10"
+              loading="lazy"
+              decoding="async"
+            />
+            <div className="max-w-[220px] rounded-[14px] rounded-bl-[4px] border border-white/[0.06] bg-white/[0.055] px-3 py-2 text-[10.5px] leading-[1.5] text-[#E5D6B8]/90">
+              i'm never wrong about films
+            </div>
+          </Arrive>
+        )}
+
+        {/* 10 · outgoing — small callback */}
+        {step >= 10 && (
+          <Arrive side={1} className="flex flex-col items-end">
+            <div className="max-w-[82%] rounded-[14px] rounded-br-[4px] bg-gradient-to-br from-[#C8883A] to-[#9E6A2A] px-3 py-2 text-[10.5px] font-medium leading-[1.5] text-[#1A1105]">
+              true. i'm taking notes
+            </div>
+            <div className="mt-1 flex items-center gap-1 pr-1">
+              <CheckCheck size={9} className="text-amber-400" />
+            </div>
+          </Arrive>
+        )}
+
+        {/* 11 · incoming — pivot */}
+        {step >= 11 && (
+          <Arrive side={-1} className="flex items-start gap-2">
+            <img
+              src={FACE.ava}
+              alt=""
+              className="mt-0.5 h-5 w-5 shrink-0 rounded-full object-cover ring-1 ring-white/10"
+              loading="lazy"
+              decoding="async"
+            />
+            <div className="max-w-[220px] rounded-[14px] rounded-bl-[4px] border border-white/[0.06] bg-white/[0.055] px-3 py-2 text-[10.5px] leading-[1.5] text-[#E5D6B8]/90">
+              how long are you there for?
+            </div>
+          </Arrive>
+        )}
+
+        {/* 12 · outgoing — the invitation */}
+        {step >= 12 && (
+          <Arrive side={1} className="flex flex-col items-end">
+            <div className="max-w-[82%] rounded-[14px] rounded-br-[4px] bg-gradient-to-br from-[#C8883A] to-[#9E6A2A] px-3 py-2 text-[10.5px] font-medium leading-[1.5] text-[#1A1105]">
+              through sunday. come out?
+            </div>
+            <div className="mt-1 flex items-center gap-1 pr-1">
+              <CheckCheck size={9} className="text-amber-400" />
+            </div>
+          </Arrive>
+        )}
+
+        {/* 13 · incoming — the tease */}
+        {step >= 13 && (
+          <Arrive side={-1} className="flex items-start gap-2">
+            <img
+              src={FACE.ava}
+              alt=""
+              className="mt-0.5 h-5 w-5 shrink-0 rounded-full object-cover ring-1 ring-white/10"
+              loading="lazy"
+              decoding="async"
+            />
+            <div className="max-w-[220px] rounded-[14px] rounded-bl-[4px] border border-white/[0.06] bg-white/[0.055] px-3 py-2 text-[10.5px] leading-[1.5] text-[#E5D6B8]/90">
+              is that an invitation?
+            </div>
+          </Arrive>
+        )}
+
+        {/* 14 · outgoing — decisive */}
+        {step >= 14 && (
+          <Arrive side={1} className="flex flex-col items-end">
+            <div className="max-w-[82%] rounded-[14px] rounded-br-[4px] bg-gradient-to-br from-[#C8883A] to-[#9E6A2A] px-3 py-2 text-[10.5px] font-medium leading-[1.5] text-[#1A1105]">
+              obviously
+            </div>
+            <div className="mt-1 flex items-center gap-1 pr-1">
+              <CheckCheck size={9} className="text-amber-300" />
+            </div>
+          </Arrive>
+        )}
+
+        {/* 15 · incoming — the yes */}
+        {step >= 15 && (
+          <Arrive side={-1} className="flex items-start gap-2">
+            <img
+              src={FACE.ava}
+              alt=""
+              className="mt-0.5 h-5 w-5 shrink-0 rounded-full object-cover ring-1 ring-white/10"
+              loading="lazy"
+              decoding="async"
+            />
+            <div className="max-w-[220px] rounded-[14px] rounded-bl-[4px] border border-white/[0.06] bg-white/[0.055] px-3 py-2 text-[10.5px] leading-[1.5] text-[#E5D6B8]/90">
+              let me check flights
+            </div>
+          </Arrive>
+        )}
+
+        {/* 16 · outgoing — the closer */}
+        {step >= 16 && (
+          <Arrive side={1} className="flex flex-col items-end">
+            <div className="max-w-[82%] rounded-[14px] rounded-br-[4px] bg-gradient-to-br from-[#C8883A] to-[#9E6A2A] px-3 py-2 text-[10.5px] font-medium leading-[1.5] text-[#1A1105]">
+              i'll book dinner
+            </div>
+            <div className="mt-1 flex items-center gap-1 pr-1">
+              <CheckCheck size={9} className="text-amber-400" />
+            </div>
+          </Arrive>
+        )}
+
+        {/* typing — Ava is replying to the closer */}
+        {step >= 17 && (
           <Arrive side={-1} className="flex items-start gap-2 pt-0.5">
             <img
-              src={FACE.john}
+              src={FACE.ava}
               alt=""
               className="h-5 w-5 shrink-0 rounded-full object-cover ring-1 ring-white/10"
               loading="lazy"
@@ -2402,7 +2340,7 @@ function PanelChats({ step }: { step: number }) {
               {[0, 1, 2].map((i) => (
                 <motion.span
                   key={i}
-                  animate={{ opacity: [0.3, 1, 0.3] }}
+                  animate={{ opacity: [0.3, 1, 0.3], y: [0, -1, 0] }}
                   transition={{
                     duration: 1.2,
                     repeat: Infinity,
@@ -2413,7 +2351,7 @@ function PanelChats({ step }: { step: number }) {
                 />
               ))}
             </div>
-            <span className="text-[8.5px] text-[#E5D6B8]/35">John is typing…</span>
+            <span className="text-[8.5px] text-[#E5D6B8]/35">typing…</span>
           </Arrive>
         )}
       </div>
@@ -2422,7 +2360,7 @@ function PanelChats({ step }: { step: number }) {
         <div className="mb-1.5 flex items-center gap-2 rounded-lg border-l-2 border-amber-400 bg-white/[0.03] px-2 py-1">
           <CornerUpLeft size={9} className="text-amber-400" />
           <span className="truncate text-[8.5px] text-[#E5D6B8]/50">
-            Replying to Ava · “Send the raw files?”
+            Replying to Ava · “let me check flights”
           </span>
         </div>
         <div className="flex items-center gap-1.5">
@@ -2445,178 +2383,6 @@ function PanelChats({ step }: { step: number }) {
             className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-[#C8883A] to-[#9E6A2A]"
           >
             <Send size={11} className="text-[#1A1105]" />
-          </button>
-        </div>
-      </div>
-
-      <div className="pointer-events-none absolute bottom-1.5 left-1/2 z-30 h-[3px] w-20 -translate-x-1/2 rounded-full bg-[#E5D6B8]/40" />
-    </div>
-  );
-}
-
-/* ── Panel: Live call ── */
-
-function PanelLive() {
-  return (
-    <div className="relative flex h-full w-full flex-col bg-black">
-      <div className="absolute inset-0 overflow-hidden">
-        <img
-          src={SCENE.milan}
-          alt=""
-          className="h-full w-full object-cover"
-          loading="lazy"
-          decoding="async"
-        />
-        <div className="absolute inset-0 bg-gradient-to-b from-black/55 via-transparent to-black/85" />
-      </div>
-
-      <StatusBar />
-
-      <div className="relative z-10 flex items-center justify-between px-4 pt-12">
-        <div className="flex items-center gap-1.5 rounded-full bg-black/55 px-2.5 py-1.5 backdrop-blur-md">
-          <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-red-500" />
-          <span className="text-[9.5px] font-semibold text-[#E5D6B8]">LIVE</span>
-        </div>
-        <div className="flex items-center gap-1.5 rounded-full bg-black/55 px-2.5 py-1.5 backdrop-blur-md">
-          <Zap size={10} className="text-amber-400" />
-          <span className="text-[9.5px] font-semibold tabular-nums text-[#E5D6B8]">
-            1080p · 60
-          </span>
-        </div>
-      </div>
-
-      <div className="relative z-10 px-3 pt-3">
-        <div className="grid grid-cols-2 gap-2">
-          {[
-            { src: FACE.anita, name: "Anita" },
-            { src: FACE.finn, name: "Finn" },
-          ].map((p, i) => (
-            <motion.div
-              key={p.name}
-              initial={{ opacity: 0, y: 8 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ ...UI_SPRING, delay: 0.1 + i * 0.05 }}
-            >
-              <motion.div
-                animate={{ scale: [1, 1.005, 1] }}
-                transition={{
-                  duration: 4,
-                  repeat: Infinity,
-                  ease: "easeInOut",
-                  delay: i * 0.7,
-                }}
-                className="relative overflow-hidden rounded-[12px] border border-white/15"
-              >
-                <img
-                  src={p.src}
-                  alt=""
-                  className="aspect-[4/5] w-full object-cover"
-                  loading="lazy"
-                  decoding="async"
-                />
-                <div className="absolute inset-0 bg-gradient-to-t from-black/65 via-transparent to-transparent" />
-                <div className="absolute bottom-1 left-1.5 flex items-center gap-1">
-                  <Mic size={8} className="text-[#E5D6B8]/80" />
-                  <span className="text-[9px] font-medium text-[#E5D6B8]">
-                    {p.name}
-                  </span>
-                </div>
-              </motion.div>
-            </motion.div>
-          ))}
-        </div>
-      </div>
-
-      <motion.div
-        initial={{ opacity: 0, y: 10, scale: 0.92 }}
-        animate={{ opacity: 1, y: 0, scale: 1 }}
-        transition={{ ...UI_SPRING, delay: 0.22 }}
-        className="absolute bottom-[168px] right-3 z-20 h-[92px] w-[64px] overflow-hidden rounded-[12px] shadow-[0_16px_40px_rgba(0,0,0,0.6)]"
-      >
-        <img
-          src={FACE.sienna}
-          alt=""
-          className="h-full w-full object-cover"
-          loading="lazy"
-          decoding="async"
-        />
-        <div className="absolute inset-0 bg-gradient-to-t from-black/40 to-transparent" />
-        <motion.span
-          aria-hidden="true"
-          animate={{ opacity: [0.3, 1, 0.3] }}
-          transition={{ duration: 3, repeat: Infinity, ease: "easeInOut" }}
-          className="pointer-events-none absolute inset-0 rounded-[12px] border-2 border-[#C8883A]"
-        />
-      </motion.div>
-
-      <div className="relative z-10 mt-auto px-3 pb-6">
-        <div className="flex items-center gap-2.5 rounded-[18px] border border-white/[0.08] bg-black/55 px-3 py-2.5 backdrop-blur-xl">
-          <img
-            src={FACE.ava}
-            alt=""
-            className="h-9 w-9 rounded-full object-cover ring-1 ring-white/20"
-            loading="lazy"
-            decoding="async"
-          />
-          <div className="min-w-0 flex-1">
-            <div className="flex items-center gap-1">
-              <p className="truncate text-[12px] font-medium text-[#E5D6B8]">
-                Ava Chen
-              </p>
-              <Crown size={9} className="text-amber-400" />
-            </div>
-            <div className="mt-0.5 flex items-center gap-1.5">
-              <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-400" />
-              <span className="text-[9.5px] tabular-nums text-emerald-300/90">
-                04:18
-              </span>
-              <span className="text-[9.5px] text-[#E5D6B8]/35">·</span>
-              <span className="text-[9.5px] text-[#E5D6B8]/55">Spatial</span>
-            </div>
-          </div>
-          <div className="flex gap-1">
-            {[1, 2, 3].map((n) => (
-              <span
-                key={n}
-                className="block w-1 rounded-full bg-amber-400/70"
-                style={{
-                  height: `${6 + Math.abs(Math.sin(n * 1.7)) * 10}px`,
-                }}
-              />
-            ))}
-          </div>
-        </div>
-
-        <div className="mt-3 flex items-center justify-center gap-2.5">
-          <button
-            aria-label="Mute"
-            className="flex h-10 w-10 items-center justify-center rounded-full bg-white/[0.14] ring-1 ring-white/15 backdrop-blur-md"
-          >
-            <Mic size={15} className="text-[#E5D6B8]" />
-          </button>
-          <button
-            aria-label="Camera"
-            className="flex h-10 w-10 items-center justify-center rounded-full bg-white/[0.14] ring-1 ring-white/15 backdrop-blur-md"
-          >
-            <Video size={15} className="text-[#E5D6B8]" />
-          </button>
-          <button
-            aria-label="End"
-            className="flex h-10 w-10 items-center justify-center rounded-full bg-red-500 shadow-[0_10px_30px_-6px_rgba(239,68,68,0.85)]"
-          >
-            <PhoneOff size={15} className="text-[#F5EBD8]" />
-          </button>
-          <button
-            aria-label="Audio"
-            className="flex h-10 w-10 items-center justify-center rounded-full bg-white/[0.14] ring-1 ring-white/15 backdrop-blur-md"
-          >
-            <Volume2 size={15} className="text-[#E5D6B8]" />
-          </button>
-          <button
-            aria-label="More"
-            className="flex h-10 w-10 items-center justify-center rounded-full bg-white/[0.14] ring-1 ring-white/15 backdrop-blur-md"
-          >
-            <MoreVertical size={15} className="text-[#E5D6B8]" />
           </button>
         </div>
       </div>
@@ -2649,7 +2415,6 @@ function TiltCard({
   const ref = useRef<HTMLDivElement>(null);
   const rx = useSpring(useMotionValue(0), TILT_SPRING);
   const ry = useSpring(useMotionValue(0), TILT_SPRING);
-
   const onMove = (e: React.MouseEvent<HTMLDivElement>) => {
     const el = ref.current;
     if (!el) return;
@@ -2663,7 +2428,6 @@ function TiltCard({
     rx.set(0);
     ry.set(0);
   };
-
   return (
     <motion.div
       initial={{ opacity: 0, y: 10 }}
@@ -2687,7 +2451,6 @@ function PanelFaces() {
   return (
     <div className="relative flex h-full w-full flex-col bg-[#08080B]">
       <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_20%_-10%,rgba(200,136,58,0.14),transparent_60%)]" />
-
       <StatusBar />
 
       <div className="relative z-10 px-4 pb-2 pt-12">
@@ -2732,7 +2495,7 @@ function PanelFaces() {
           <img
             src={SCENE.group1}
             alt=""
-            className="aspect-[16/9] w-full object-cover"
+            className="aspect-[16/9] w-full object-cover object-center"
             loading="lazy"
             decoding="async"
           />
@@ -2771,7 +2534,7 @@ function PanelFaces() {
               <img
                 src={face.img}
                 alt=""
-                className="aspect-[3/4] w-full object-cover"
+                className="aspect-[3/4] w-full object-cover object-top"
                 loading="lazy"
                 decoding="async"
               />
@@ -2823,10 +2586,11 @@ function PanelFaces() {
   );
 }
 
-/* ── Tabbed shell ── */
+/* ── Tabbed shell — two tabs ── */
 
-const CHAT_STEPS = 7;
-const CHAT_STAGGER_MS = 1400;
+/** ⚡ 16 messages + typing indicator. 850 ms stagger ≈ 13 s full run. */
+const CHAT_STEPS = 17;
+const CHAT_STAGGER_MS = 850;
 
 function TabbedPhoneUI() {
   const [tab, setTab] = useState<TabKey>("chats");
@@ -2841,7 +2605,6 @@ function TabbedPhoneUI() {
     }
     const el = hostRef.current;
     if (!el) return;
-
     const timers: number[] = [];
     let started = false;
     const start = () => {
@@ -2853,7 +2616,6 @@ function TabbedPhoneUI() {
         );
       }
     };
-
     const io = new IntersectionObserver(
       (entries) => {
         if (entries[0] && entries[0].isIntersecting) {
@@ -2864,7 +2626,6 @@ function TabbedPhoneUI() {
       { threshold: 0.35 },
     );
     io.observe(el);
-
     return () => {
       io.disconnect();
       for (let i = 0; i < timers.length; i++) window.clearTimeout(timers[i]);
@@ -2891,13 +2652,12 @@ function TabbedPhoneUI() {
             style={{ willChange: "opacity" }}
           >
             {tab === "chats" && <PanelChats step={step} />}
-            {tab === "live" && <PanelLive />}
             {tab === "faces" && <PanelFaces />}
           </motion.div>
         </AnimatePresence>
       </div>
 
-      <div className="relative z-30 border-t border-white/[0.06] bg-[#0A0A0E]/95 backdrop-blur-xl">
+      <div className="relative z-30 border-t border-white/[0.06] bg-[#0A0A0E]/95 backdrop-blur-md">
         <div className="flex items-center justify-around px-2 pb-5 pt-2">
           {TAB_ITEMS.map(({ key, label, icon: Icon }) => {
             const active = tab === key;
@@ -2928,9 +2688,6 @@ function TabbedPhoneUI() {
                 >
                   {label}
                 </span>
-                {key === "live" && (
-                  <span className="absolute right-[24%] top-0.5 h-1.5 w-1.5 rounded-full bg-red-500 shadow-[0_0_6px_#ef4444]" />
-                )}
               </button>
             );
           })}
@@ -2955,7 +2712,6 @@ const BEAT_LABELS = [
 
 function ScrollRail() {
   const [active, setActive] = useState(0);
-
   useEffect(() => {
     const cb = (i: number) => setActive(i);
     beatListeners.push(cb);
@@ -2964,7 +2720,6 @@ function ScrollRail() {
       if (k >= 0) beatListeners.splice(k, 1);
     };
   }, []);
-
   return (
     <div className="pointer-events-none fixed right-5 top-1/2 z-40 hidden -translate-y-1/2 lg:block">
       <ul className="pointer-events-auto space-y-3.5">
@@ -2981,6 +2736,11 @@ function ScrollRail() {
             </span>
             <a
               href={`#beat-${i}`}
+              onClick={(e) => {
+                if (!lenisInstance) return;
+                e.preventDefault();
+                lenisInstance.scrollTo(`#beat-${i}`, { duration: 1.6 });
+              }}
               aria-label={label}
               className="flex h-3 w-3 items-center justify-center"
             >
@@ -3018,7 +2778,6 @@ const PrimaryButton = memo(function PrimaryButton({
 }) {
   const cls =
     "group inline-flex items-center justify-center gap-2.5 rounded-full bg-gradient-to-b from-amber-300 to-amber-500 px-6 py-3.5 text-[13.5px] font-semibold tracking-[-0.01em] text-[#150E03] shadow-[0_10px_36px_-14px_rgba(200,136,58,0.85),inset_0_1px_0_rgba(255,255,255,0.30)] transition-[transform,box-shadow] duration-300 ease-out will-change-transform hover:-translate-y-0.5 hover:shadow-[0_18px_50px_-14px_rgba(200,136,58,1),inset_0_1px_0_rgba(255,255,255,0.40)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-300/70";
-
   const content = (
     <>
       {children}
@@ -3028,7 +2787,6 @@ const PrimaryButton = memo(function PrimaryButton({
       />
     </>
   );
-
   if (to) {
     return (
       <Link to={to} className={cls}>
@@ -3060,7 +2818,6 @@ const GhostButton = memo(function GhostButton({
 }) {
   const cls =
     "group inline-flex items-center gap-2 rounded-full border border-white/10 px-6 py-3.5 text-[13.5px] text-stone-300 transition-all duration-300 hover:border-white/25 hover:bg-white/[0.04] hover:text-white";
-
   const content = (
     <>
       {children}
@@ -3070,7 +2827,6 @@ const GhostButton = memo(function GhostButton({
       />
     </>
   );
-
   if (to) {
     return (
       <Link to={to} className={cls}>
@@ -3098,7 +2854,7 @@ function Reveal({
   children,
   className = "",
   delay = 0,
-  y = 32,
+  y = 28,
 }: {
   children: React.ReactNode;
   className?: string;
@@ -3108,8 +2864,8 @@ function Reveal({
   const reduce = useReducedMotion();
   return (
     <motion.div
-      initial={reduce ? false : { opacity: 0, y, filter: "blur(6px)" }}
-      whileInView={{ opacity: 1, y: 0, filter: "blur(0px)" }}
+      initial={reduce ? false : { opacity: 0, y, scale: 0.985 }}
+      whileInView={{ opacity: 1, y: 0, scale: 1 }}
       viewport={{ once: true, amount: 0.2 }}
       transition={{ ...CINEMATIC_SPRING, delay: reduce ? 0 : delay }}
       className={`will-change-transform ${className}`}
@@ -3119,9 +2875,6 @@ function Reveal({
   );
 }
 
-/** ⚡ `.section-safe` — see the <style> block near the bottom. On mobile
- *  the section grows to fit stacked content and never clips; on `lg:` it
- *  collapses back to exactly one viewport, byte-identical to v10. */
 function Section({
   id,
   children,
@@ -3137,9 +2890,7 @@ function Section({
       : align === "right"
         ? "justify-end"
         : "justify-center";
-
   const textAlign = align === "center" ? "text-center" : "";
-
   return (
     <section
       id={id}
@@ -3167,6 +2918,26 @@ const BODY = "mt-7 max-w-[440px] text-[15px] leading-[1.85] text-stone-400";
    BEAT 0 — ORIGIN
    ═══════════════════════════════════════════════════════════ */
 
+function Words({ text }: { text: string }) {
+  const reduce = useReducedMotion();
+  return (
+    <>
+      {text.split(" ").map((w, i) => (
+        <span key={i} className="inline-block overflow-hidden pb-[0.08em] align-bottom">
+          <motion.span
+            className="inline-block will-change-transform"
+            initial={reduce ? false : { y: "110%" }}
+            animate={{ y: 0 }}
+            transition={{ ...CINEMATIC_SPRING, delay: 0.08 + i * 0.07 }}
+          >
+            {w}&nbsp;
+          </motion.span>
+        </span>
+      ))}
+    </>
+  );
+}
+
 function BeatOrigin({ mobile }: { mobile: boolean }) {
   return (
     <section
@@ -3175,9 +2946,9 @@ function BeatOrigin({ mobile }: { mobile: boolean }) {
       style={{ contain: "layout paint" }}
     >
       <div className="relative z-10 grid w-full max-w-[1440px] items-center gap-12 lg:grid-cols-[1fr_0.9fr] lg:gap-20">
-        <div className="max-w-[640px]">
+        <div className="mx-auto max-w-[640px] text-center lg:mx-0 lg:text-left">
           <Reveal>
-            <div className="mb-8 inline-flex items-center gap-2.5 rounded-full border border-white/[0.09] bg-white/[0.03] px-4 py-2 backdrop-blur-xl">
+            <div className="mb-8 inline-flex items-center gap-2.5 rounded-full border border-white/[0.09] bg-white/[0.03] px-4 py-2 backdrop-blur-md">
               <span className="relative flex h-2 w-2">
                 <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-amber-400 opacity-50" />
                 <span className="relative h-2 w-2 rounded-full bg-amber-400" />
@@ -3189,8 +2960,8 @@ function BeatOrigin({ mobile }: { mobile: boolean }) {
           </Reveal>
 
           <Reveal delay={0.06}>
-            <h1 className="text-[clamp(46px,7vw,110px)] font-medium leading-[0.92] tracking-[-0.055em] text-stone-100">
-              Where it all
+            <h1 className="text-[clamp(46px,9vw,110px)] font-medium leading-[0.94] tracking-[-0.055em] text-stone-100">
+              <Words text="Where it all" />
               <br />
               <span className={ACCENT} style={SERIF}>
                 begins.
@@ -3199,21 +2970,21 @@ function BeatOrigin({ mobile }: { mobile: boolean }) {
           </Reveal>
 
           <Reveal delay={0.12}>
-            <p className="mt-8 max-w-[460px] text-[15px] leading-[1.85] text-stone-400">
+            <p className="mx-auto mt-8 max-w-[460px] text-[15px] leading-[1.85] text-stone-400 lg:mx-0">
               Every message starts somewhere. Orbital gives it a place built
               only for the people inside it.
             </p>
           </Reveal>
 
           <Reveal delay={0.18}>
-            <div className="mt-10 flex flex-wrap items-center gap-3">
+            <div className="mt-10 flex flex-wrap items-center justify-center gap-3 lg:justify-start">
               <PrimaryButton to="/register">Create account</PrimaryButton>
               <GhostButton to="/login">Sign in</GhostButton>
             </div>
           </Reveal>
 
           <Reveal delay={0.26}>
-            <div className="mt-14 flex flex-wrap gap-x-8 gap-y-3 text-[11.5px] text-stone-500">
+            <div className="mt-12 flex flex-wrap justify-center gap-x-8 gap-y-3 text-[11.5px] text-stone-500 lg:justify-start">
               <span className="flex items-center gap-2">
                 <LockKeyhole size={13} className="text-amber-400" />
                 End-to-end encrypted
@@ -3231,15 +3002,25 @@ function BeatOrigin({ mobile }: { mobile: boolean }) {
         </div>
 
         <Reveal delay={0.14}>
-          <motion.div
-            animate={{ y: [0, -10, 0] }}
-            transition={{ duration: 6, repeat: Infinity, ease: "easeInOut" }}
-            className="will-change-transform"
-          >
-            <PhoneMockup mobile={mobile}>
-              <TabbedPhoneUI />
-            </PhoneMockup>
-          </motion.div>
+          <div className="relative mx-auto w-full max-w-[420px]">
+            <div
+              aria-hidden="true"
+              className="pointer-events-none absolute left-1/2 top-1/2 -z-10 h-[140%] w-[140%] -translate-x-1/2 -translate-y-1/2"
+              style={{
+                background:
+                  "radial-gradient(circle, rgba(200,136,58,0.22) 0%, rgba(200,136,58,0.06) 35%, transparent 68%)",
+              }}
+            />
+            <motion.div
+              animate={{ y: [0, -10, 0] }}
+              transition={{ duration: 6, repeat: Infinity, ease: "easeInOut" }}
+              className="will-change-transform"
+            >
+              <PhoneMockup mobile={mobile}>
+                <TabbedPhoneUI />
+              </PhoneMockup>
+            </motion.div>
+          </div>
         </Reveal>
       </div>
     </section>
@@ -3252,25 +3033,25 @@ function BeatOrigin({ mobile }: { mobile: boolean }) {
 
 function Filmstrip() {
   const frames = [
-    u(SCENE_IDS.tokyo, 900, 85),
-    u(SCENE_IDS.paris, 900, 85),
-    u(SCENE_IDS.aurora, 900, 85),
+    u(SCENE_IDS.tokyo, 960, 90),
+    u(SCENE_IDS.paris, 960, 90),
+    u(SCENE_IDS.aurora, 960, 90),
   ];
   return (
     <div className="mt-9 flex gap-3">
       {frames.map((src, i) => (
         <motion.div
           key={src}
-          initial={{ opacity: 0, y: 24, rotate: (i - 1) * 2 }}
-          whileInView={{ opacity: 1, y: 0, rotate: 0 }}
+          initial={{ opacity: 0, y: 24 }}
+          whileInView={{ opacity: 1, y: 0 }}
           viewport={{ once: true, amount: 0.4 }}
-          transition={{ ...CINEMATIC_SPRING, delay: 0.1 * i }}
-          className="relative h-[120px] flex-1 overflow-hidden rounded-[14px] border border-white/[0.08]"
+          transition={{ ...CINEMATIC_SPRING, delay: 0.08 * i }}
+          className="relative h-[128px] flex-1 overflow-hidden rounded-[14px] border border-white/[0.08]"
         >
           <img
             src={src}
             alt=""
-            className="h-full w-full object-cover"
+            className="h-full w-full object-cover object-center"
             loading="lazy"
             decoding="async"
           />
@@ -3290,7 +3071,6 @@ function BeatSignal() {
       <Reveal>
         <Eyebrow>Beat 01 · Signal</Eyebrow>
       </Reveal>
-
       <Reveal delay={0.06}>
         <h2 className={H2}>
           A message leaves
@@ -3300,14 +3080,12 @@ function BeatSignal() {
           </span>
         </h2>
       </Reveal>
-
       <Reveal delay={0.12}>
         <p className={BODY}>
           Encrypted on your device before it touches the network — a cipher
           only your circle can open.
         </p>
       </Reveal>
-
       <Reveal delay={0.18}>
         <div className="mt-9 grid grid-cols-3 gap-3">
           {[
@@ -3317,7 +3095,7 @@ function BeatSignal() {
           ].map((item) => (
             <div
               key={item.label}
-              className="rounded-2xl border border-white/[0.08] bg-white/[0.025] p-4 backdrop-blur-xl"
+              className="rounded-2xl border border-white/[0.08] bg-white/[0.025] p-4 backdrop-blur-md"
             >
               <p className="text-[9.5px] uppercase tracking-[0.2em] text-stone-500">
                 {item.label}
@@ -3349,8 +3127,8 @@ function BeatVault() {
     >
       <div className="relative z-10 grid w-full max-w-[1440px] items-center gap-14 lg:grid-cols-[0.9fr_1fr] lg:gap-20">
         <Reveal delay={0.06}>
-          <div className="relative overflow-hidden rounded-[28px] border border-white/[0.09] bg-[#0B0A0D]/90 shadow-[0_50px_140px_-70px_rgba(200,136,58,0.45)] backdrop-blur-xl">
-            <div className="p-7 sm:p-9">
+          <div className="relative overflow-hidden rounded-[28px] border border-white/[0.09] bg-[#0B0A0D]/90 shadow-[0_50px_140px_-70px_rgba(200,136,58,0.45)] backdrop-blur-md">
+            <div className="p-6 sm:p-9">
               <div className="flex items-center justify-between border-b border-white/[0.08] pb-5">
                 <div className="flex items-center gap-3">
                   <img
@@ -3376,7 +3154,7 @@ function BeatVault() {
 
               <div className="mt-7 space-y-4">
                 <motion.div
-                  initial={{ opacity: 0, scale: 0.92, x: -8 }}
+                  initial={{ opacity: 0, scale: 0.94, x: -6 }}
                   whileInView={{ opacity: 1, scale: 1, x: 0 }}
                   viewport={{ once: true }}
                   transition={UI_SPRING}
@@ -3384,9 +3162,8 @@ function BeatVault() {
                 >
                   Are we still on for the shoot tomorrow?
                 </motion.div>
-
                 <motion.div
-                  initial={{ opacity: 0, scale: 0.92, x: 8 }}
+                  initial={{ opacity: 0, scale: 0.94, x: 6 }}
                   whileInView={{ opacity: 1, scale: 1, x: 0 }}
                   viewport={{ once: true }}
                   transition={{ ...UI_SPRING, delay: 0.14 }}
@@ -3394,9 +3171,8 @@ function BeatVault() {
                 >
                   Wouldn't miss it ✦
                 </motion.div>
-
                 <motion.div
-                  initial={{ opacity: 0, scale: 0.92, y: 8 }}
+                  initial={{ opacity: 0, scale: 0.94, y: 6 }}
                   whileInView={{ opacity: 1, scale: 1, y: 0 }}
                   viewport={{ once: true }}
                   transition={{ ...UI_SPRING, delay: 0.28 }}
@@ -3405,7 +3181,7 @@ function BeatVault() {
                   <img
                     src={SCENE.nyfw}
                     alt=""
-                    className="h-[150px] w-full object-cover"
+                    className="h-[150px] w-full object-cover object-center"
                     loading="lazy"
                     decoding="async"
                   />
@@ -3419,7 +3195,7 @@ function BeatVault() {
               </div>
             </div>
 
-            <div className="flex items-center gap-2 border-t border-white/[0.07] bg-white/[0.015] px-7 py-4 text-[10px] uppercase tracking-[0.2em] text-stone-500">
+            <div className="flex items-center gap-2 border-t border-white/[0.07] bg-white/[0.015] px-6 py-4 text-[10px] uppercase tracking-[0.2em] text-stone-500 sm:px-9">
               <span className="h-1.5 w-1.5 rounded-full bg-amber-400 shadow-[0_0_10px_#C8883A]" />
               Sealed before transmission
             </div>
@@ -3478,7 +3254,6 @@ function BeatOrbit() {
       <Reveal>
         <Eyebrow>Beat 03 · Circle</Eyebrow>
       </Reveal>
-
       <Reveal delay={0.06}>
         <h2 className={H2}>
           Small circles,
@@ -3488,40 +3263,31 @@ function BeatOrbit() {
           </span>
         </h2>
       </Reveal>
-
       <Reveal delay={0.12}>
         <p className={BODY}>
           No feeds. No followers. Just the rooms you chose, capped at fifty
           people and sized for real conversation.
         </p>
       </Reveal>
-
       <Reveal delay={0.18}>
         <div className="mt-9 flex -space-x-3">
-          {[
-            FACE.ava,
-            FACE.sienna,
-            FACE.john,
-            FACE.anita,
-            FACE.finn,
-            FACE.iris,
-            FACE.lyra,
-          ].map((src, i) => (
-            <img
-              key={i}
-              src={src}
-              alt=""
-              className="h-11 w-11 rounded-full border-2 border-[#04060A] object-cover"
-              loading="lazy"
-              decoding="async"
-            />
-          ))}
+          {[FACE.ava, FACE.sienna, FACE.john, FACE.anita, FACE.finn, FACE.iris, FACE.lyra].map(
+            (src, i) => (
+              <img
+                key={i}
+                src={src}
+                alt=""
+                className="h-11 w-11 rounded-full border-2 border-[#04060A] object-cover"
+                loading="lazy"
+                decoding="async"
+              />
+            ),
+          )}
           <div className="flex h-11 w-11 items-center justify-center rounded-full border-2 border-[#04060A] bg-white/[0.06] text-[10px] tabular-nums text-stone-400">
             +43
           </div>
         </div>
       </Reveal>
-
       <Reveal delay={0.24}>
         <div className="mt-9">
           <PrimaryButton to="/register">Create account</PrimaryButton>
@@ -3572,7 +3338,7 @@ function BeatResonance() {
               ].map((item) => (
                 <div
                   key={item.label}
-                  className="flex items-center gap-3 rounded-2xl border border-white/[0.08] bg-white/[0.025] p-3.5 backdrop-blur-xl"
+                  className="flex items-center gap-3 rounded-2xl border border-white/[0.08] bg-white/[0.025] p-3.5 backdrop-blur-md"
                 >
                   <item.icon size={16} className="shrink-0 text-amber-400" />
                   <span className="text-[12px] text-stone-300">
@@ -3585,19 +3351,18 @@ function BeatResonance() {
         </div>
 
         <Reveal delay={0.1}>
-          <div className="relative overflow-hidden rounded-[28px] border border-white/[0.08] bg-[#0B0A0D]/90 backdrop-blur-xl">
+          <div className="relative overflow-hidden rounded-[28px] border border-white/[0.08] bg-[#0B0A0D]/90 backdrop-blur-md">
             <div className="relative aspect-[4/5] w-full overflow-hidden bg-black">
               <img
                 src={SCENE.manCall}
                 alt=""
-                className="h-full w-full object-cover opacity-55"
+                className="h-full w-full object-cover object-center opacity-60"
                 loading="lazy"
                 decoding="async"
               />
               <div className="absolute inset-0 bg-gradient-to-t from-[#0B0A0D] via-[#0B0A0D]/40 to-transparent" />
-
               <div className="absolute inset-x-0 bottom-0 p-6">
-                <div className="rounded-[20px] border border-white/[0.08] bg-black/60 p-4 backdrop-blur-xl">
+                <div className="rounded-[20px] border border-white/[0.08] bg-black/60 p-4 backdrop-blur-md">
                   <div className="flex items-center gap-3">
                     <img
                       src={FACE.john}
@@ -3649,7 +3414,11 @@ function BeatArrival() {
     <Section id="beat-5" align="center">
       <div
         aria-hidden="true"
-        className="pointer-events-none absolute -inset-x-24 -inset-y-24 -z-10 bg-[radial-gradient(ellipse_at_center,rgba(4,6,10,0.72),transparent_70%)]"
+        className="pointer-events-none absolute -inset-x-24 -inset-y-24 -z-10"
+        style={{
+          background:
+            "radial-gradient(ellipse at center, rgba(4,6,10,0.72), transparent 70%)",
+        }}
       />
       <Reveal>
         <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-[22px] border border-amber-400/25 bg-black/45 shadow-[0_0_70px_rgba(200,136,58,0.14)] backdrop-blur-md">
@@ -3736,7 +3505,6 @@ function ChapterTag() {
       if (k >= 0) beatListeners.splice(k, 1);
     };
   }, []);
-
   return (
     <div className="pointer-events-none fixed bottom-6 left-5 z-40 hidden sm:block lg:left-14">
       <AnimatePresence mode="wait">
@@ -3764,8 +3532,8 @@ function ChapterTag() {
 function ProgressLine() {
   const { scrollYProgress } = useScroll();
   const sx = useSpring(scrollYProgress, {
-    stiffness: 180,
-    damping: 26,
+    stiffness: 240,
+    damping: 28,
     mass: 0.5,
   });
   return (
@@ -3787,6 +3555,20 @@ export function Landing() {
   const tier = useDeviceTier();
   const mobile = useIsMobile();
   const hz = useRefreshRate();
+  useSmoothScroll(!reduce);
+
+  useEffect(() => {
+    const h = (e: Event) => {
+      const el = e.target;
+      if (el instanceof HTMLImageElement && !el.dataset.fb) {
+        el.dataset.fb = "1";
+        el.removeAttribute("src");
+        el.style.background = "linear-gradient(135deg,#6b4a22,#141a26)";
+      }
+    };
+    document.addEventListener("error", h, true);
+    return () => document.removeEventListener("error", h, true);
+  }, []);
 
   const { maxDpr, minDpr } = useMemo(() => {
     if (mobile) return { maxDpr: 1, minDpr: 0.65 };
@@ -3794,12 +3576,12 @@ export function Landing() {
       typeof window === "undefined"
         ? 1
         : Math.min(window.devicePixelRatio || 1, 2);
-    const headroom = hz >= 120 ? 0.7 : hz >= 90 ? 0.85 : 1;
-    const tierCap = tier === "low" ? 1 : tier === "mid" ? 1.3 : 1.5;
+    const headroom = hz >= 120 ? 0.9 : hz >= 90 ? 0.95 : 1;
+    const tierCap = tier === "low" ? 1.25 : tier === "mid" ? 1.6 : 2;
     const hi = Math.max(0.7, Math.min(native, tierCap) * headroom);
     return {
       maxDpr: Math.round(hi * 100) / 100,
-      minDpr: Math.max(0.6, Math.round(hi * 0.6 * 100) / 100),
+      minDpr: Math.max(0.75, Math.round(hi * 0.7 * 100) / 100),
     };
   }, [tier, hz, mobile]);
 
@@ -3819,7 +3601,7 @@ export function Landing() {
           --font-sans: "Inter Tight", "SF Pro Text", system-ui;
         }
         html {
-          scroll-behavior: smooth;
+          scroll-behavior: auto;
           -webkit-text-size-adjust: 100%;
         }
         body {
@@ -3838,19 +3620,15 @@ export function Landing() {
           font-feature-settings: 'ss01' 1, 'cv11' 1, 'cv02' 1, 'tnum' 1;
         }
         .orbital-content canvas { display: block; }
-        .orbital-content section {
-          transform: translateZ(0);
-          backface-visibility: hidden;
-        }
+        html.lenis, html.lenis body { height: auto; }
+        .lenis.lenis-smooth { scroll-behavior: auto !important; }
+        img { image-rendering: -webkit-optimize-contrast; }
 
-        /* ⚡ .section-safe — mobile grows to fit stacked content and clears
-           the notch/dynamic island. Desktop (lg+) collapses back to
-           exactly one viewport, byte-identical to v10. */
         .section-safe {
-          min-height: 100vh;              /* fallback for old browsers */
-          min-height: 100svh;             /* modern — small viewport unit */
-          padding-top: calc(5.5rem + env(safe-area-inset-top, 0px));
-          padding-bottom: calc(5rem  + env(safe-area-inset-bottom, 0px));
+          min-height: 100vh;
+          min-height: 100svh;
+          padding-top: calc(4rem + env(safe-area-inset-top, 0px));
+          padding-bottom: calc(3.75rem + env(safe-area-inset-bottom, 0px));
         }
         @media (min-width: 1024px) {
           .section-safe {
@@ -3861,11 +3639,6 @@ export function Landing() {
           }
         }
 
-        /* ⚡ MOBILE PERF MODE
-           — backdrop-filter is the single most expensive DOM effect on
-             iOS/Android GPUs.
-           — overscroll-behavior kills rubber-band + the fixed-canvas
-             repaint that follows every bounce. */
         @media (hover: none) and (pointer: coarse) {
           * {
             backdrop-filter: none !important;
@@ -3887,15 +3660,12 @@ export function Landing() {
       `}</style>
 
       {!reduce && webGLAvailable && (
-        <div
-          className="pointer-events-none fixed inset-0 z-0"
-          aria-hidden="true"
-        >
+        <div className="pointer-events-none fixed inset-0 z-0" aria-hidden="true">
           <Canvas
             dpr={maxDpr}
             camera={{ position: [0, 0.05, 7.2], fov: FOV, near: 0.1, far: 260 }}
             gl={{
-              antialias: false,
+              antialias: tier === "low",
               alpha: false,
               powerPreference: mobile ? "default" : "high-performance",
               stencil: false,
@@ -3933,10 +3703,7 @@ export function Landing() {
       )}
 
       {(reduce || !webGLAvailable) && (
-        <div
-          className="pointer-events-none fixed inset-0 z-0"
-          aria-hidden="true"
-        >
+        <div className="pointer-events-none fixed inset-0 z-0" aria-hidden="true">
           <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_70%_30%,rgba(200,136,58,0.1),transparent_45%)]" />
         </div>
       )}
