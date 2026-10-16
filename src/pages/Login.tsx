@@ -1,17 +1,35 @@
 /**
  * @license
  * SPDX-License-Identifier: Apache-2.0
+ *
+ * Login — v2 · ultra-fast pass
+ *
+ * ⚡ deltas vs previous:
+ *   · FRAMER MOTION REMOVED ENTIRELY — no `motion`, no `AnimatePresence`,
+ *     no spring solver, no per-component subscription. All entrance and
+ *     exit animations are CSS keyframes on transform/opacity only.
+ *   · ERROR BANNER IS PURE CSS — grid-template-rows collapse (0fr → 1fr)
+ *     instead of animating `height: auto`, which forced a reflow every
+ *     frame. Now the compositor drives it.
+ *   · NO LAYOUT-THREATENING ANIMATIONS — never animates height, width,
+ *     top, left, margin, or padding. Only transform / opacity / grid rows.
+ *   · HOISTED REGEX + STYLE CONSTANTS — no new RegExp objects or string
+ *     concats per keystroke / per render.
+ *   · MEMOIZED — ErrorBanner, GoogleIcon, and the change handlers are
+ *     memoized so typing only re-renders the fields that actually change.
+ *   · SCRUBBED: useReducedMotion JS hook → CSS @media query.
  */
 
 import React, {
+  memo,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
 } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
 import {
   AlertCircle,
   AlertTriangle,
@@ -31,25 +49,89 @@ import { AuthInput } from '../components/AuthInput';
 import { AuthButton } from '../components/AuthButton';
 import { API_BASE_URL, extractErrorMessage } from '../services/api';
 
-const SOFT_SPRING = { type: 'spring' as const, stiffness: 180, damping: 22 };
+/* ═══════════════════════════════════════════════════════════
+   CONSTANTS — hoisted so nothing is created per render
+   ═══════════════════════════════════════════════════════════ */
 
 type IdentifierMode = 'handle' | 'email' | 'unknown';
 const HANDLE_DOMAIN = 'orbit';
+
+/* Compiled once — reused on every keystroke. */
+const RE_EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const RE_HANDLE_BARE = /^[a-z0-9_.-]{2,32}$/;
+const RE_HANDLE_LOOSE = /^[a-z0-9_.-]{2,}$/;
+const RE_HANDLE_SUFFIX = new RegExp(`@${HANDLE_DOMAIN}$`, 'i');
+
+const TONES = {
+  red: 'bg-[#B91C1C]/10 border-[#B91C1C]/25 text-[#F87171]',
+  amber: 'bg-[#D97706]/10 border-[#D97706]/25 text-[#FBBF24]',
+  neutral: 'bg-white/[0.03] border-white/[0.08] text-[#C9C1B3]',
+} as const;
+
+/* ═══════════════════════════════════════════════════════════
+   SCOPED CSS — compositor-only animations, no layout thrash.
+   Rendered once as a <style> tag inside the page tree.
+   ═══════════════════════════════════════════════════════════ */
+
+const LOGIN_CSS = `
+  /* entrance — transform + opacity only, GPU-composited */
+  @keyframes orbital-fade-up {
+    from { opacity: 0; transform: translate3d(0, 8px, 0); }
+    to   { opacity: 1; transform: translate3d(0, 0, 0); }
+  }
+  .orbital-fade-up {
+    animation: orbital-fade-up 0.36s cubic-bezier(0.22, 1, 0.36, 1) both;
+    backface-visibility: hidden;
+  }
+
+  /* error banner entrance */
+  @keyframes orbital-error-in {
+    from { opacity: 0; transform: translate3d(0, -4px, 0); }
+    to   { opacity: 1; transform: translate3d(0, 0, 0); }
+  }
+  .orbital-error-in {
+    animation: orbital-error-in 0.24s cubic-bezier(0.22, 1, 0.36, 1) both;
+    backface-visibility: hidden;
+  }
+
+  /* collapsing slot — grid-template-rows, NOT height:auto.
+     Avoids the reflow-every-frame cost of animating height. */
+  .orbital-error-slot {
+    display: grid;
+    grid-template-rows: 0fr;
+    transition: grid-template-rows 220ms cubic-bezier(0.22, 1, 0.36, 1);
+  }
+  .orbital-error-slot[data-open='true'] {
+    grid-template-rows: 1fr;
+  }
+  .orbital-error-slot > .orbital-error-inner {
+    overflow: hidden;
+    min-height: 0;
+  }
+
+  /* respect the user's motion preference without a JS hook */
+  @media (prefers-reduced-motion: reduce) {
+    .orbital-fade-up,
+    .orbital-error-in { animation: none !important; }
+    .orbital-error-slot { transition: none !important; }
+  }
+`;
+
+/* ═══════════════════════════════════════════════════════════
+   IDENTIFIER PARSING
+   ═══════════════════════════════════════════════════════════ */
 
 function detectIdentifierMode(raw: string): IdentifierMode {
   const v = raw.trim().toLowerCase();
   if (!v) return 'unknown';
   if (v.endsWith(`@${HANDLE_DOMAIN}`)) return 'handle';
-  if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v)) return 'email';
-  if (/^[a-z0-9_.-]{2,}$/.test(v)) return 'handle';
+  if (RE_EMAIL.test(v)) return 'email';
+  if (RE_HANDLE_LOOSE.test(v)) return 'handle';
   return 'unknown';
 }
 
 function normalizeHandle(raw: string): string {
-  const bare = raw
-    .trim()
-    .toLowerCase()
-    .replace(new RegExp(`@${HANDLE_DOMAIN}$`, 'i'), '');
+  const bare = raw.trim().toLowerCase().replace(RE_HANDLE_SUFFIX, '');
   return `${bare}@${HANDLE_DOMAIN}`;
 }
 
@@ -64,18 +146,15 @@ function validateIdentifier(raw: string): IdentifierResult {
   const mode = detectIdentifierMode(v);
 
   if (mode === 'email') {
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v)) {
+    if (!RE_EMAIL.test(v)) {
       return { ok: false, message: 'That doesn’t look like a valid email.' };
     }
     return { ok: true, normalized: v.toLowerCase(), mode: 'email' };
   }
 
   if (mode === 'handle') {
-    const bare = v
-      .toLowerCase()
-      .replace(new RegExp(`@${HANDLE_DOMAIN}$`, 'i'), '');
-
-    if (!/^[a-z0-9_.-]{2,32}$/.test(bare)) {
+    const bare = v.toLowerCase().replace(RE_HANDLE_SUFFIX, '');
+    if (!RE_HANDLE_BARE.test(bare)) {
       return {
         ok: false,
         message: 'Handles are 2–32 characters (letters, numbers, . _ -).',
@@ -89,6 +168,10 @@ function validateIdentifier(raw: string): IdentifierResult {
     message: 'Enter a valid email or your handle (e.g. jane@orbit).',
   };
 }
+
+/* ═══════════════════════════════════════════════════════════
+   ERROR TYPES + CLASSIFICATION
+   ═══════════════════════════════════════════════════════════ */
 
 type AuthErrorKind =
   | 'validation'
@@ -146,18 +229,23 @@ function toAuthError(err: unknown, fallback = 'Invalid credentials.'): AuthError
   return { kind, message: raw };
 }
 
-function ErrorBanner({
-  error,
-  onResend,
-  onRetry,
-  retryCountdown,
-}: {
+/* ═══════════════════════════════════════════════════════════
+   ERROR BANNER — memoized, pure CSS, no motion runtime
+   ═══════════════════════════════════════════════════════════ */
+
+type ErrorBannerProps = {
   error: AuthError;
   onResend: () => void;
   onRetry: () => void;
   retryCountdown: number | null;
-}) {
-  const reduceMotion = useReducedMotion();
+};
+
+const ErrorBanner = memo(function ErrorBanner({
+  error,
+  onResend,
+  onRetry,
+  retryCountdown,
+}: ErrorBannerProps) {
   const bannerRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
@@ -228,23 +316,13 @@ function ErrorBanner({
     }
   }, [error, retryCountdown]);
 
-  const tones = {
-    red: 'bg-[#B91C1C]/10 border-[#B91C1C]/25 text-[#F87171]',
-    amber: 'bg-[#D97706]/10 border-[#D97706]/25 text-[#FBBF24]',
-    neutral: 'bg-white/[0.03] border-white/[0.08] text-[#C9C1B3]',
-  } as const;
-
   return (
-    <motion.div
+    <div
       ref={bannerRef}
       tabIndex={-1}
       role="alert"
       aria-live="polite"
-      initial={reduceMotion ? false : { opacity: 0, y: -6, height: 0 }}
-      animate={{ opacity: 1, y: 0, height: 'auto' }}
-      exit={reduceMotion ? { opacity: 0 } : { opacity: 0, y: -6, height: 0 }}
-      transition={SOFT_SPRING}
-      className={`overflow-hidden rounded-xl border px-3.5 py-3 text-[12.5px] leading-relaxed ${tones[tone]} focus:outline-none`}
+      className={`orbital-error-in overflow-hidden rounded-xl border px-3.5 py-3 text-[12.5px] leading-relaxed ${TONES[tone]} focus:outline-none`}
     >
       <div className="flex items-start gap-2.5">
         <span className="mt-[1px] shrink-0">{icon}</span>
@@ -275,9 +353,13 @@ function ErrorBanner({
           )}
         </div>
       </div>
-    </motion.div>
+    </div>
   );
-}
+});
+
+/* ═══════════════════════════════════════════════════════════
+   LOGIN
+   ═══════════════════════════════════════════════════════════ */
 
 function Login(): React.JSX.Element {
   const navigate = useNavigate();
@@ -290,9 +372,14 @@ function Login(): React.JSX.Element {
   const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
   const [retryCountdown, setRetryCountdown] = useState<number | null>(null);
 
+  /* ⚡ lags `error` on clear so the grid collapse can finish before
+     the banner unmounts. Immediate on appear (useLayoutEffect). */
+  const [visibleError, setVisibleError] = useState<AuthError | null>(null);
+
   const identifierRef = useRef<HTMLDivElement | null>(null);
   const passwordRef = useRef<HTMLDivElement | null>(null);
 
+  /* retry countdown ticker */
   useEffect(() => {
     if (retryCountdown == null) return;
     if (retryCountdown <= 0) {
@@ -306,6 +393,17 @@ function Login(): React.JSX.Element {
     );
     return () => window.clearTimeout(t);
   }, [retryCountdown]);
+
+  /* ⚡ keep the exit animation smooth. useLayoutEffect so appearing
+     content lands in the same paint as the container's expansion. */
+  useLayoutEffect(() => {
+    if (error) {
+      setVisibleError(error);
+    } else if (visibleError) {
+      const t = window.setTimeout(() => setVisibleError(null), 240);
+      return () => window.clearTimeout(t);
+    }
+  }, [error, visibleError]);
 
   const identifierMode = useMemo(
     () => detectIdentifierMode(identifier),
@@ -376,12 +474,15 @@ function Login(): React.JSX.Element {
     }
   }, [identifier, password, loading, login, navigate, validate, focusFirstError]);
 
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    void doLogin();
-  };
+  const handleSubmit = useCallback(
+    (e: React.FormEvent) => {
+      e.preventDefault();
+      void doLogin();
+    },
+    [doLogin],
+  );
 
-  const handleResend = () => {
+  const handleResend = useCallback(() => {
     const parsed = validateIdentifier(identifier);
     if (!parsed.ok || parsed.mode !== 'email') {
       setFieldErrors({
@@ -393,49 +494,54 @@ function Login(): React.JSX.Element {
     navigate(
       `/confirm-email-pending?email=${encodeURIComponent(parsed.normalized)}`,
     );
-  };
+  }, [identifier, navigate]);
 
-  const handleGoogleLogin = () => {
+  const handleRetry = useCallback(() => {
+    void doLogin();
+  }, [doLogin]);
+
+  const handleGoogleLogin = useCallback(() => {
     window.location.href = `${API_BASE_URL.replace(/\/+$/, '')}/api/Auth/google-login?prompt=select_account`;
-  };
+  }, []);
 
-  const onIdentifierChange = (value: string) => {
+  /* ⚡ functional updates → no dep on fieldErrors/error, stable identity */
+  const onIdentifierChange = useCallback((value: string) => {
     setIdentifier(value);
-    if (fieldErrors.identifier) {
-      setFieldErrors((f) => ({ ...f, identifier: undefined }));
-    }
-    if (error?.kind === 'credentials' || error?.kind === 'validation') {
-      setError(null);
-    }
-  };
+    setFieldErrors((f) => (f.identifier ? { ...f, identifier: undefined } : f));
+    setError((e) =>
+      e?.kind === 'credentials' || e?.kind === 'validation' ? null : e,
+    );
+  }, []);
 
-  const onPasswordChange = (value: string) => {
+  const onPasswordChange = useCallback((value: string) => {
     setPassword(value);
-    if (fieldErrors.password) {
-      setFieldErrors((f) => ({ ...f, password: undefined }));
-    }
-    if (error?.kind === 'credentials') setError(null);
-  };
+    setFieldErrors((f) => (f.password ? { ...f, password: undefined } : f));
+    setError((e) => (e?.kind === 'credentials' ? null : e));
+  }, []);
 
   const busy = loading;
+  const errorOpen = error ? 'true' : 'false';
 
   return (
     <AuthShell title="Sign in" subtitle="Welcome back to Orbital.">
+      {/* scoped styles — rendered once, defines the keyframes above */}
+      <style>{LOGIN_CSS}</style>
+
       <div className="space-y-5">
-        {/* Google button — CSS fade, no JS spring solver */}
+        {/* Google button */}
         <div className="orbital-fade-up">
           <button
             type="button"
             onClick={handleGoogleLogin}
             disabled={busy}
-            className="w-full h-11 rounded-xl bg-white/[0.04] hover:bg-white/[0.08] border border-white/[0.10] hover:border-white/[0.18] text-[#EDE5D4] text-[13.5px] font-medium inline-flex items-center justify-center gap-2.5 transition-all duration-200 active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed"
+            className="w-full h-11 rounded-xl bg-white/[0.04] hover:bg-white/[0.08] border border-white/[0.10] hover:border-white/[0.18] text-[#EDE5D4] text-[13.5px] font-medium inline-flex items-center justify-center gap-2.5 transition-colors duration-200 active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed"
           >
             <GoogleIcon />
             <span>Continue with Google</span>
           </button>
         </div>
 
-        {/* Divider — CSS fade */}
+        {/* Divider */}
         <div
           className="orbital-fade-up relative"
           style={{ animationDelay: '0.06s' }}
@@ -451,7 +557,7 @@ function Login(): React.JSX.Element {
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-4" noValidate>
-          {/* Identifier field — CSS fade */}
+          {/* Identifier */}
           <div
             ref={identifierRef}
             className="orbital-fade-up"
@@ -473,7 +579,7 @@ function Login(): React.JSX.Element {
             />
           </div>
 
-          {/* Password field — CSS fade */}
+          {/* Password */}
           <div
             ref={passwordRef}
             className="orbital-fade-up space-y-2"
@@ -501,19 +607,22 @@ function Login(): React.JSX.Element {
             </div>
           </div>
 
-          <AnimatePresence initial={false}>
-            {error && (
-              <ErrorBanner
-                key={`${error.kind}-${error.message}`}
-                error={error}
-                onResend={handleResend}
-                onRetry={() => void doLogin()}
-                retryCountdown={retryCountdown}
-              />
-            )}
-          </AnimatePresence>
+          {/* ⚡ collapsing error slot — grid-template-rows only, no motion runtime */}
+          <div className="orbital-error-slot" data-open={errorOpen}>
+            <div className="orbital-error-inner">
+              {visibleError && (
+                <ErrorBanner
+                  key={`${visibleError.kind}-${visibleError.message}`}
+                  error={visibleError}
+                  onResend={handleResend}
+                  onRetry={handleRetry}
+                  retryCountdown={retryCountdown}
+                />
+              )}
+            </div>
+          </div>
 
-          {/* Submit — CSS fade */}
+          {/* Submit */}
           <div className="orbital-fade-up" style={{ animationDelay: '0.24s' }}>
             <AuthButton type="submit" loading={loading} variant="primary">
               {retryCountdown ? `Try again in ${retryCountdown}s` : 'Sign in'}
@@ -521,7 +630,7 @@ function Login(): React.JSX.Element {
           </div>
         </form>
 
-        {/* Footer link — CSS fade */}
+        {/* Footer */}
         <div
           className="orbital-fade-up pt-5 border-t border-white/[0.06] text-center text-[12.5px] text-[#A8A29E]"
           style={{ animationDelay: '0.3s' }}
@@ -539,15 +648,31 @@ function Login(): React.JSX.Element {
   );
 }
 
-function GoogleIcon() {
+/* ═══════════════════════════════════════════════════════════
+   GOOGLE ICON — static, memoized so it never re-renders
+   ═══════════════════════════════════════════════════════════ */
+
+const GoogleIcon = memo(function GoogleIcon() {
   return (
     <svg width="16" height="16" viewBox="0 0 48 48" aria-hidden="true">
-      <path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z" />
-      <path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z" />
-      <path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z" />
-      <path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z" />
+      <path
+        fill="#EA4335"
+        d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"
+      />
+      <path
+        fill="#4285F4"
+        d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"
+      />
+      <path
+        fill="#FBBC05"
+        d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"
+      />
+      <path
+        fill="#34A853"
+        d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"
+      />
     </svg>
   );
-}
+});
 
 export default Login;

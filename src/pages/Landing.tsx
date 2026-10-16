@@ -1,25 +1,27 @@
 /**
  * @file src/pages/Landing.tsx
- * Orbital — v15 · "The Thread"
- *   v15: phone chat rebuilt as a living, never-ending conversation
+ * Orbital — v17 · "The Thread"
+ *   v17: the phone is now a single, living conversation
  *
- * ⚡ v15 deltas (phone only — nothing else changed):
- *   · CHAT IS ALIVE — the transcript no longer plays once and stops.
- *     A 24-line script loops forever: each line carries its own
- *     `hold` (how long it sits) and `typing` (how long "typing…"
- *     shows first). Timing is asymmetric — short replies land fast,
- *     long ones linger — so it reads like two real people texting.
- *   · AUTO-SCROLLING TRANSCRIPT — only the last 11 bubbles stay
- *     mounted. Older ones fall off the top edge, which fades out
- *     via a CSS mask, so it *looks* like the thread scrolls up
- *     while the DOM stays tiny.
- *   · TYPING INDICATOR IN THE RIGHT PLACE — sits on Ava's side when
- *     she's about to text, on yours when you are.
- *   · FIXED — the previous edit shipped a broken file (missing
- *     PanelChats, stale CHAT_STEPS references, undefined ChatBubble).
- *     This is the complete, compiling file.
+ * ⚡ v17 deltas (phone only — nothing else changed):
+ *   · ONE SCREEN — tabs, the Faces roster, the reply strip, and the
+ *     search/play micro-widgets are gone. The phone is just the
+ *     conversation, top to bottom, like a real messenger.
+ *   · REAL-TIME FEEL — every bubble animates with a pure CSS keyframe
+ *     (my messages slide in from the right, Ava's from the left).
+ *     No Framer springs, no AnimatePresence, no layout recalcs — the
+ *     compositor drives it, so it never drops a frame.
+ *   · SMOOTH AUTO-SCROLL — the transcript pins to the bottom via a
+ *     single rAF tween (easeOutCubic, ~320ms). One read, one write
+ *     per frame, no scrollHeight thrash.
+ *   · TYPING INDICATOR — CSS keyframes, three dots, sits on the
+ *     sender's side of the thread.
+ *   · HD IMAGERY — kept from v16 (faces 1200px/q95, scenes 2400px/q95).
+ *   · READABLE TYPE — kept from v16 (#F0E4CC on obsidian, amber accents,
+ *     Plus Jakarta Sans body + Instrument Serif italics).
  *
- * Earlier: no blur on Reveal · HD images · 144 Hz springs · mobile safe areas.
+ * Earlier: v16 HD imagery + readable type + perf pass, v15 living
+ * transcript, v14 no-blur Reveal, 144 Hz springs, mobile safe areas.
  *
  * ROUTES PRESERVED   /login  /register  /downloads/orbital.apk
  */
@@ -57,7 +59,6 @@ import {
   Check,
   CheckCheck,
   ChevronLeft,
-  CornerUpLeft,
   Crown,
   Fingerprint,
   LockKeyhole,
@@ -66,9 +67,7 @@ import {
   MoreVertical,
   Paperclip,
   Phone,
-  Play,
   Plus,
-  Search,
   Send,
   ShieldCheck,
   Smile,
@@ -78,11 +77,11 @@ import {
 } from "lucide-react";
 
 /* ═══════════════════════════════════════════════════════════
-   IMAGE MANIFEST
+   IMAGE MANIFEST — HD pass
    ═══════════════════════════════════════════════════════════ */
 
-const u = (id: string, w: number, q = 92) =>
-  `https://images.unsplash.com/photo-${id}?w=${w}&q=${q}&auto=format&fit=crop`;
+const u = (id: string, w: number, q = 95) =>
+  `https://images.unsplash.com/photo-${id}?w=${w}&q=${q}&auto=format&fit=crop&fm=jpg`;
 
 const FACE_IDS = {
   ava:    "1534528741775-53994a69daeb",
@@ -124,13 +123,13 @@ function toUrls<T extends Record<string, string>>(
   return out as { [K in keyof T]: string };
 }
 
-const FACE = toUrls(FACE_IDS, 1024, 92);
-const SCENE = toUrls(SCENE_IDS, 1600, 90);
+const FACE = toUrls(FACE_IDS, 1200, 95);
+const SCENE = toUrls(SCENE_IDS, 2400, 95);
 
 const GALLERY: string[] = [
   ...Object.values(FACE_IDS),
   ...Object.values(SCENE_IDS),
-].map((id) => u(id, 1600, 90));
+].map((id) => u(id, 2000, 95));
 
 /* ═══════════════════════════════════════════════════════════
    CONFIGURATION
@@ -1217,7 +1216,7 @@ function makeCardMaterial(
     depthWrite: false,
     fog: false,
   });
-  mat.customProgramCacheKey = () => "orbital-card-v15";
+  mat.customProgramCacheKey = () => "orbital-card-v17";
   mat.onBeforeCompile = (shader) => {
     Object.assign(shader.uniforms, uniforms);
     shader.vertexShader = shader.vertexShader
@@ -1259,7 +1258,7 @@ function makeCardMaterial(
           float dcam = distance(cameraPosition, vCW);
           float fade = smoothstep(1.1, 3.6, dcam) * (1.0 - smoothstep(30.0, 54.0, dcam));
           vec3 grade = mix(vec3(1.06, 0.95, 0.84), vec3(0.86, 0.95, 1.08), uTint);
-          vec3 col = texel.rgb * grade * 0.86;
+          vec3 col = texel.rgb * grade * 0.94;
           col += vec3(0.78, 0.53, 0.23) * rim * 0.45;
           diffuseColor = vec4(col, edge * fade * uAppear);
         `,
@@ -1977,35 +1976,24 @@ function PhoneMockup({
 }
 
 /* ═══════════════════════════════════════════════════════════
-   PHONE UI — tabs: Chats / Faces
+   PHONE UI — one screen, one conversation
    ═══════════════════════════════════════════════════════════ */
-
-type TabKey = "chats" | "faces";
-
-const TAB_ITEMS: {
-  key: TabKey;
-  label: string;
-  icon: React.ComponentType<{ size?: number | string; className?: string }>;
-}[] = [
-  { key: "chats", label: "Chats", icon: MessageCircle },
-  { key: "faces", label: "Faces", icon: Sparkles },
-];
 
 function StatusBar() {
   return (
-    <div className="absolute inset-x-0 top-0 z-30 flex items-center justify-between px-6 pt-2.5 text-[10px] font-semibold tabular-nums tracking-tight text-[#E5D6B8]">
+    <div className="absolute inset-x-0 top-0 z-30 flex items-center justify-between px-6 pt-2.5 text-[10px] font-semibold tabular-nums tracking-tight text-[#F0E4CC]">
       <span className="ml-1">9:41</span>
       <div className="flex items-center gap-1.5">
         <div className="flex items-end gap-[2px]">
-          <span className="block h-1 w-[2px] rounded-sm bg-[#E5D6B8]" />
-          <span className="block h-1.5 w-[2px] rounded-sm bg-[#E5D6B8]" />
-          <span className="block h-2 w-[2px] rounded-sm bg-[#E5D6B8]" />
-          <span className="block h-2.5 w-[2px] rounded-sm bg-[#E5D6B8]/40" />
+          <span className="block h-1 w-[2px] rounded-sm bg-[#F0E4CC]" />
+          <span className="block h-1.5 w-[2px] rounded-sm bg-[#F0E4CC]" />
+          <span className="block h-2 w-[2px] rounded-sm bg-[#F0E4CC]" />
+          <span className="block h-2.5 w-[2px] rounded-sm bg-[#F0E4CC]/55" />
         </div>
-        <Wifi size={9} className="text-[#E5D6B8]" />
+        <Wifi size={9} className="text-[#F0E4CC]" />
         <span className="text-[8px]">5G</span>
-        <div className="flex h-2.5 w-5 items-center rounded-[3px] border border-[#E5D6B8]/50 px-[1px] py-[1px]">
-          <div className="h-full w-[78%] rounded-[1px] bg-[#E5D6B8]" />
+        <div className="flex h-2.5 w-5 items-center rounded-[3px] border border-[#F0E4CC]/60 px-[1px] py-[1px]">
+          <div className="h-full w-[78%] rounded-[1px] bg-[#F0E4CC]" />
         </div>
       </div>
     </div>
@@ -2013,11 +2001,7 @@ function StatusBar() {
 }
 
 /* ═══════════════════════════════════════════════════════════
-   CHAT SCRIPT — a living, never-ending two-person conversation.
-   Each line carries its own `hold` (how long it sits before the
-   next arrives) and `typing` (how long "typing…" shows first).
-   Timing is asymmetric on purpose: short replies land fast,
-   longer ones linger — so it reads like real people texting.
+   CHAT SCRIPT — living, never-ending conversation.
    ═══════════════════════════════════════════════════════════ */
 
 type ChatFrom = "ava" | "me";
@@ -2032,90 +2016,134 @@ type ChatLine = {
 };
 
 const CHAT_SCRIPT: ChatLine[] = [
-  { from: "ava", text: "hey, you land okay?",                                       hold: 1500, typing: 900 },
-  { from: "me",  text: "yeah, just got to the hotel",                               hold: 1200, typing: 700 },
-  { from: "ava", text: "how was the flight?",                                       hold: 1500, typing: 800 },
-  { from: "me",  text: "long. watched two films back to back",                      hold: 1400, typing: 1100 },
-  { from: "ava", text: "which ones?",                                               hold: 1300, typing: 600 },
-  { from: "me",  text: "the new Villeneuve, and that French film you told me about", hold: 1800, typing: 1400 },
-  { from: "ava", text: "wait, you actually watched it 🥹",                          hold: 1600, typing: 900 },
-  { from: "me",  text: "it was gorgeous. you were right",                           hold: 1400, typing: 1000 },
-  { from: "ava", text: "i'm never wrong about films",                               hold: 1500, typing: 800 },
-  { from: "me",  text: "true. i'm taking notes",                                    hold: 1300, typing: 750 },
-  { from: "ava", text: "how long are you there for?",                               hold: 1500, typing: 800 },
-  { from: "me",  text: "through sunday. come out?",                                 hold: 1400, typing: 900 },
-  { from: "ava", text: "is that an invitation?",                                    hold: 1500, typing: 850 },
-  { from: "me",  text: "obviously",                                                 hold: 1100, typing: 600 },
-  { from: "ava", text: "let me check flights",                                      hold: 1500, typing: 900 },
-  { from: "me",  text: "i'll book dinner",                                          hold: 1600, typing: 800 },
-  { from: "ava", text: "you always pick the good places",                           hold: 1500, typing: 950 },
-  { from: "me",  text: "that's the whole point",                                    hold: 1400, typing: 800 },
-  { from: "ava", text: "what time should i get in?",                                hold: 1500, typing: 900 },
-  { from: "me",  text: "late. i'll wait up",                                        hold: 1600, typing: 850 },
-  { from: "ava", text: "okay 🫶",                                                   hold: 1700, typing: 700 },
-  { from: "me",  text: "text me when you're boarding",                              hold: 1500, typing: 900 },
-  { from: "ava", text: "i will. go sleep",                                          hold: 1500, typing: 750 },
-  { from: "me",  text: "Designed and Created by MAYANK",                                            hold: 2200, typing: 800 },
+  { from: "ava", text: "hey, you land okay?",                                        hold: 1100, typing: 700 },
+  { from: "me",  text: "yeah, just got to the hotel",                                hold: 900,  typing: 550 },
+  { from: "ava", text: "how was the flight?",                                        hold: 1100, typing: 600 },
+  { from: "me",  text: "long. watched two films back to back",                       hold: 1050, typing: 850 },
+  { from: "ava", text: "which ones?",                                                hold: 950,  typing: 500 },
+  { from: "me",  text: "the new Villeneuve, and that French film you told me about", hold: 1350, typing: 1100 },
+  { from: "ava", text: "wait, you actually watched it 🥹",                           hold: 1200, typing: 700 },
+  { from: "me",  text: "it was gorgeous. you were right",                            hold: 1050, typing: 800 },
+  { from: "ava", text: "i'm never wrong about films",                                hold: 1100, typing: 650 },
+  { from: "me",  text: "true. i'm taking notes",                                     hold: 1000, typing: 600 },
+  { from: "ava", text: "how long are you there for?",                                hold: 1100, typing: 650 },
+  { from: "me",  text: "through sunday. come out?",                                  hold: 1050, typing: 700 },
+  { from: "ava", text: "is that an invitation?",                                     hold: 1100, typing: 650 },
+  { from: "me",  text: "obviously",                                                  hold: 850,  typing: 500 },
+  { from: "ava", text: "let me check flights",                                       hold: 1100, typing: 700 },
+  { from: "me",  text: "i'll book dinner",                                           hold: 1200, typing: 650 },
+  { from: "ava", text: "you always pick the good places",                            hold: 1100, typing: 750 },
+  { from: "me",  text: "that's the whole point",                                     hold: 1050, typing: 650 },
+  { from: "ava", text: "what time should i get in?",                                 hold: 1100, typing: 700 },
+  { from: "me",  text: "late. i'll wait up",                                         hold: 1200, typing: 650 },
+  { from: "ava", text: "okay 🫶",                                                    hold: 1300, typing: 550 },
+  { from: "me",  text: "text me when you're boarding",                               hold: 1100, typing: 700 },
+  { from: "ava", text: "i will. go sleep",                                           hold: 1100, typing: 600 },
+  { from: "me",  text: "Designed and Created by MAYANK",                             hold: 1800, typing: 650 },
 ];
 
 /** ⚡ how many bubbles stay mounted — older ones scroll off naturally */
 const CHAT_VISIBLE = 11;
 
-/** ⚡ the last line Ava says — used for the reply preview strip */
-const LAST_AVA_TEXT =
-  [...CHAT_SCRIPT].reverse().find((l) => l.from === "ava")?.text ?? "";
+/* ═══════════════════════════════════════════════════════════
+   CHAT BUBBLE — pure CSS entrance, no JS spring per bubble.
+   Memoized so only new bubbles mount while the loop runs.
+   ═══════════════════════════════════════════════════════════ */
 
-/** ⚡ one bubble. Incoming = Ava (left, glass). Outgoing = me
- *  (right, amber gradient). */
-function ChatBubble({ line }: { line: ChatLine }) {
+const ChatBubble = memo(function ChatBubble({ line }: { line: ChatLine }) {
   const mine = line.from === "me";
+
+  if (mine) {
+    return (
+      <div className="orbital-bubble-me flex w-full justify-end">
+        <div className="flex max-w-[82%] flex-col items-end">
+          <div className="rounded-[18px] rounded-br-[5px] bg-gradient-to-br from-[#D69340] to-[#A46E2C] px-3.5 py-2 text-[12px] font-medium leading-[1.45] text-[#1A1105] shadow-[0_4px_14px_-8px_rgba(200,136,58,0.85)]">
+            {line.text}
+          </div>
+          <div className="mt-0.5 flex items-center gap-1 pr-1.5">
+            <span className="text-[8px] tabular-nums text-[#F0E4CC]/45">9:41</span>
+            <CheckCheck size={10} className="text-amber-300" />
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
-    <motion.div
-      layout="position"
-      initial={{ opacity: 0, y: 10, scale: 0.94 }}
-      animate={{ opacity: 1, y: 0, scale: 1 }}
-      transition={UI_SPRING}
-      style={{ willChange: "transform, opacity" }}
-      className={mine ? "flex flex-col items-end" : "flex items-start gap-2"}
-    >
-      {!mine && (
-        <img
-          src={FACE.ava}
-          alt=""
-          className="mt-0.5 h-5 w-5 shrink-0 rounded-full object-cover ring-1 ring-white/10"
-          loading="lazy"
-          decoding="async"
-        />
-      )}
-      <div className={mine ? "flex flex-col items-end" : ""}>
-        <div
-          className={
-            mine
-              ? "max-w-[82%] rounded-[14px] rounded-br-[4px] bg-gradient-to-br from-[#C8883A] to-[#9E6A2A] px-3 py-2 text-[10.5px] font-medium leading-[1.5] text-[#1A1105]"
-              : "max-w-[220px] rounded-[14px] rounded-bl-[4px] border border-white/[0.06] bg-white/[0.055] px-3 py-2 text-[10.5px] leading-[1.5] text-[#E5D6B8]/90"
-          }
-        >
+    <div className="orbital-bubble-ava flex w-full items-end gap-2">
+      <img
+        src={FACE.ava}
+        alt=""
+        className="mb-4 h-6 w-6 shrink-0 rounded-full object-cover ring-1 ring-white/15"
+        loading="lazy"
+        decoding="async"
+      />
+      <div className="flex max-w-[78%] flex-col items-start">
+        <div className="rounded-[18px] rounded-bl-[5px] border border-white/[0.10] bg-white/[0.075] px-3.5 py-2 text-[12px] leading-[1.45] text-[#F0E4CC]">
           {line.text}
         </div>
-        {mine && (
-          <div className="mt-1 flex items-center gap-1 pr-1">
-            <CheckCheck size={9} className="text-amber-400" />
-          </div>
-        )}
+        <div className="mt-0.5 pl-1.5">
+          <span className="text-[8px] tabular-nums text-[#F0E4CC]/45">9:41</span>
+        </div>
       </div>
-    </motion.div>
+    </div>
+  );
+});
+
+/* ═══════════════════════════════════════════════════════════
+   TYPING INDICATOR — CSS keyframes, sits on the sender's side.
+   ═══════════════════════════════════════════════════════════ */
+
+function TypingIndicator({ from }: { from: ChatFrom }) {
+  const mine = from === "me";
+
+  const bubble = (
+    <div className="flex items-center gap-1 rounded-[18px] border border-white/[0.10] bg-white/[0.075] px-3 py-2.5">
+      {[0, 1, 2].map((i) => (
+        <span
+          key={i}
+          className="orbital-typing-dot h-1.5 w-1.5 rounded-full bg-[#F0E4CC]/85"
+          style={{ animationDelay: `${i * 0.15}s` }}
+        />
+      ))}
+    </div>
+  );
+
+  if (mine) {
+    return (
+      <div className="orbital-typing flex w-full justify-end">
+        {bubble}
+      </div>
+    );
+  }
+
+  return (
+    <div className="orbital-typing flex w-full items-end gap-2">
+      <img
+        src={FACE.ava}
+        alt=""
+        className="mb-0.5 h-6 w-6 shrink-0 rounded-full object-cover ring-1 ring-white/15"
+        loading="lazy"
+        decoding="async"
+      />
+      {bubble}
+    </div>
   );
 }
 
-/* ── Panel: Chats — a living, never-ending conversation ── */
+/* ═══════════════════════════════════════════════════════════
+   PANEL — the conversation, full screen. No tabs, no reply strip.
+   ═══════════════════════════════════════════════════════════ */
 
-function PanelChats() {
+function PhoneChat() {
   const [count, setCount] = useState(0);
   const [typing, setTyping] = useState<ChatFrom | null>(null);
   const listRef = useRef<HTMLDivElement>(null);
+  const scrollRaf = useRef(0);
   const reduce = useReducedMotion();
 
-  // ⚡ the engine: show typing → land message → hold → next. Loops forever.
+  /* ⚡ the engine: typing → land → hold → next. Loops forever.
+     All pure setTimeout, zero animation frames spent on scheduling. */
   useEffect(() => {
     if (reduce) {
       setCount(CHAT_VISIBLE);
@@ -2128,7 +2156,6 @@ function PanelChats() {
       if (cancelled) return;
       const line = CHAT_SCRIPT[i % CHAT_SCRIPT.length];
 
-      // show "typing…" on the right side, then commit the message
       timers.push(
         window.setTimeout(() => {
           if (!cancelled) setTyping(line.from);
@@ -2140,15 +2167,12 @@ function PanelChats() {
           if (cancelled) return;
           setTyping(null);
           setCount((c) => Math.min(c + 1, i + 1));
-          timers.push(
-            window.setTimeout(() => step(i + 1), line.hold),
-          );
+          timers.push(window.setTimeout(() => step(i + 1), line.hold));
         }, line.typing),
       );
     };
 
-    // kick off after a beat so the phone has settled on screen
-    timers.push(window.setTimeout(() => step(0), 600));
+    timers.push(window.setTimeout(() => step(0), 400));
 
     return () => {
       cancelled = true;
@@ -2156,8 +2180,7 @@ function PanelChats() {
     };
   }, [reduce]);
 
-  // ⚡ only the last CHAT_VISIBLE bubbles stay mounted — older ones
-  // fall off the top edge and the mask fades them out.
+  /* ⚡ only the last CHAT_VISIBLE bubbles stay mounted. */
   const start = Math.max(0, count - CHAT_VISIBLE);
   const visible = useMemo(() => {
     const out: { line: ChatLine; key: number }[] = [];
@@ -2167,22 +2190,49 @@ function PanelChats() {
     return out;
   }, [start, count]);
 
-  // ⚡ pin to the bottom whenever the transcript changes
+  /* ⚡ rAF-tweened scroll — reads once, writes once per frame, easeOutCubic. */
   useEffect(() => {
     const el = listRef.current;
     if (!el) return;
-    el.scrollTop = el.scrollHeight;
-  }, [visible.length, typing]);
+    if (scrollRaf.current) cancelAnimationFrame(scrollRaf.current);
+
+    const target = el.scrollHeight - el.clientHeight;
+    const from = el.scrollTop;
+    const dist = target - from;
+
+    if (Math.abs(dist) < 1) return;
+
+    if (reduce) {
+      el.scrollTop = target;
+      return;
+    }
+
+    const dur = 320;
+    const t0 = performance.now();
+    const tick = (now: number) => {
+      const t = Math.min(1, (now - t0) / dur);
+      const e = 1 - Math.pow(1 - t, 3);
+      el.scrollTop = from + dist * e;
+      if (t < 1) scrollRaf.current = requestAnimationFrame(tick);
+    };
+    scrollRaf.current = requestAnimationFrame(tick);
+
+    return () => {
+      if (scrollRaf.current) cancelAnimationFrame(scrollRaf.current);
+    };
+  }, [visible.length, typing, reduce]);
 
   return (
     <div className="relative flex h-full w-full flex-col bg-[#08080B]">
-      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_50%_-10%,rgba(200,136,58,0.16),transparent_58%)]" />
+      {/* ambient amber wash */}
+      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_50%_-8%,rgba(200,136,58,0.16),transparent_56%)]" />
 
       <StatusBar />
 
+      {/* ── header ── */}
       <div className="relative z-10 flex items-center gap-2.5 px-4 pb-2.5 pt-12">
-        <ChevronLeft size={14} className="text-amber-400" />
-        <div className="relative flex h-9 w-9 overflow-hidden rounded-full ring-1 ring-amber-400/25">
+        <ChevronLeft size={15} className="text-amber-300" />
+        <div className="relative flex h-10 w-10 overflow-hidden rounded-full ring-1 ring-amber-300/35">
           <img
             src={FACE.ava}
             alt=""
@@ -2190,437 +2240,114 @@ function PanelChats() {
             loading="eager"
             decoding="async"
           />
-          <span className="absolute -bottom-[1px] -right-[1px] h-2.5 w-2.5 rounded-full border-2 border-[#08080B] bg-emerald-400" />
+          <span className="absolute -bottom-[1px] -right-[1px] h-3 w-3 rounded-full border-2 border-[#08080B] bg-emerald-400" />
         </div>
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-1">
-            <p className="truncate text-[11.5px] font-medium text-[#E5D6B8]">
+            <p className="truncate text-[12.5px] font-semibold text-[#F0E4CC]">
               Ava Chen
             </p>
-            <Crown size={9} className="text-amber-400" />
+            <Crown size={10} className="text-amber-300" />
           </div>
           <div className="mt-[1px] flex items-center gap-1.5">
-            <span className="text-[8.5px] text-emerald-300/90">
-              {typing === "ava" ? "typing…" : "Active"}
+            <span className="text-[9px] text-emerald-300">
+              {typing === "ava" ? "typing…" : "Active now"}
             </span>
-            <span className="text-[8.5px] text-[#E5D6B8]/25">·</span>
-            <LockKeyhole size={7} className="text-[#E5D6B8]/35" />
-            <span className="text-[8.5px] text-[#E5D6B8]/35">E2E</span>
+          
           </div>
         </div>
         <button
           aria-label="Video"
-          className="flex h-7 w-7 items-center justify-center rounded-full bg-white/[0.06]"
+          className="flex h-8 w-8 items-center justify-center rounded-full bg-white/[0.08]"
         >
-          <Video size={11} className="text-[#E5D6B8]/70" />
+          <Video size={13} className="text-[#F0E4CC]/85" />
         </button>
         <button
           aria-label="Voice"
-          className="flex h-7 w-7 items-center justify-center rounded-full bg-white/[0.06]"
+          className="flex h-8 w-8 items-center justify-center rounded-full bg-white/[0.08]"
         >
-          <Phone size={11} className="text-[#E5D6B8]/70" />
+          <Phone size={12} className="text-[#F0E4CC]/85" />
         </button>
         <button
           aria-label="More"
-          className="flex h-7 w-7 items-center justify-center rounded-full bg-white/[0.06]"
+          className="flex h-8 w-8 items-center justify-center rounded-full bg-white/[0.08]"
         >
-          <MoreVertical size={11} className="text-[#E5D6B8]/70" />
+          <MoreVertical size={13} className="text-[#F0E4CC]/85" />
         </button>
       </div>
 
-      <div className="mx-4 h-px bg-white/[0.05]" />
+      <div className="mx-4 h-px bg-white/[0.06]" />
 
-      <div className="relative z-10 flex items-center gap-2 border-b border-white/[0.04] px-3 py-2">
-        <span className="shrink-0 text-[8px] uppercase tracking-[0.18em] text-[#E5D6B8]/35">
-          Live
-        </span>
-        <div className="flex items-center gap-1.5 overflow-hidden">
-          {[FACE.john, FACE.anita, FACE.finn, FACE.sienna, FACE.sam, FACE.iris].map(
-            (src, i) => (
-              <div key={i} className="relative shrink-0">
-                <img
-                  src={src}
-                  alt=""
-                  className="h-6 w-6 rounded-full object-cover ring-1 ring-white/10"
-                  loading="lazy"
-                  decoding="async"
-                />
-                <span className="absolute -bottom-[1px] -right-[1px] h-1.5 w-1.5 rounded-full border border-[#08080B] bg-emerald-400" />
-              </div>
-            ),
-          )}
+      {/* ── transcript ── */}
+      <div className="relative min-h-0 flex-1">
+        <div
+          ref={listRef}
+          className="h-full overflow-y-auto overflow-x-hidden px-4 pt-3"
+          style={{
+            scrollbarWidth: "none",
+            msOverflowStyle: "none",
+            contain: "layout paint",
+          }}
+        >
+          <div className="flex justify-center pb-3">
+            <span className="rounded-full bg-white/[0.05] px-2.5 py-[3px] text-[8px] uppercase tracking-[0.16em] tabular-nums text-[#F0E4CC]/60">
+              Today · Encrypted
+            </span>
+          </div>
+
+          <div className="flex flex-col gap-2 pb-3">
+            {visible.map(({ line, key }) => (
+              <ChatBubble key={key} line={line} />
+            ))}
+
+            {typing && <TypingIndicator key={`t-${typing}`} from={typing} />}
+          </div>
         </div>
+
+        {/* soft top fade — plain gradient div, cheaper than mask-image */}
+        <div className="pointer-events-none absolute inset-x-0 top-0 z-20 h-6 bg-gradient-to-b from-[#08080B] via-[#08080B]/70 to-transparent" />
       </div>
 
-      {/* ⚡ scroll container — pins to bottom, masks the top edge so
-          older bubbles fade out as they slide up and away. */}
-      <div
-        ref={listRef}
-        className="relative z-10 flex-1 overflow-y-auto overflow-x-hidden px-4 pt-2.5"
-        style={{
-          scrollbarWidth: "none",
-          msOverflowStyle: "none",
-          maskImage:
-            "linear-gradient(to bottom, transparent 0, black 28px, black calc(100% - 6px), black 100%)",
-          WebkitMaskImage:
-            "linear-gradient(to bottom, transparent 0, black 28px, black calc(100% - 6px), black 100%)",
-        }}
-      >
-        <div className="flex justify-center pb-1">
-          <span className="rounded-full bg-white/[0.04] px-2 py-[2px] text-[7.5px] uppercase tracking-[0.16em] tabular-nums text-[#E5D6B8]/40">
-            Today · Encrypted
-          </span>
-        </div>
-
-        <div className="space-y-2 pb-3">
-          {visible.map(({ line, key }) => (
-            <ChatBubble key={key} line={line} />
-          ))}
-
-          {/* ⚡ typing indicator sits on the side whose message is about to land */}
-          <AnimatePresence initial={false}>
-            {typing && (
-              <motion.div
-                key={`typing-${typing}`}
-                initial={{ opacity: 0, y: 6, scale: 0.94 }}
-                animate={{ opacity: 1, y: 0, scale: 1 }}
-                exit={{ opacity: 0, y: -4, scale: 0.96 }}
-                transition={UI_SPRING}
-                className={
-                  typing === "ava"
-                    ? "flex items-start gap-2"
-                    : "flex items-start justify-end gap-2"
-                }
-              >
-                {typing === "ava" && (
-                  <img
-                    src={FACE.ava}
-                    alt=""
-                    className="h-5 w-5 shrink-0 rounded-full object-cover ring-1 ring-white/10"
-                    loading="lazy"
-                    decoding="async"
-                  />
-                )}
-                <div className="flex items-center gap-1 rounded-full border border-white/[0.06] bg-white/[0.05] px-2.5 py-1.5">
-                  {[0, 1, 2].map((i) => (
-                    <motion.span
-                      key={i}
-                      animate={{ opacity: [0.3, 1, 0.3], y: [0, -1, 0] }}
-                      transition={{
-                        duration: 1.1,
-                        repeat: Infinity,
-                        delay: i * 0.16,
-                        ease: "easeInOut",
-                      }}
-                      className="h-1 w-1 rounded-full bg-[#E5D6B8]/60"
-                    />
-                  ))}
-                </div>
-              </motion.div>
-            )}
-          </AnimatePresence>
-        </div>
-      </div>
-
-      <div className="relative z-10 border-t border-white/[0.05] px-3 pb-6 pt-2.5">
-        <div className="mb-1.5 flex items-center gap-2 rounded-lg border-l-2 border-amber-400 bg-white/[0.03] px-2 py-1">
-          <CornerUpLeft size={9} className="text-amber-400" />
-          <span className="truncate text-[8.5px] text-[#E5D6B8]/50">
-            Replying to Ava · “{LAST_AVA_TEXT}”
-          </span>
-        </div>
+      {/* ── composer ── */}
+      <div className="relative z-10 border-t border-white/[0.06] px-3 pb-6 pt-2.5">
         <div className="flex items-center gap-1.5">
           <button
             aria-label="Add"
-            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-white/[0.06]"
+            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-white/[0.08]"
           >
-            <Plus size={13} className="text-[#E5D6B8]/60" />
+            <Plus size={15} className="text-[#F0E4CC]/80" />
           </button>
-          <div className="flex flex-1 items-center gap-2 rounded-full border border-white/[0.06] bg-white/[0.045] px-3 py-2">
-            <span className="text-[10.5px] text-[#E5D6B8]/35">Message…</span>
-            <div className="ml-auto flex items-center gap-1.5">
-              <Smile size={11} className="text-[#E5D6B8]/35" />
-              <Paperclip size={11} className="text-[#E5D6B8]/35" />
-              <Camera size={11} className="text-[#E5D6B8]/35" />
+          <div className="flex flex-1 items-center gap-2 rounded-full border border-white/[0.08] bg-white/[0.06] px-3.5 py-2.5">
+            <span className="text-[11.5px] text-[#F0E4CC]/45">Message…</span>
+            <div className="ml-auto flex items-center gap-2">
+              <Smile size={13} className="text-[#F0E4CC]/50" />
+              <Paperclip size={13} className="text-[#F0E4CC]/50" />
+              <Camera size={13} className="text-[#F0E4CC]/50" />
             </div>
           </div>
           <button
             aria-label="Send"
-            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-[#C8883A] to-[#9E6A2A]"
+            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-[#D69340] to-[#A46E2C] shadow-[0_4px_14px_-6px_rgba(200,136,58,0.9)]"
           >
-            <Send size={11} className="text-[#1A1105]" />
+            <Send size={12} className="text-[#1A1105]" />
           </button>
         </div>
       </div>
 
-      <div className="pointer-events-none absolute bottom-1.5 left-1/2 z-30 h-[3px] w-20 -translate-x-1/2 rounded-full bg-[#E5D6B8]/40" />
+      {/* home indicator */}
+      <div className="pointer-events-none absolute bottom-1.5 left-1/2 z-30 h-[3px] w-20 -translate-x-1/2 rounded-full bg-[#F0E4CC]/55" />
     </div>
   );
 }
 
-/* ── Panel: Faces ── */
+/* ═══════════════════════════════════════════════════════════
+   Legacy names kept so nothing upstream breaks.
+   ═══════════════════════════════════════════════════════════ */
 
-const FACES_GRID = [
-  { img: FACE.ava,  name: "Ava Chen",  tag: "Runway" },
-  { img: FACE.iris, name: "Iris D.",   tag: "Editorial" },
-  { img: FACE.lyra, name: "Lyra Voss", tag: "Couture" },
-  { img: FACE.nova, name: "Nova O.",   tag: "Campaign" },
-];
-
-const TILT_SPRING = { stiffness: UI_SPRING.stiffness, damping: UI_SPRING.damping };
-
-function TiltCard({
-  children,
-  className = "",
-  delay = 0,
-}: {
-  children: React.ReactNode;
-  className?: string;
-  delay?: number;
-}) {
-  const ref = useRef<HTMLDivElement>(null);
-  const rx = useSpring(useMotionValue(0), TILT_SPRING);
-  const ry = useSpring(useMotionValue(0), TILT_SPRING);
-  const onMove = (e: React.MouseEvent<HTMLDivElement>) => {
-    const el = ref.current;
-    if (!el) return;
-    const r = el.getBoundingClientRect();
-    const px = (e.clientX - r.left) / r.width - 0.5;
-    const py = (e.clientY - r.top) / r.height - 0.5;
-    ry.set(clampN(px, -0.5, 0.5) * 6);
-    rx.set(clampN(py, -0.5, 0.5) * -4);
-  };
-  const onLeave = () => {
-    rx.set(0);
-    ry.set(0);
-  };
-  return (
-    <motion.div
-      initial={{ opacity: 0, y: 10 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ ...UI_SPRING, delay }}
-    >
-      <motion.div
-        ref={ref}
-        onMouseMove={onMove}
-        onMouseLeave={onLeave}
-        style={{ rotateX: rx, rotateY: ry, transformPerspective: 700 }}
-        className={className}
-      >
-        {children}
-      </motion.div>
-    </motion.div>
-  );
-}
-
-function PanelFaces() {
-  return (
-    <div className="relative flex h-full w-full flex-col bg-[#08080B]">
-      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_20%_-10%,rgba(200,136,58,0.14),transparent_60%)]" />
-      <StatusBar />
-
-      <div className="relative z-10 px-4 pb-2 pt-12">
-        <div className="flex items-center justify-between">
-          <div>
-            <p className="text-[8.5px] uppercase tracking-[0.24em] text-amber-400/90">
-              Faces
-            </p>
-            <h3 className="mt-1 text-[15px] font-medium text-[#E5D6B8]">
-              The roster
-            </h3>
-          </div>
-          <button
-            aria-label="Search"
-            className="flex h-7 w-7 items-center justify-center rounded-full bg-white/[0.06]"
-          >
-            <Search size={11} className="text-[#E5D6B8]/70" />
-          </button>
-        </div>
-
-        <div className="mt-3 flex gap-1.5 overflow-hidden">
-          {["All", "Runway", "Editorial", "Couture"].map((label, i) => (
-            <span
-              key={label}
-              className={`whitespace-nowrap rounded-full px-2.5 py-1 text-[9.5px] ${
-                i === 0
-                  ? "bg-amber-400 font-semibold text-[#1A1105]"
-                  : "border border-white/[0.08] bg-white/[0.03] text-[#E5D6B8]/70"
-              }`}
-            >
-              {label}
-            </span>
-          ))}
-        </div>
-      </div>
-
-      <div className="relative z-10 flex-1 overflow-hidden px-3 pt-1">
-        <TiltCard
-          delay={0.04}
-          className="relative overflow-hidden rounded-[16px] border border-white/[0.08]"
-        >
-          <img
-            src={SCENE.group1}
-            alt=""
-            className="aspect-[16/9] w-full object-cover object-center"
-            loading="lazy"
-            decoding="async"
-          />
-          <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/25 to-transparent" />
-          <div className="absolute inset-x-0 bottom-0 flex items-end justify-between p-2.5">
-            <div className="min-w-0">
-              <p className="truncate text-[10px] font-semibold text-[#E5D6B8]">
-                The whole circle
-              </p>
-              <p className="text-[8.5px] uppercase tracking-[0.16em] tabular-nums text-amber-300/85">
-                12 members · online
-              </p>
-            </div>
-            <div className="flex -space-x-1.5">
-              {[FACE.anita, FACE.taylor, FACE.emery].map((src, i) => (
-                <img
-                  key={i}
-                  src={src}
-                  alt=""
-                  className="h-5 w-5 rounded-full border border-black/60 object-cover"
-                  loading="lazy"
-                  decoding="async"
-                />
-              ))}
-            </div>
-          </div>
-        </TiltCard>
-
-        <div className="mt-2.5 grid grid-cols-2 gap-2">
-          {FACES_GRID.map((face, i) => (
-            <TiltCard
-              key={face.name}
-              delay={0.12 + i * 0.05}
-              className="relative overflow-hidden rounded-[14px] border border-white/[0.07]"
-            >
-              <img
-                src={face.img}
-                alt=""
-                className="aspect-[3/4] w-full object-cover object-top"
-                loading="lazy"
-                decoding="async"
-              />
-              <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/10 to-transparent" />
-              <div className="absolute inset-x-0 bottom-0 flex items-end justify-between p-2">
-                <div className="min-w-0">
-                  <p className="truncate text-[9.5px] font-semibold text-[#E5D6B8]">
-                    {face.name}
-                  </p>
-                  <p className="text-[8.5px] uppercase tracking-[0.16em] text-amber-300/85">
-                    {face.tag}
-                  </p>
-                </div>
-                <span className="flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-amber-400">
-                  <Check size={8} className="text-[#1A1105]" />
-                </span>
-              </div>
-            </TiltCard>
-          ))}
-        </div>
-
-        <div className="mt-2.5 flex items-center gap-2 rounded-[14px] border border-white/[0.08] bg-white/[0.03] px-2.5 py-2">
-          <div className="relative h-9 w-9 shrink-0 overflow-hidden rounded-[10px]">
-            <img
-              src={SCENE.manChat}
-              alt=""
-              className="h-full w-full object-cover"
-              loading="lazy"
-              decoding="async"
-            />
-            <span className="absolute -bottom-[1px] -right-[1px] h-2 w-2 rounded-full border border-black bg-emerald-400" />
-          </div>
-          <div className="min-w-0 flex-1">
-            <p className="truncate text-[10px] font-medium text-[#E5D6B8]">
-              John left a voice note
-            </p>
-            <p className="truncate text-[8.5px] text-[#E5D6B8]/45">
-              “Call me when you land”
-            </p>
-          </div>
-          <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-amber-400">
-            <Play size={10} className="text-[#1A1105]" fill="currentColor" />
-          </span>
-        </div>
-      </div>
-
-      <div className="pointer-events-none absolute bottom-1.5 left-1/2 z-30 h-[3px] w-20 -translate-x-1/2 rounded-full bg-[#E5D6B8]/40" />
-    </div>
-  );
-}
-
-/* ── Tabbed shell — two tabs ── */
+const PanelChats = PhoneChat;
 
 function TabbedPhoneUI() {
-  const [tab, setTab] = useState<TabKey>("chats");
-  const reduce = useReducedMotion();
-
-  return (
-    <div className="relative flex h-full w-full flex-col bg-[#08080B]">
-      <div className="relative flex-1 overflow-hidden">
-        <AnimatePresence initial={false}>
-          <motion.div
-            key={tab}
-            initial={reduce ? false : { opacity: 0 }}
-            animate={{
-              opacity: 1,
-              transition: { duration: 0.22, ease: "easeOut" },
-            }}
-            exit={
-              reduce
-                ? undefined
-                : { opacity: 0, transition: { duration: 0.22, ease: "easeOut" } }
-            }
-            className="absolute inset-0 bg-[#08080B]"
-            style={{ willChange: "opacity" }}
-          >
-            {tab === "chats" && <PanelChats />}
-            {tab === "faces" && <PanelFaces />}
-          </motion.div>
-        </AnimatePresence>
-      </div>
-
-      <div className="relative z-30 border-t border-white/[0.06] bg-[#0A0A0E]/95 backdrop-blur-md">
-        <div className="flex items-center justify-around px-2 pb-5 pt-2">
-          {TAB_ITEMS.map(({ key, label, icon: Icon }) => {
-            const active = tab === key;
-            return (
-              <button
-                key={key}
-                onClick={() => setTab(key)}
-                aria-label={label}
-                className="relative flex flex-1 flex-col items-center gap-1 rounded-lg py-1.5"
-              >
-                <span className="relative flex h-6 w-6 items-center justify-center">
-                  <Icon
-                    size={16}
-                    className={active ? "text-amber-400" : "text-[#E5D6B8]/45"}
-                  />
-                  {active && (
-                    <motion.span
-                      layoutId="tab-glow"
-                      className="absolute inset-0 -z-10 rounded-full bg-amber-400/15"
-                      transition={UI_SPRING}
-                    />
-                  )}
-                </span>
-                <span
-                  className={`text-[9px] font-medium tracking-tight ${
-                    active ? "text-amber-300" : "text-[#E5D6B8]/45"
-                  }`}
-                >
-                  {label}
-                </span>
-              </button>
-            );
-          })}
-        </div>
-      </div>
-    </div>
-  );
+  return <PhoneChat />;
 }
 
 /* ═══════════════════════════════════════════════════════════
@@ -2654,8 +2381,8 @@ function ScrollRail() {
             <span
               className={`pointer-events-none text-right text-[10px] uppercase tracking-[0.24em] transition-all duration-500 ${
                 active === i
-                  ? "translate-x-0 text-amber-300 opacity-100"
-                  : "translate-x-3 text-stone-500 opacity-0 group-hover:translate-x-0 group-hover:opacity-70"
+                  ? "translate-x-0 text-amber-200 opacity-100"
+                  : "translate-x-3 text-stone-300 opacity-0 group-hover:translate-x-0 group-hover:opacity-90"
               }`}
             >
               {label}
@@ -2673,8 +2400,8 @@ function ScrollRail() {
               <span
                 className={`block rounded-full transition-all duration-500 ${
                   active === i
-                    ? "h-2.5 w-2.5 bg-[#C8883A] shadow-[0_0_10px_#C8883A]"
-                    : "h-1.5 w-1.5 bg-[#3A3A3A] group-hover:bg-stone-400"
+                    ? "h-2.5 w-2.5 bg-[#C8883A] shadow-[0_0_12px_#C8883A]"
+                    : "h-1.5 w-1.5 bg-[#555] group-hover:bg-stone-300"
                 }`}
               />
             </a>
@@ -2743,7 +2470,7 @@ const GhostButton = memo(function GhostButton({
   href?: string;
 }) {
   const cls =
-    "group inline-flex items-center gap-2 rounded-full border border-white/10 px-6 py-3.5 text-[13.5px] text-stone-300 transition-all duration-300 hover:border-white/25 hover:bg-white/[0.04] hover:text-white";
+    "group inline-flex items-center gap-2 rounded-full border border-white/20 bg-white/[0.02] px-6 py-3.5 text-[13.5px] text-stone-100 transition-all duration-300 hover:border-white/35 hover:bg-white/[0.06] hover:text-white";
   const content = (
     <>
       {children}
@@ -2769,8 +2496,8 @@ const GhostButton = memo(function GhostButton({
 
 function Eyebrow({ children }: { children: React.ReactNode }) {
   return (
-    <div className="mb-6 inline-flex items-center gap-3 text-[10px] font-medium uppercase tracking-[0.28em] text-amber-400/90">
-      <span className="h-px w-8 bg-gradient-to-r from-transparent to-amber-500/80" />
+    <div className="mb-6 inline-flex items-center gap-3 text-[10px] font-medium uppercase tracking-[0.28em] text-amber-300">
+      <span className="h-px w-8 bg-gradient-to-r from-transparent to-amber-400" />
       {children}
     </div>
   );
@@ -2836,9 +2563,9 @@ function Section({
 
 const SERIF = { fontFamily: '"Instrument Serif", Georgia, serif' } as const;
 const H2 =
-  "text-[clamp(36px,5.2vw,68px)] font-medium leading-[1] tracking-[-0.055em] text-stone-100";
-const ACCENT = "font-normal italic tracking-[-0.03em] text-amber-400";
-const BODY = "mt-7 max-w-[440px] text-[15px] leading-[1.85] text-stone-400";
+  "text-[clamp(36px,5.2vw,68px)] font-medium leading-[1] tracking-[-0.055em] text-white";
+const ACCENT = "font-normal italic tracking-[-0.03em] text-amber-300";
+const BODY = "mt-7 max-w-[440px] text-[15px] leading-[1.85] text-stone-200";
 
 /* ═══════════════════════════════════════════════════════════
    BEAT 0 — ORIGIN
@@ -2874,19 +2601,19 @@ function BeatOrigin({ mobile }: { mobile: boolean }) {
       <div className="relative z-10 grid w-full max-w-[1440px] items-center gap-12 lg:grid-cols-[1fr_0.9fr] lg:gap-20">
         <div className="mx-auto max-w-[640px] text-center lg:mx-0 lg:text-left">
           <Reveal>
-            <div className="mb-8 inline-flex items-center gap-2.5 rounded-full border border-white/[0.09] bg-white/[0.03] px-4 py-2 backdrop-blur-md">
+            <div className="mb-8 inline-flex items-center gap-2.5 rounded-full border border-white/15 bg-white/[0.05] px-4 py-2 backdrop-blur-md">
               <span className="relative flex h-2 w-2">
                 <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-amber-400 opacity-50" />
                 <span className="relative h-2 w-2 rounded-full bg-amber-400" />
               </span>
-              <span className="text-[10px] uppercase tracking-[0.22em] text-stone-300">
+              <span className="text-[10px] uppercase tracking-[0.22em] text-stone-100">
                 A conversation, rebuilt
               </span>
             </div>
           </Reveal>
 
           <Reveal delay={0.06}>
-            <h1 className="text-[clamp(46px,9vw,110px)] font-medium leading-[0.94] tracking-[-0.055em] text-stone-100">
+            <h1 className="text-[clamp(46px,9vw,110px)] font-medium leading-[0.94] tracking-[-0.055em] text-white">
               <Words text="Where it all" />
               <br />
               <span className={ACCENT} style={SERIF}>
@@ -2896,7 +2623,7 @@ function BeatOrigin({ mobile }: { mobile: boolean }) {
           </Reveal>
 
           <Reveal delay={0.12}>
-            <p className="mx-auto mt-8 max-w-[460px] text-[15px] leading-[1.85] text-stone-400 lg:mx-0">
+            <p className="mx-auto mt-8 max-w-[460px] text-[15px] leading-[1.85] text-stone-200 lg:mx-0">
               Every message starts somewhere. Orbital gives it a place built
               only for the people inside it.
             </p>
@@ -2910,17 +2637,17 @@ function BeatOrigin({ mobile }: { mobile: boolean }) {
           </Reveal>
 
           <Reveal delay={0.26}>
-            <div className="mt-12 flex flex-wrap justify-center gap-x-8 gap-y-3 text-[11.5px] text-stone-500 lg:justify-start">
+            <div className="mt-12 flex flex-wrap justify-center gap-x-8 gap-y-3 text-[12px] text-stone-300 lg:justify-start">
               <span className="flex items-center gap-2">
-                <LockKeyhole size={13} className="text-amber-400" />
+                <LockKeyhole size={13} className="text-amber-300" />
                 End-to-end encrypted
               </span>
               <span className="flex items-center gap-2">
-                <ShieldCheck size={13} className="text-amber-400" />
+                <ShieldCheck size={13} className="text-amber-300" />
                 No ads, ever
               </span>
               <span className="flex items-center gap-2">
-                <Video size={13} className="text-amber-400" />
+                <Video size={13} className="text-amber-300" />
                 Voice &amp; video
               </span>
             </div>
@@ -2934,7 +2661,7 @@ function BeatOrigin({ mobile }: { mobile: boolean }) {
               className="pointer-events-none absolute left-1/2 top-1/2 -z-10 h-[140%] w-[140%] -translate-x-1/2 -translate-y-1/2"
               style={{
                 background:
-                  "radial-gradient(circle, rgba(200,136,58,0.22) 0%, rgba(200,136,58,0.06) 35%, transparent 68%)",
+                  "radial-gradient(circle, rgba(200,136,58,0.26) 0%, rgba(200,136,58,0.07) 35%, transparent 68%)",
               }}
             />
             <motion.div
@@ -2959,9 +2686,9 @@ function BeatOrigin({ mobile }: { mobile: boolean }) {
 
 function Filmstrip() {
   const frames = [
-    u(SCENE_IDS.tokyo, 960, 90),
-    u(SCENE_IDS.paris, 960, 90),
-    u(SCENE_IDS.aurora, 960, 90),
+    u(SCENE_IDS.tokyo, 1400, 95),
+    u(SCENE_IDS.paris, 1400, 95),
+    u(SCENE_IDS.aurora, 1400, 95),
   ];
   return (
     <div className="mt-9 flex gap-3">
@@ -2972,7 +2699,7 @@ function Filmstrip() {
           whileInView={{ opacity: 1, y: 0 }}
           viewport={{ once: true, amount: 0.4 }}
           transition={{ ...CINEMATIC_SPRING, delay: 0.08 * i }}
-          className="relative h-[128px] flex-1 overflow-hidden rounded-[14px] border border-white/[0.08]"
+          className="relative h-[128px] flex-1 overflow-hidden rounded-[14px] border border-white/15"
         >
           <img
             src={src}
@@ -2982,7 +2709,7 @@ function Filmstrip() {
             decoding="async"
           />
           <div className="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent" />
-          <span className="absolute bottom-1.5 left-2 text-[8.5px] uppercase tabular-nums tracking-[0.2em] text-[#E5D6B8]/80">
+          <span className="absolute bottom-1.5 left-2 text-[8.5px] uppercase tabular-nums tracking-[0.2em] text-[#F0E4CC]">
             0{i + 1}
           </span>
         </motion.div>
@@ -3021,12 +2748,12 @@ function BeatSignal() {
           ].map((item) => (
             <div
               key={item.label}
-              className="rounded-2xl border border-white/[0.08] bg-white/[0.025] p-4 backdrop-blur-md"
+              className="rounded-2xl border border-white/12 bg-white/[0.04] p-4 backdrop-blur-md"
             >
-              <p className="text-[9.5px] uppercase tracking-[0.2em] text-stone-500">
+              <p className="text-[9.5px] uppercase tracking-[0.2em] text-stone-300">
                 {item.label}
               </p>
-              <p className="mt-2 text-[13px] font-medium text-amber-300">
+              <p className="mt-2 text-[13px] font-semibold text-amber-300">
                 {item.value}
               </p>
             </div>
@@ -3053,28 +2780,28 @@ function BeatVault() {
     >
       <div className="relative z-10 grid w-full max-w-[1440px] items-center gap-14 lg:grid-cols-[0.9fr_1fr] lg:gap-20">
         <Reveal delay={0.06}>
-          <div className="relative overflow-hidden rounded-[28px] border border-white/[0.09] bg-[#0B0A0D]/90 shadow-[0_50px_140px_-70px_rgba(200,136,58,0.45)] backdrop-blur-md">
+          <div className="relative overflow-hidden rounded-[28px] border border-white/15 bg-[#0B0A0D]/92 shadow-[0_50px_140px_-70px_rgba(200,136,58,0.55)] backdrop-blur-md">
             <div className="p-6 sm:p-9">
-              <div className="flex items-center justify-between border-b border-white/[0.08] pb-5">
+              <div className="flex items-center justify-between border-b border-white/[0.10] pb-5">
                 <div className="flex items-center gap-3">
                   <img
                     src={FACE.sienna}
                     alt=""
-                    className="h-11 w-11 rounded-full object-cover ring-1 ring-white/10"
+                    className="h-11 w-11 rounded-full object-cover ring-1 ring-white/15"
                     loading="lazy"
                     decoding="async"
                   />
                   <div>
-                    <p className="text-[10px] uppercase tracking-[0.24em] text-stone-500">
+                    <p className="text-[10px] uppercase tracking-[0.24em] text-stone-300">
                       Secure thread
                     </p>
-                    <p className="mt-1 text-[14px] text-stone-200">
+                    <p className="mt-1 text-[14px] text-stone-100">
                       Sienna Vale
                     </p>
                   </div>
                 </div>
-                <div className="flex h-10 w-10 items-center justify-center rounded-full border border-amber-400/20 bg-amber-400/[0.08]">
-                  <Fingerprint size={17} className="text-amber-400" />
+                <div className="flex h-10 w-10 items-center justify-center rounded-full border border-amber-400/30 bg-amber-400/[0.12]">
+                  <Fingerprint size={17} className="text-amber-300" />
                 </div>
               </div>
 
@@ -3084,7 +2811,7 @@ function BeatVault() {
                   whileInView={{ opacity: 1, scale: 1, x: 0 }}
                   viewport={{ once: true }}
                   transition={UI_SPRING}
-                  className="max-w-[82%] rounded-[20px] rounded-tl-[6px] border border-white/[0.07] bg-white/[0.04] px-4 py-3.5 text-[13.5px] leading-[1.55] text-stone-300"
+                  className="max-w-[82%] rounded-[20px] rounded-tl-[6px] border border-white/[0.10] bg-white/[0.06] px-4 py-3.5 text-[13.5px] leading-[1.55] text-stone-100"
                 >
                   Are we still on for the shoot tomorrow?
                 </motion.div>
@@ -3093,7 +2820,7 @@ function BeatVault() {
                   whileInView={{ opacity: 1, scale: 1, x: 0 }}
                   viewport={{ once: true }}
                   transition={{ ...UI_SPRING, delay: 0.14 }}
-                  className="ml-auto max-w-[82%] rounded-[20px] rounded-tr-[6px] border border-amber-400/20 bg-amber-400/[0.09] px-4 py-3.5 text-[13.5px] leading-[1.55] text-amber-100"
+                  className="ml-auto max-w-[82%] rounded-[20px] rounded-tr-[6px] border border-amber-400/30 bg-amber-400/[0.14] px-4 py-3.5 text-[13.5px] leading-[1.55] text-amber-50"
                 >
                   Wouldn't miss it ✦
                 </motion.div>
@@ -3102,7 +2829,7 @@ function BeatVault() {
                   whileInView={{ opacity: 1, scale: 1, y: 0 }}
                   viewport={{ once: true }}
                   transition={{ ...UI_SPRING, delay: 0.28 }}
-                  className="overflow-hidden rounded-[16px] border border-white/[0.08] bg-white/[0.035]"
+                  className="overflow-hidden rounded-[16px] border border-white/[0.10] bg-white/[0.05]"
                 >
                   <img
                     src={SCENE.nyfw}
@@ -3112,16 +2839,16 @@ function BeatVault() {
                     decoding="async"
                   />
                   <div className="flex items-center justify-between px-4 py-2.5">
-                    <span className="text-[11px] text-stone-400">
+                    <span className="text-[11px] text-stone-200">
                       Backstage · NYFW
                     </span>
-                    <Check size={13} className="text-amber-400" />
+                    <Check size={13} className="text-amber-300" />
                   </div>
                 </motion.div>
               </div>
             </div>
 
-            <div className="flex items-center gap-2 border-t border-white/[0.07] bg-white/[0.015] px-6 py-4 text-[10px] uppercase tracking-[0.2em] text-stone-500 sm:px-9">
+            <div className="flex items-center gap-2 border-t border-white/[0.10] bg-white/[0.03] px-6 py-4 text-[10px] uppercase tracking-[0.2em] text-stone-200 sm:px-9">
               <span className="h-1.5 w-1.5 rounded-full bg-amber-400 shadow-[0_0_10px_#C8883A]" />
               Sealed before transmission
             </div>
@@ -3156,9 +2883,9 @@ function BeatVault() {
               ].map((item) => (
                 <div
                   key={item}
-                  className="flex items-center gap-3 text-[13.5px] text-stone-300"
+                  className="flex items-center gap-3 text-[13.5px] text-stone-100"
                 >
-                  <Check size={15} className="shrink-0 text-amber-400" />
+                  <Check size={15} className="shrink-0 text-amber-300" />
                   {item}
                 </div>
               ))}
@@ -3209,7 +2936,7 @@ function BeatOrbit() {
               />
             ),
           )}
-          <div className="flex h-11 w-11 items-center justify-center rounded-full border-2 border-[#04060A] bg-white/[0.06] text-[10px] tabular-nums text-stone-400">
+          <div className="flex h-11 w-11 items-center justify-center rounded-full border-2 border-[#04060A] bg-white/[0.08] text-[10px] tabular-nums text-stone-200">
             +43
           </div>
         </div>
@@ -3264,10 +2991,10 @@ function BeatResonance() {
               ].map((item) => (
                 <div
                   key={item.label}
-                  className="flex items-center gap-3 rounded-2xl border border-white/[0.08] bg-white/[0.025] p-3.5 backdrop-blur-md"
+                  className="flex items-center gap-3 rounded-2xl border border-white/12 bg-white/[0.04] p-3.5 backdrop-blur-md"
                 >
-                  <item.icon size={16} className="shrink-0 text-amber-400" />
-                  <span className="text-[12px] text-stone-300">
+                  <item.icon size={16} className="shrink-0 text-amber-300" />
+                  <span className="text-[12px] text-stone-100">
                     {item.label}
                   </span>
                 </div>
@@ -3277,31 +3004,31 @@ function BeatResonance() {
         </div>
 
         <Reveal delay={0.1}>
-          <div className="relative overflow-hidden rounded-[28px] border border-white/[0.08] bg-[#0B0A0D]/90 backdrop-blur-md">
+          <div className="relative overflow-hidden rounded-[28px] border border-white/12 bg-[#0B0A0D]/92 backdrop-blur-md">
             <div className="relative aspect-[4/5] w-full overflow-hidden bg-black">
               <img
                 src={SCENE.manCall}
                 alt=""
-                className="h-full w-full object-cover object-center opacity-60"
+                className="h-full w-full object-cover object-center opacity-70"
                 loading="lazy"
                 decoding="async"
               />
               <div className="absolute inset-0 bg-gradient-to-t from-[#0B0A0D] via-[#0B0A0D]/40 to-transparent" />
               <div className="absolute inset-x-0 bottom-0 p-6">
-                <div className="rounded-[20px] border border-white/[0.08] bg-black/60 p-4 backdrop-blur-md">
+                <div className="rounded-[20px] border border-white/[0.12] bg-black/65 p-4 backdrop-blur-md">
                   <div className="flex items-center gap-3">
                     <img
                       src={FACE.john}
                       alt=""
-                      className="h-11 w-11 rounded-full object-cover ring-1 ring-white/10"
+                      className="h-11 w-11 rounded-full object-cover ring-1 ring-white/15"
                       loading="lazy"
                       decoding="async"
                     />
                     <div className="flex-1">
-                      <p className="text-[13px] text-stone-100">John Reeves</p>
+                      <p className="text-[13px] font-medium text-white">John Reeves</p>
                       <div className="mt-1 flex items-center gap-1.5">
                         <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-400" />
-                        <span className="text-[10px] tabular-nums text-emerald-300/90">
+                        <span className="text-[10px] tabular-nums text-emerald-200">
                           02:47
                         </span>
                       </div>
@@ -3309,15 +3036,15 @@ function BeatResonance() {
                     <div className="flex gap-1.5">
                       <button
                         aria-label="Mic"
-                        className="flex h-9 w-9 items-center justify-center rounded-full bg-white/10"
+                        className="flex h-9 w-9 items-center justify-center rounded-full bg-white/15"
                       >
-                        <Mic size={14} className="text-stone-200" />
+                        <Mic size={14} className="text-stone-100" />
                       </button>
                       <button
                         aria-label="Video"
-                        className="flex h-9 w-9 items-center justify-center rounded-full bg-white/10"
+                        className="flex h-9 w-9 items-center justify-center rounded-full bg-white/15"
                       >
-                        <Video size={14} className="text-stone-200" />
+                        <Video size={14} className="text-stone-100" />
                       </button>
                     </div>
                   </div>
@@ -3347,10 +3074,10 @@ function BeatArrival() {
         }}
       />
       <Reveal>
-        <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-[22px] border border-amber-400/25 bg-black/45 shadow-[0_0_70px_rgba(200,136,58,0.14)] backdrop-blur-md">
+        <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-[22px] border border-amber-400/35 bg-black/55 shadow-[0_0_70px_rgba(200,136,58,0.20)] backdrop-blur-md">
           <ArrowRight
             size={26}
-            className="text-amber-400"
+            className="text-amber-300"
             style={{ transform: "rotate(45deg)" }}
           />
         </div>
@@ -3363,7 +3090,7 @@ function BeatArrival() {
       </Reveal>
 
       <Reveal delay={0.12}>
-        <h2 className="text-[clamp(40px,7.2vw,96px)] font-medium leading-[0.96] tracking-[-0.055em] text-stone-100">
+        <h2 className="text-[clamp(40px,7.2vw,96px)] font-medium leading-[0.96] tracking-[-0.055em] text-white">
           Your world.
           <br />
           <span className={ACCENT} style={SERIF}>
@@ -3373,7 +3100,7 @@ function BeatArrival() {
       </Reveal>
 
       <Reveal delay={0.18}>
-        <p className="mx-auto mt-7 max-w-[480px] text-[15px] leading-[1.85] text-stone-400">
+        <p className="mx-auto mt-7 max-w-[480px] text-[15px] leading-[1.85] text-stone-200">
           The Orbital Android app keeps your circles, your calls, and your
           keys right where they belong — with you.
         </p>
@@ -3387,80 +3114,75 @@ function BeatArrival() {
       </Reveal>
 
       <Reveal delay={0.3}>
-  <div className="mt-8 flex flex-wrap justify-center gap-3">
-    <a
-      href={DOWNLOAD_HREF}
-      download
-      className="group relative inline-flex items-center gap-3 overflow-hidden rounded-full border border-white/12 bg-white/[0.04] py-2.5 pl-3 pr-5 text-left backdrop-blur-md transition-all duration-300 ease-out will-change-transform hover:-translate-y-0.5 hover:border-amber-400/40 hover:bg-white/[0.07] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-300/70"
-    >
-      {/* soft amber wash that wakes up on hover */}
-      <span
-        aria-hidden="true"
-        className="pointer-events-none absolute inset-0 -z-10 opacity-0 transition-opacity duration-500 group-hover:opacity-100"
-        style={{
-          background:
-            "radial-gradient(120% 140% at 0% 50%, rgba(200,136,58,0.28) 0%, rgba(200,136,58,0.06) 42%, transparent 72%)",
-        }}
-      />
+        <div className="mt-8 flex flex-wrap justify-center gap-3">
+          <a
+            href={DOWNLOAD_HREF}
+            download
+            className="group relative inline-flex items-center gap-3 overflow-hidden rounded-full border border-white/20 bg-white/[0.06] py-2.5 pl-3 pr-5 text-left backdrop-blur-md transition-all duration-300 ease-out will-change-transform hover:-translate-y-0.5 hover:border-amber-400/60 hover:bg-white/[0.10] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-300/70"
+          >
+            <span
+              aria-hidden="true"
+              className="pointer-events-none absolute inset-0 -z-10 opacity-0 transition-opacity duration-500 group-hover:opacity-100"
+              style={{
+                background:
+                  "radial-gradient(120% 140% at 0% 50%, rgba(200,136,58,0.35) 0%, rgba(200,136,58,0.08) 42%, transparent 72%)",
+              }}
+            />
 
-      {/* Android mark */}
-      <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-gradient-to-b from-amber-300 to-amber-500 shadow-[inset_0_1px_0_rgba(255,255,255,0.35),0_6px_20px_-8px_rgba(200,136,58,0.9)]">
-        <svg
-          viewBox="0 0 24 24"
-          className="h-[18px] w-[18px] text-[#150E03]"
-          fill="currentColor"
-          aria-hidden="true"
-        >
-          {/* android robot head, simplified */}
-          <path d="M6 9.5C6 7.57 7.57 6 9.5 6h5C16.43 6 18 7.57 18 9.5V15a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2V9.5Z" />
-          <circle cx="10" cy="10.2" r="0.9" className="text-[#150E03]" fill="#E5D6B8" />
-          <circle cx="14" cy="10.2" r="0.9" className="text-[#150E03]" fill="#E5D6B8" />
-          <path
-            d="M8.5 5.3 7.6 3.8M15.5 5.3l.9-1.5"
-            stroke="currentColor"
-            strokeWidth="1.1"
-            strokeLinecap="round"
-            fill="none"
-          />
-          <path
-            d="M4.4 11.4v4.2M19.6 11.4v4.2"
-            stroke="currentColor"
-            strokeWidth="1.4"
-            strokeLinecap="round"
-            fill="none"
-          />
-          <path
-            d="M9.5 18v2M14.5 18v2"
-            stroke="currentColor"
-            strokeWidth="1.4"
-            strokeLinecap="round"
-            fill="none"
-          />
-        </svg>
-      </span>
+            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-gradient-to-b from-amber-300 to-amber-500 shadow-[inset_0_1px_0_rgba(255,255,255,0.35),0_6px_20px_-8px_rgba(200,136,58,0.9)]">
+              <svg
+                viewBox="0 0 24 24"
+                className="h-[18px] w-[18px] text-[#150E03]"
+                fill="currentColor"
+                aria-hidden="true"
+              >
+                <path d="M6 9.5C6 7.57 7.57 6 9.5 6h5C16.43 6 18 7.57 18 9.5V15a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2V9.5Z" />
+                <circle cx="10" cy="10.2" r="0.9" fill="#F0E4CC" />
+                <circle cx="14" cy="10.2" r="0.9" fill="#F0E4CC" />
+                <path
+                  d="M8.5 5.3 7.6 3.8M15.5 5.3l.9-1.5"
+                  stroke="currentColor"
+                  strokeWidth="1.1"
+                  strokeLinecap="round"
+                  fill="none"
+                />
+                <path
+                  d="M4.4 11.4v4.2M19.6 11.4v4.2"
+                  stroke="currentColor"
+                  strokeWidth="1.4"
+                  strokeLinecap="round"
+                  fill="none"
+                />
+                <path
+                  d="M9.5 18v2M14.5 18v2"
+                  stroke="currentColor"
+                  strokeWidth="1.4"
+                  strokeLinecap="round"
+                  fill="none"
+                />
+              </svg>
+            </span>
 
-      {/* two-line label — the app-store pattern */}
-      <span className="flex flex-col leading-tight">
-        <span className="text-[9px] font-medium uppercase tracking-[0.22em] text-stone-500 transition-colors duration-300 group-hover:text-amber-300/80">
-          Download for
-        </span>
-        <span className="text-[13.5px] font-semibold tracking-[-0.01em] text-stone-100">
-          Android
-        </span>
-      </span>
+            <span className="flex flex-col leading-tight">
+              <span className="text-[9px] font-medium uppercase tracking-[0.22em] text-stone-300 transition-colors duration-300 group-hover:text-amber-200">
+                Download for
+              </span>
+              <span className="text-[13.5px] font-semibold tracking-[-0.01em] text-white">
+                Android
+              </span>
+            </span>
 
-      {/* chevron that leans out on hover */}
-      <ArrowRight
-        size={15}
-        className="ml-1 text-stone-500 transition-all duration-300 ease-out group-hover:translate-x-0.5 group-hover:text-amber-300"
-      />
-    </a>
-  </div>
-</Reveal>
+            <ArrowRight
+              size={15}
+              className="ml-1 text-stone-300 transition-all duration-300 ease-out group-hover:translate-x-0.5 group-hover:text-amber-200"
+            />
+          </a>
+        </div>
+      </Reveal>
 
       <Reveal delay={0.36}>
-        <div className="mx-auto mt-14 mb-8 h-px w-24 bg-gradient-to-r from-transparent via-amber-500/50 to-transparent" />
-        <p className="text-[11px] uppercase tracking-[0.32em] text-stone-600">
+        <div className="mx-auto mt-14 mb-8 h-px w-24 bg-gradient-to-r from-transparent via-amber-400/60 to-transparent" />
+        <p className="text-[11px] uppercase tracking-[0.32em] text-stone-400">
           Orbital — for the people who matter
         </p>
       </Reveal>
@@ -3502,13 +3224,13 @@ function ChapterTag() {
           transition={UI_SPRING}
           className="flex items-baseline gap-3"
         >
-          <span className="text-[10px] uppercase tabular-nums tracking-[0.28em] text-amber-400/90">
+          <span className="text-[10px] uppercase tabular-nums tracking-[0.28em] text-amber-300">
             0{i + 1} / 06
           </span>
-          <span className="text-[10px] uppercase tracking-[0.28em] text-stone-500">
+          <span className="text-[10px] uppercase tracking-[0.28em] text-stone-300">
             {BEAT_LABELS[i]}
           </span>
-          <span className="text-[11px] text-stone-400">{BEAT_LINES[i]}</span>
+          <span className="text-[11px] text-stone-200">{BEAT_LINES[i]}</span>
         </motion.div>
       </AnimatePresence>
     </div>
@@ -3576,15 +3298,15 @@ export function Landing() {
       className="relative min-h-screen overflow-clip bg-[#04060A] tabular-nums text-stone-100 selection:bg-amber-400/30 selection:text-amber-100"
       style={{
         fontFamily:
-          '"Inter Tight", "SF Pro Text", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+          '"Plus Jakarta Sans", "SF Pro Text", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
       }}
     >
       <style>{`
-        @import url('https://fonts.googleapis.com/css2?family=Inter+Tight:ital,wght@0,200..800;1,200..800&family=Instrument+Serif:ital@0;1&display=swap');
+        @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:ital,wght@0,200..800;1,200..800&family=Instrument+Serif:ital@0;1&display=swap');
 
         :root {
           --font-display: "Instrument Serif", Georgia, serif;
-          --font-sans: "Inter Tight", "SF Pro Text", system-ui;
+          --font-sans: "Plus Jakarta Sans", "SF Pro Text", system-ui;
         }
         html {
           scroll-behavior: auto;
@@ -3603,7 +3325,7 @@ export function Landing() {
         }
         .orbital-content {
           font-family: var(--font-sans);
-          font-feature-settings: 'ss01' 1, 'cv11' 1, 'cv02' 1, 'tnum' 1;
+          font-feature-settings: 'ss01' 1, 'cv11' 1, 'tnum' 1;
         }
         .orbital-content canvas { display: block; }
         html.lenis, html.lenis body { height: auto; }
@@ -3624,6 +3346,30 @@ export function Landing() {
             padding-bottom: 0;
           }
         }
+
+        /* ⚡ chat bubble entrances — pure CSS, GPU-composited */
+        @keyframes orbital-bubble-in-me {
+          from { opacity: 0; transform: translate3d(8px, 10px, 0) scale(0.94); }
+          to   { opacity: 1; transform: translate3d(0, 0, 0) scale(1); }
+        }
+        @keyframes orbital-bubble-in-ava {
+          from { opacity: 0; transform: translate3d(-8px, 10px, 0) scale(0.94); }
+          to   { opacity: 1; transform: translate3d(0, 0, 0) scale(1); }
+        }
+        .orbital-bubble-me  { animation: orbital-bubble-in-me  0.32s cubic-bezier(0.22, 1, 0.36, 1) both; will-change: transform, opacity; }
+        .orbital-bubble-ava { animation: orbital-bubble-in-ava 0.32s cubic-bezier(0.22, 1, 0.36, 1) both; will-change: transform, opacity; }
+
+        @keyframes orbital-typing-in {
+          from { opacity: 0; transform: translate3d(0, 6px, 0) scale(0.94); }
+          to   { opacity: 1; transform: translate3d(0, 0, 0) scale(1); }
+        }
+        .orbital-typing { animation: orbital-typing-in 0.18s ease-out both; will-change: transform, opacity; }
+
+        @keyframes orbital-typing-dot {
+          0%, 60%, 100% { opacity: 0.3; transform: translateY(0); }
+          30%           { opacity: 1;   transform: translateY(-2px); }
+        }
+        .orbital-typing-dot { animation: orbital-typing-dot 1.1s ease-in-out infinite; }
 
         @media (hover: none) and (pointer: coarse) {
           * {
@@ -3690,7 +3436,7 @@ export function Landing() {
 
       {(reduce || !webGLAvailable) && (
         <div className="pointer-events-none fixed inset-0 z-0" aria-hidden="true">
-          <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_70%_30%,rgba(200,136,58,0.1),transparent_45%)]" />
+          <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_70%_30%,rgba(200,136,58,0.12),transparent_45%)]" />
         </div>
       )}
 
