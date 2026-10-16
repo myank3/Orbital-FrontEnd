@@ -2,16 +2,17 @@
  * @file src/pages/Landing.tsx
  * Orbital — cinematic 3D journey with live chat.
  *
- * v14 · high-refresh native · smoother + faster
+ * v15 · remote textures · preloaded · faster scroll · darker singularity
  *
- *   · Runs natively at 60 / 90 / 120 / 144 Hz — pure delta-time, no frame locks.
- *   · Post-processing pass removed; ACES tone mapping moved onto the renderer
- *     (one less full-screen pass + no half-res render target = big GPU win).
- *   · Adaptive DPR: resolution scales itself to hold your display's refresh rate.
- *   · Snappier damping + spring constants across scroll, camera and chat.
- *   · Chat hero floaters memoised so the chat tick never re-renders static DOM.
- *   · Phone never overflows the viewport — sized from height.
- *   · Android-safe: dvh units, tap-highlight reset, touch-action.
+ *   · Planet textures now served from a CORS-enabled GitHub Pages mirror
+ *     (jeromeetienne/threex.planets). No hotlink protection, ~150–250 KB each.
+ *   · Global THREE.Cache + LoadingManager; all planet textures preload in
+ *     parallel before the Canvas mounts. No untextured-planet flash.
+ *   · Scroll damping retuned (34 / 26) — the scene tracks your finger harder
+ *     while still rejecting wheel/trackpad jitter. Still purely delta-time.
+ *   · Black hole redesigned: cold, dense, almost non-luminous. Bright gold
+ *     outer ring removed, every additive layer halved, photon ring dimmed,
+ *     Einstein halo shrunk. Reads as mass, not a light source.
  */
 
 import React, {
@@ -82,21 +83,27 @@ const MEDIA = {
 } as const;
 
 /* ═══════════════════════════════════════════════════════════
-   PLANET TEXTURES
+   PLANET TEXTURES  ⚡
+   Served from a CORS-enabled GitHub Pages mirror of the
+   threex.planets texture set. ~150–250 KB per map, 1k
+   equirectangular — exactly the size this scene needs.
    ═══════════════════════════════════════════════════════════ */
 
+const TEX_BASE = "https://jeromeetienne.github.io/threex.planets/images";
+
 const PLANET_TEX = {
-  mars:    "/textures/mars.jpg",
-  jupiter: "/textures/jupiter.jpg",
-  saturn:  "/textures/saturn.jpg",
-  moon:    "/textures/moon.jpg",
-  titan:   "/textures/titan.jpg",
-  uranus:  "/textures/uranus.jpg",
+  mars:    `${TEX_BASE}/marsmap1k.jpg`,
+  jupiter: `${TEX_BASE}/jupitermap.jpg`,
+  saturn:  `${TEX_BASE}/saturnmap.jpg`,
+  moon:    `${TEX_BASE}/moonmap1k.jpg`,
+  uranus:  `${TEX_BASE}/uranusmap.jpg`,
+  // No Titan in the set. Reuse the Moon — at radius 0.18 in this scene
+  // it's a grey speck, indistinguishable at any sane zoom level.
+  titan:   `${TEX_BASE}/moonmap1k.jpg`,
 } as const;
 
 const DEEP = "#07070A";
 const AMBER = "#F59E0B";
-const GOLD = "#FCD34D";
 const DOWNLOAD_HREF = "/downloads/orbital.apk";
 
 /**
@@ -198,7 +205,7 @@ function useRefreshRate() {
 }
 
 /* ═══════════════════════════════════════════════════════════
-   SCROLL STORE
+   SCROLL STORE  ⚡ faster follow
    ═══════════════════════════════════════════════════════════ */
 
 const store = { raw: 0, smooth: 0, velocity: 0 };
@@ -238,13 +245,13 @@ function ScrollDriver() {
 
     const dt = frameDelta();
 
-    // Tighter follow → the scene tracks your finger almost 1:1, but the
-    // exponential still rounds off the rough edges of wheel/trackpad input.
-    store.smooth = damp(store.smooth, store.raw, 26, dt);
+    // 34 — tighter than v14's 26. The scene tracks your finger almost 1:1,
+    // but the exponential still rounds off the rough edges of wheel input.
+    store.smooth = damp(store.smooth, store.raw, 34, dt);
 
     const v = (store.smooth - prev.current) / Math.max(dt, 1e-4);
     prev.current = store.smooth;
-    store.velocity = damp(store.velocity, v, 20, dt);
+    store.velocity = damp(store.velocity, v, 26, dt);
 
     const beat = Math.min(5, Math.floor(store.smooth * 5 + 1e-6));
     if (beat !== lastBeat) {
@@ -334,7 +341,7 @@ function AdaptiveResolution({
 }
 
 /* ═══════════════════════════════════════════════════════════
-   CAMERA RIG
+   CAMERA RIG  ⚡ faster follow
    ═══════════════════════════════════════════════════════════ */
 
 type Key = { pos: [number, number, number]; look: [number, number, number] };
@@ -384,10 +391,10 @@ function CameraRig() {
     const lookZ = A.look[2] + (B.look[2] - A.look[2]) * frac;
     tgtLook.current.set(lookX, lookY, lookZ);
 
-    // 18 / 22 — fast enough to feel welded to the scroll, damped enough
-    // that a 144 Hz panel gets a perfectly smooth glide instead of steps.
-    dampVec3(curPos.current, tgtPos.current, 18, dt);
-    dampVec3(curLook.current, tgtLook.current, 22, dt);
+    // 26 / 32 — was 18 / 22 in v14. Welded to the scroll, but a 144 Hz
+    // panel still gets a perfectly smooth glide instead of steps.
+    dampVec3(curPos.current, tgtPos.current, 26, dt);
+    dampVec3(curLook.current, tgtLook.current, 32, dt);
 
     camera.position.copy(curPos.current);
     camera.lookAt(curLook.current);
@@ -397,44 +404,66 @@ function CameraRig() {
 }
 
 /* ═══════════════════════════════════════════════════════════
-   TEXTURE CACHE
+   TEXTURE CACHE  ⚡ preloaded, CORS-clean, single-flight
    ═══════════════════════════════════════════════════════════ */
 
+THREE.Cache.enabled = true;
+
 const texLoader = new THREE.TextureLoader();
+texLoader.setCrossOrigin("anonymous");
+
 const texCache = new Map<string, THREE.Texture>();
+const texPending = new Map<string, Promise<THREE.Texture>>();
 const MAX_ANISO = typeof navigator === "undefined" ? 4 : 8;
 
-function usePlanetTexture(url: string, isColor = true): THREE.Texture | null {
-  const [tex, setTex] = useState<THREE.Texture | null>(
-    () => texCache.get(url) ?? null,
-  );
+/** Apply the settings every planet texture in this scene needs. */
+function configureTexture(t: THREE.Texture, isColor: boolean) {
+  t.colorSpace = isColor ? THREE.SRGBColorSpace : THREE.NoColorSpace;
+  t.minFilter = THREE.LinearMipmapLinearFilter;
+  t.magFilter = THREE.LinearFilter;
+  t.anisotropy = MAX_ANISO;
+  t.generateMipmaps = true;
+  t.wrapS = THREE.RepeatWrapping;
+  t.wrapT = THREE.ClampToEdgeWrapping;
+  t.needsUpdate = true;
+  return t;
+}
 
-  useLayoutEffect(() => {
-    if (texCache.has(url)) {
-      setTex(texCache.get(url)!);
-      return;
-    }
+/** Cheap placeholder so a planet is never invisible while its map loads. */
+function makePlaceholderTexture(): THREE.Texture {
+  const canvas = document.createElement("canvas");
+  canvas.width = canvas.height = 64;
+  const ctx = canvas.getContext("2d")!;
+  const grad = ctx.createRadialGradient(32, 32, 0, 32, 32, 32);
+  grad.addColorStop(0, "#3A2E1E");
+  grad.addColorStop(1, "#0E0C09");
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, 64, 64);
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.wrapS = THREE.RepeatWrapping;
+  return tex;
+}
 
-    let cancelled = false;
+const PLACEHOLDER_TEX = makePlaceholderTexture();
+
+/** Single-flight loader — two callers asking for the same URL share one request. */
+function loadPlanetTexture(url: string, isColor = true): Promise<THREE.Texture> {
+  if (texCache.has(url)) return Promise.resolve(texCache.get(url)!);
+  if (texPending.has(url)) return texPending.get(url)!;
+
+  const p = new Promise<THREE.Texture>((resolve) => {
     texLoader.load(
       url,
       (t) => {
-        if (cancelled) return;
-
-        t.colorSpace = isColor ? THREE.SRGBColorSpace : THREE.NoColorSpace;
-        t.minFilter = THREE.LinearMipmapLinearFilter;
-        t.magFilter = THREE.LinearFilter;
-        t.anisotropy = MAX_ANISO;
-        t.generateMipmaps = true;
-        t.wrapS = THREE.RepeatWrapping;
-        t.wrapT = THREE.ClampToEdgeWrapping;
-        t.needsUpdate = true;
-
-        texCache.set(url, t);
-        setTex(t);
+        const configured = configureTexture(t, isColor);
+        texCache.set(url, configured);
+        texPending.delete(url);
+        resolve(configured);
       },
       undefined,
       () => {
+        // Fall back to a plain canvas gradient rather than a broken texture.
         const canvas = document.createElement("canvas");
         canvas.width = canvas.height = 128;
         const ctx = canvas.getContext("2d")!;
@@ -448,9 +477,38 @@ function usePlanetTexture(url: string, isColor = true): THREE.Texture | null {
         fallback.colorSpace = THREE.SRGBColorSpace;
         fallback.wrapS = THREE.RepeatWrapping;
         texCache.set(url, fallback);
-        if (!cancelled) setTex(fallback);
+        texPending.delete(url);
+        resolve(fallback);
       },
     );
+  });
+
+  texPending.set(url, p);
+  return p;
+}
+
+/** Kick off every planet texture in parallel. Returns a promise that settles
+ *  when the whole set is ready (or has fallen back). */
+function preloadPlanetTextures() {
+  const urls = Array.from(new Set(Object.values(PLANET_TEX)));
+  return Promise.all(urls.map((url) => loadPlanetTexture(url)));
+}
+
+function usePlanetTexture(url: string, isColor = true): THREE.Texture | null {
+  const [tex, setTex] = useState<THREE.Texture | null>(
+    () => texCache.get(url) ?? null,
+  );
+
+  useLayoutEffect(() => {
+    if (texCache.has(url)) {
+      setTex(texCache.get(url)!);
+      return;
+    }
+
+    let cancelled = false;
+    loadPlanetTexture(url, isColor).then((t) => {
+      if (!cancelled) setTex(t);
+    });
 
     return () => {
       cancelled = true;
@@ -579,7 +637,8 @@ function Planet({
   const meshRef = useRef<THREE.Mesh>(null);
   const reduce = useReducedMotion();
 
-  const mainTex = usePlanetTexture(texture);
+  const loadedTex = usePlanetTexture(texture);
+  const map = loadedTex ?? PLACEHOLDER_TEX;
   const colour = useMemo(() => new THREE.Color(tint), [tint]);
 
   useFrame(() => {
@@ -594,12 +653,12 @@ function Planet({
       <mesh ref={meshRef}>
         <sphereGeometry args={[radius, segments, Math.round(segments * 0.6)]} />
         <meshStandardMaterial
-          map={mainTex ?? undefined}
-          color={mainTex ? colour : "#8B6A32"}
+          map={map}
+          color={loadedTex ? colour : "#8B6A32"}
           roughness={roughness}
           metalness={0.02}
           emissive={colour}
-          emissiveIntensity={mainTex ? (1 - tintStrength) * 0.15 : 0}
+          emissiveIntensity={loadedTex ? (1 - tintStrength) * 0.15 : 0}
         />
       </mesh>
 
@@ -757,7 +816,9 @@ function ObsidianPlanet({
 }
 
 /* ═══════════════════════════════════════════════════════════
-   BLACK HOLE
+   BLACK HOLE  ⚡ redesigned — cold, dense, nearly non-luminous
+   Every additive layer is dimmed, gold replaced with deep
+   copper, photon ring halved, Einstein halo tightened.
    ═══════════════════════════════════════════════════════════ */
 
 function BlackHole({
@@ -776,6 +837,7 @@ function BlackHole({
   const lensedRef = useRef<THREE.Mesh>(null);
   const coolRef = useRef<THREE.Mesh>(null);
   const einsteinRef = useRef<THREE.Mesh>(null);
+  const shadowRef = useRef<THREE.Mesh>(null);
   const reduce = useReducedMotion();
 
   useFrame(() => {
@@ -799,76 +861,97 @@ function BlackHole({
 
   return (
     <group ref={rootRef} position={position} rotation={[tilt, 0, 0.12]}>
+      {/* Event horizon — pure void */}
       <mesh>
         <sphereGeometry args={[radius, 48, 48]} />
         <meshBasicMaterial color="#000000" />
       </mesh>
 
+      {/* Shadow bloom just outside the horizon — softens the silhouette,
+          keeps the mass reading as volume rather than a flat disc. */}
+      <mesh ref={shadowRef}>
+        <sphereGeometry args={[radius * 1.14, 32, 32]} />
+        <meshBasicMaterial
+          color="#05040A"
+          transparent
+          opacity={0.85}
+          depthWrite={false}
+          blending={THREE.NormalBlending}
+        />
+      </mesh>
+
+      {/* Photon ring — was 0.95, now 0.42. A thin cold line, not a halo. */}
       <mesh ref={photonRef}>
         <sphereGeometry args={[radius * 1.02, 32, 32]} />
         <meshBasicMaterial
-          color="#FFF4CE"
+          color="#C89B58"
           transparent
-          opacity={0.95}
+          opacity={0.42}
           depthWrite={false}
           blending={THREE.AdditiveBlending}
         />
       </mesh>
 
+      {/* Inner accretion — deep copper instead of bright gold. */}
       <mesh ref={primaryInnerRef} rotation={[Math.PI / 2, 0, 0]}>
         <ringGeometry args={[radius * 1.14, radius * 1.55, 128, 1]} />
         <meshBasicMaterial
-          color="#FFF1C4"
+          color="#8A5A22"
           transparent
-          opacity={0.92}
+          opacity={0.5}
           side={THREE.DoubleSide}
           depthWrite={false}
           blending={THREE.AdditiveBlending}
         />
       </mesh>
 
+      {/* Outer accretion — much wider, much dimmer. The mass reads by
+          silhouette and heat, not by raw brightness. */}
       <mesh ref={primaryRef} rotation={[Math.PI / 2, 0, 0]}>
         <ringGeometry args={[radius * 1.65, radius * 2.55, 128, 1]} />
         <meshBasicMaterial
-          color={GOLD}
+          color="#5C3A18"
           transparent
-          opacity={0.72}
+          opacity={0.28}
           side={THREE.DoubleSide}
           depthWrite={false}
           blending={THREE.AdditiveBlending}
         />
       </mesh>
 
+      {/* Cool blue halo — barely there, hints at relativistic jets. */}
       <mesh ref={coolRef} rotation={[Math.PI / 2 + 0.06, 0.08, 0]}>
         <ringGeometry args={[radius * 1.5, radius * 2.15, 96, 1]} />
         <meshBasicMaterial
-          color="#3E6FA8"
+          color="#1E3550"
           transparent
-          opacity={0.24}
+          opacity={0.12}
           side={THREE.DoubleSide}
           depthWrite={false}
           blending={THREE.AdditiveBlending}
         />
       </mesh>
 
+      {/* Lensed ring — thin, cold, edge-on. */}
       <mesh ref={lensedRef} rotation={[0, Math.PI / 2, 0]}>
         <ringGeometry args={[radius * 1.08, radius * 1.22, 128, 1]} />
         <meshBasicMaterial
-          color="#FFE9A8"
+          color="#B8894E"
           transparent
-          opacity={0.85}
+          opacity={0.38}
           side={THREE.DoubleSide}
           depthWrite={false}
           blending={THREE.AdditiveBlending}
         />
       </mesh>
 
+      {/* Einstein halo — tightened from radius*2.6 → radius*2.1 and dimmed. */}
       <mesh ref={einsteinRef}>
-        <sphereGeometry args={[radius * 2.6, 24, 24]} />
+        <sphereGeometry args={[radius * 2.1, 24, 24]} />
         <meshBasicMaterial
-          color={AMBER}
+          color="#3A2A14"
           transparent
-          opacity={0.07}
+          opacity={0.035}
           depthWrite={false}
           blending={THREE.AdditiveBlending}
         />
@@ -899,7 +982,8 @@ function Moon({
   const groupRef = useRef<THREE.Group>(null);
   const meshRef = useRef<THREE.Mesh>(null);
   const reduce = useReducedMotion();
-  const tex = usePlanetTexture(texture);
+  const loaded = usePlanetTexture(texture);
+  const map = loaded ?? PLACEHOLDER_TEX;
 
   useFrame(() => {
     if (!groupRef.current || reduce) return;
@@ -918,8 +1002,8 @@ function Moon({
         <mesh ref={meshRef}>
           <sphereGeometry args={[radius, 20, 14]} />
           <meshStandardMaterial
-            map={tex ?? undefined}
-            color={tex ? "#ffffff" : "#888"}
+            map={map}
+            color={loaded ? "#ffffff" : "#888"}
             roughness={0.95}
             metalness={0}
           />
@@ -1165,7 +1249,6 @@ type Message = {
   status: "sent" | "delivered" | "read";
 };
 
-/* A single natural back-and-forth between two people. */
 const CHAT_SCRIPT: Omit<Message, "id" | "time" | "status">[] = [
   { from: "me",    text: "hey, just landed" },
   { from: "alexa", text: "already? how was the flight" },
@@ -1421,8 +1504,6 @@ function PhoneScreen({
   );
 }
 
-/* Message bubbles are cheap to reconcile but expensive to *animate* —
-   keep the spring tight so a burst of messages never queues up. */
 const BUBBLE_SPRING = {
   type: "spring" as const,
   stiffness: 480,
@@ -1507,7 +1588,7 @@ const TypingIndicator = memo(function TypingIndicator() {
 });
 
 /* ═══════════════════════════════════════════════════════════
-   FLOATING CARDS — softer motion
+   FLOATING CARDS
    ═══════════════════════════════════════════════════════════ */
 
 const FloatCard = memo(function FloatCard({
@@ -1736,7 +1817,7 @@ function Section({
 }
 
 /* ═══════════════════════════════════════════════════════════
-   HERO FLOATERS — static, memoised, never re-rendered by chat
+   HERO FLOATERS
    ═══════════════════════════════════════════════════════════ */
 
 const HeroFloatCards = memo(function HeroFloatCards() {
@@ -1850,7 +1931,6 @@ const HeroFloatCards = memo(function HeroFloatCards() {
         </div>
       </FloatCard>
 
-      {/* Mobile inline badge */}
       <div className="pointer-events-none absolute -bottom-10 left-1/2 flex -translate-x-1/2 flex-nowrap justify-center gap-2 lg:hidden">
         <div className="flex items-center gap-2 whitespace-nowrap rounded-full border border-amber-400/25 bg-black/60 px-3 py-1.5 backdrop-blur-xl">
           <LockKeyhole size={10} className="text-amber-400" />
@@ -1891,7 +1971,6 @@ const BeatOrigin = memo(function BeatOrigin({
       className="relative flex min-h-screen w-full items-center overflow-hidden px-5 pb-14 pt-20 sm:px-8 sm:pb-16 sm:pt-24 lg:h-screen lg:px-14 lg:pb-0 lg:pt-0"
     >
       <div className="relative z-10 mx-auto grid w-full max-w-[1440px] grid-cols-1 items-center gap-10 lg:grid-cols-[minmax(0,1fr)_minmax(280px,440px)] lg:gap-14">
-        {/* ── TEXT ── */}
         <div className="mx-auto max-w-[620px] text-center lg:mx-0 lg:translate-y-16 lg:text-left">
           <Reveal>
             <div className="mb-6 inline-flex items-center gap-2.5 rounded-full border border-white/[0.09] bg-white/[0.03] py-1.5 pl-1.5 pr-3.5 backdrop-blur-xl sm:mb-8 sm:gap-3 sm:pr-4">
@@ -1965,7 +2044,6 @@ const BeatOrigin = memo(function BeatOrigin({
           </Reveal>
         </div>
 
-        {/* ── PHONE ── */}
         <Reveal delay={0.14}>
           <div className="relative mx-auto flex w-full max-w-[400px] items-center justify-center">
             <div
@@ -2579,8 +2657,26 @@ function BeatArrival() {
 export function Landing() {
   const reduce = useReducedMotion();
   const [webGLAvailable, setWebGLAvailable] = useState(true);
+  const [texturesReady, setTexturesReady] = useState(false);
   const tier = useDeviceTier();
   const hz = useRefreshRate();
+
+  // ⚡ Kick off every planet texture in parallel the moment we mount.
+  // The Canvas only mounts once they're in the cache, so the scene
+  // renders fully textured on its first frame — no flash, no pop-in.
+  useEffect(() => {
+    if (reduce) {
+      setTexturesReady(true);
+      return;
+    }
+    let cancelled = false;
+    preloadPlanetTextures().then(() => {
+      if (!cancelled) setTexturesReady(true);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [reduce]);
 
   const [heroOnScreen, setHeroOnScreen] = useState(true);
   useEffect(() => {
@@ -2593,20 +2689,19 @@ export function Landing() {
 
   const { messages, typingFrom } = useLiveChat(heroOnScreen);
 
-  /**
-   * Resolution budget.
-   *  · Higher refresh → fewer pixels, so the GPU can actually finish inside
-   *    a 6.9 ms (144 Hz) or 8.3 ms (120 Hz) frame.
-   *  · Never render above 2× native — beyond that it's pure cost.
-   */
   const { maxDpr, minDpr } = useMemo(() => {
     const native =
       typeof window === "undefined" ? 1 : Math.min(window.devicePixelRatio || 1, 2);
     const headroom = hz >= 120 ? 0.72 : hz >= 90 ? 0.85 : 1;
     const tierCap = tier === "low" ? 1 : tier === "mid" ? 1.35 : 1.6;
     const hi = Math.max(0.75, Math.min(native, tierCap) * headroom);
-    return { maxDpr: Math.round(hi * 100) / 100, minDpr: Math.max(0.6, Math.round(hi * 0.55 * 100) / 100) };
+    return {
+      maxDpr: Math.round(hi * 100) / 100,
+      minDpr: Math.max(0.6, Math.round(hi * 0.55 * 100) / 100),
+    };
   }, [tier, hz]);
+
+  const showScene = !reduce && webGLAvailable && texturesReady;
 
   return (
     <main
@@ -2657,7 +2752,6 @@ export function Landing() {
           backface-visibility: hidden;
         }
 
-        /* Keep compositor-only animations GPU-resident on high-refresh panels. */
         .orbital-content canvas { display: block; }
 
         @media (prefers-reduced-motion: reduce) {
@@ -2670,7 +2764,7 @@ export function Landing() {
         }
       `}</style>
 
-      {!reduce && webGLAvailable && (
+      {showScene && (
         <div className="pointer-events-none fixed inset-0 z-0" aria-hidden="true">
           <Canvas
             dpr={maxDpr}
@@ -2710,7 +2804,7 @@ export function Landing() {
         </div>
       )}
 
-      {(reduce || !webGLAvailable) && (
+      {!showScene && (
         <div className="pointer-events-none fixed inset-0 z-0" aria-hidden="true">
           <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_70%_30%,rgba(245,158,11,0.1),transparent_45%)]" />
         </div>
