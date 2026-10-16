@@ -168,9 +168,32 @@ function VideoCallOverlay(): React.JSX.Element | null {
   const peerAvatar = peerProfile?.avatarUrl ?? null;
 
   /* ── Attach local stream ─────────────────────────────── */
-  // Same pattern the remote uses: null first, then attach. Retries
-  // play() because the first call can silently fail if the element
-  // was display:none when the effect ran.
+  // ⚡ FIX: the deps now include `session` and `isMinimized`.
+  //
+  //    Previously, deps were `[localStream]` only. That broke the
+  //    *initiator's* self-view because CallContext.initiateCall does:
+  //
+  //       setLocalStream(stream);                    // render A
+  //       const s = await initiateCall(...);         // await → render A
+  //       setSession(s);                             // render B
+  //
+  //    Render A:  session=null → overlay returns early → <video> not
+  //               in the DOM → localVideoRef.current === null → the
+  //               effect runs, finds el=null, and returns without
+  //               attaching anything.
+  //    Render B:  session set → overlay renders, <video> mounts, ref
+  //               is populated — but `localStream` hasn't changed
+  //               since Render A, so the effect never re-runs.
+  //    Result:    a <video> with no srcObject → black PiP.
+  //
+  //    Adding `session` re-fires the effect the moment the element
+  //    finally mounts. Adding `isMinimized` does the same for
+  //    minimize→expand (the <video> unmounts/remounts on those
+  //    transitions too).
+  //
+  //    The acceptor never hit this because acceptCall sets
+  //    localStream and session in the same render — that's why only
+  //    the caller's self-view was black.
 
   useEffect(() => {
     const el = localVideoRef.current;
@@ -203,7 +226,7 @@ function VideoCallOverlay(): React.JSX.Element | null {
       el.removeEventListener('loadedmetadata', onReady);
       el.removeEventListener('canplay', onReady);
     };
-  }, [localStream]);
+  }, [localStream, session, isMinimized]);
 
   /* ── Attach remote video stream (MUTED) ──────────────── */
   // Audio playback is handled by the persistent <audio> sink inside
