@@ -1,18 +1,23 @@
 /**
  * @file src/pages/Landing.tsx
- * Orbital — v14 · "The Thread"
- *   v14: new photos · no grain · HD · Lenis smooth scroll · 144 Hz budget
+ * Orbital — v15 · "The Thread"
+ *   v15: phone chat rebuilt as a living, never-ending conversation
  *
- * ⚡ v13 deltas — text-only conversation (nothing else changed):
- *   · LIVE TAB REMOVED — the video call demo is gone. Tabs are now
- *     Chats · Faces only. PanelLive() deleted; PhoneOff / Volume2 / Zap
- *     imports dropped (they were only used inside it).
- *   · CHAT REWRITTEN — 16-message logical exchange between two people
- *     (Ava checks in on a friend who just landed, catches up about the
- *     flight, a callback to a film Ava recommended, then an invitation
- *     to visit). Pure text bubbles — no voice notes, no image bubbles,
- *     no third person. Every message flows from the previous one.
- *   · CHAT_STEPS 12 → 16 · CHAT_STAGGER_MS 1100 → 850 (≈13 s run).
+ * ⚡ v15 deltas (phone only — nothing else changed):
+ *   · CHAT IS ALIVE — the transcript no longer plays once and stops.
+ *     A 24-line script loops forever: each line carries its own
+ *     `hold` (how long it sits) and `typing` (how long "typing…"
+ *     shows first). Timing is asymmetric — short replies land fast,
+ *     long ones linger — so it reads like two real people texting.
+ *   · AUTO-SCROLLING TRANSCRIPT — only the last 11 bubbles stay
+ *     mounted. Older ones fall off the top edge, which fades out
+ *     via a CSS mask, so it *looks* like the thread scrolls up
+ *     while the DOM stays tiny.
+ *   · TYPING INDICATOR IN THE RIGHT PLACE — sits on Ava's side when
+ *     she's about to text, on yours when you are.
+ *   · FIXED — the previous edit shipped a broken file (missing
+ *     PanelChats, stale CHAT_STEPS references, undefined ChatBubble).
+ *     This is the complete, compiling file.
  *
  * Earlier: no blur on Reveal · HD images · 144 Hz springs · mobile safe areas.
  *
@@ -135,7 +140,7 @@ const AMBER = "#C8883A";
 const CREAM = "#E5D6B8";
 const DEEP = "#04060A";
 
-const DOWNLOAD_HREF = "/downloads/myapp.apk";
+const DOWNLOAD_HREF = "/downloads/Orbital.V.0.0.1.apk";
 
 const UI_SPRING = { type: "spring", stiffness: 520, damping: 36 } as const;
 const CINEMATIC_SPRING = {
@@ -289,12 +294,25 @@ let lenisInstance: Lenis | null = null;
 function useSmoothScroll(enabled: boolean) {
   useEffect(() => {
     if (!enabled) return;
-    const lenis = new Lenis({ lerp: 0.1, wheelMultiplier: 1, touchMultiplier: 1.5, smoothWheel: true, autoRaf: false });
+    const lenis = new Lenis({
+      lerp: 0.1,
+      wheelMultiplier: 1,
+      touchMultiplier: 1.5,
+      smoothWheel: true,
+      autoRaf: false,
+    });
     lenisInstance = lenis;
     let raf = 0;
-    const loop = (t: number) => { lenis.raf(t); raf = requestAnimationFrame(loop); };
+    const loop = (t: number) => {
+      lenis.raf(t);
+      raf = requestAnimationFrame(loop);
+    };
     raf = requestAnimationFrame(loop);
-    return () => { cancelAnimationFrame(raf); lenis.destroy(); lenisInstance = null; };
+    return () => {
+      cancelAnimationFrame(raf);
+      lenis.destroy();
+      lenisInstance = null;
+    };
   }, [enabled]);
 }
 
@@ -1199,7 +1217,7 @@ function makeCardMaterial(
     depthWrite: false,
     fog: false,
   });
-  mat.customProgramCacheKey = () => "orbital-card-v13";
+  mat.customProgramCacheKey = () => "orbital-card-v15";
   mat.onBeforeCompile = (shader) => {
     Object.assign(shader.uniforms, uniforms);
     shader.vertexShader = shader.vertexShader
@@ -1994,31 +2012,168 @@ function StatusBar() {
   );
 }
 
-function Arrive({
-  children,
-  side = -1,
-  className = "",
-}: {
-  children: React.ReactNode;
-  side?: -1 | 0 | 1;
-  className?: string;
-}) {
+/* ═══════════════════════════════════════════════════════════
+   CHAT SCRIPT — a living, never-ending two-person conversation.
+   Each line carries its own `hold` (how long it sits before the
+   next arrives) and `typing` (how long "typing…" shows first).
+   Timing is asymmetric on purpose: short replies land fast,
+   longer ones linger — so it reads like real people texting.
+   ═══════════════════════════════════════════════════════════ */
+
+type ChatFrom = "ava" | "me";
+
+type ChatLine = {
+  from: ChatFrom;
+  text: string;
+  /** ms the message sits alone before the next one lands */
+  hold: number;
+  /** ms "typing…" is shown before this message lands */
+  typing: number;
+};
+
+const CHAT_SCRIPT: ChatLine[] = [
+  { from: "ava", text: "hey, you land okay?",                                       hold: 1500, typing: 900 },
+  { from: "me",  text: "yeah, just got to the hotel",                               hold: 1200, typing: 700 },
+  { from: "ava", text: "how was the flight?",                                       hold: 1500, typing: 800 },
+  { from: "me",  text: "long. watched two films back to back",                      hold: 1400, typing: 1100 },
+  { from: "ava", text: "which ones?",                                               hold: 1300, typing: 600 },
+  { from: "me",  text: "the new Villeneuve, and that French film you told me about", hold: 1800, typing: 1400 },
+  { from: "ava", text: "wait, you actually watched it 🥹",                          hold: 1600, typing: 900 },
+  { from: "me",  text: "it was gorgeous. you were right",                           hold: 1400, typing: 1000 },
+  { from: "ava", text: "i'm never wrong about films",                               hold: 1500, typing: 800 },
+  { from: "me",  text: "true. i'm taking notes",                                    hold: 1300, typing: 750 },
+  { from: "ava", text: "how long are you there for?",                               hold: 1500, typing: 800 },
+  { from: "me",  text: "through sunday. come out?",                                 hold: 1400, typing: 900 },
+  { from: "ava", text: "is that an invitation?",                                    hold: 1500, typing: 850 },
+  { from: "me",  text: "obviously",                                                 hold: 1100, typing: 600 },
+  { from: "ava", text: "let me check flights",                                      hold: 1500, typing: 900 },
+  { from: "me",  text: "i'll book dinner",                                          hold: 1600, typing: 800 },
+  { from: "ava", text: "you always pick the good places",                           hold: 1500, typing: 950 },
+  { from: "me",  text: "that's the whole point",                                    hold: 1400, typing: 800 },
+  { from: "ava", text: "what time should i get in?",                                hold: 1500, typing: 900 },
+  { from: "me",  text: "late. i'll wait up",                                        hold: 1600, typing: 850 },
+  { from: "ava", text: "okay 🫶",                                                   hold: 1700, typing: 700 },
+  { from: "me",  text: "text me when you're boarding",                              hold: 1500, typing: 900 },
+  { from: "ava", text: "i will. go sleep",                                          hold: 1500, typing: 750 },
+  { from: "me",  text: "Designed and Created by MAYANK",                                            hold: 2200, typing: 800 },
+];
+
+/** ⚡ how many bubbles stay mounted — older ones scroll off naturally */
+const CHAT_VISIBLE = 11;
+
+/** ⚡ the last line Ava says — used for the reply preview strip */
+const LAST_AVA_TEXT =
+  [...CHAT_SCRIPT].reverse().find((l) => l.from === "ava")?.text ?? "";
+
+/** ⚡ one bubble. Incoming = Ava (left, glass). Outgoing = me
+ *  (right, amber gradient). */
+function ChatBubble({ line }: { line: ChatLine }) {
+  const mine = line.from === "me";
   return (
     <motion.div
-      initial={{ opacity: 0, scale: 0.94, x: side * 6, y: side === 0 ? 6 : 0 }}
-      animate={{ opacity: 1, scale: 1, x: 0, y: 0 }}
+      layout="position"
+      initial={{ opacity: 0, y: 10, scale: 0.94 }}
+      animate={{ opacity: 1, y: 0, scale: 1 }}
       transition={UI_SPRING}
-      className={className}
       style={{ willChange: "transform, opacity" }}
+      className={mine ? "flex flex-col items-end" : "flex items-start gap-2"}
     >
-      {children}
+      {!mine && (
+        <img
+          src={FACE.ava}
+          alt=""
+          className="mt-0.5 h-5 w-5 shrink-0 rounded-full object-cover ring-1 ring-white/10"
+          loading="lazy"
+          decoding="async"
+        />
+      )}
+      <div className={mine ? "flex flex-col items-end" : ""}>
+        <div
+          className={
+            mine
+              ? "max-w-[82%] rounded-[14px] rounded-br-[4px] bg-gradient-to-br from-[#C8883A] to-[#9E6A2A] px-3 py-2 text-[10.5px] font-medium leading-[1.5] text-[#1A1105]"
+              : "max-w-[220px] rounded-[14px] rounded-bl-[4px] border border-white/[0.06] bg-white/[0.055] px-3 py-2 text-[10.5px] leading-[1.5] text-[#E5D6B8]/90"
+          }
+        >
+          {line.text}
+        </div>
+        {mine && (
+          <div className="mt-1 flex items-center gap-1 pr-1">
+            <CheckCheck size={9} className="text-amber-400" />
+          </div>
+        )}
+      </div>
     </motion.div>
   );
 }
 
-/* ── Panel: Chats — one logical conversation between two people ── */
+/* ── Panel: Chats — a living, never-ending conversation ── */
 
-function PanelChats({ step }: { step: number }) {
+function PanelChats() {
+  const [count, setCount] = useState(0);
+  const [typing, setTyping] = useState<ChatFrom | null>(null);
+  const listRef = useRef<HTMLDivElement>(null);
+  const reduce = useReducedMotion();
+
+  // ⚡ the engine: show typing → land message → hold → next. Loops forever.
+  useEffect(() => {
+    if (reduce) {
+      setCount(CHAT_VISIBLE);
+      return;
+    }
+    let cancelled = false;
+    const timers: number[] = [];
+
+    const step = (i: number) => {
+      if (cancelled) return;
+      const line = CHAT_SCRIPT[i % CHAT_SCRIPT.length];
+
+      // show "typing…" on the right side, then commit the message
+      timers.push(
+        window.setTimeout(() => {
+          if (!cancelled) setTyping(line.from);
+        }, 0),
+      );
+
+      timers.push(
+        window.setTimeout(() => {
+          if (cancelled) return;
+          setTyping(null);
+          setCount((c) => Math.min(c + 1, i + 1));
+          timers.push(
+            window.setTimeout(() => step(i + 1), line.hold),
+          );
+        }, line.typing),
+      );
+    };
+
+    // kick off after a beat so the phone has settled on screen
+    timers.push(window.setTimeout(() => step(0), 600));
+
+    return () => {
+      cancelled = true;
+      for (const t of timers) window.clearTimeout(t);
+    };
+  }, [reduce]);
+
+  // ⚡ only the last CHAT_VISIBLE bubbles stay mounted — older ones
+  // fall off the top edge and the mask fades them out.
+  const start = Math.max(0, count - CHAT_VISIBLE);
+  const visible = useMemo(() => {
+    const out: { line: ChatLine; key: number }[] = [];
+    for (let i = start; i < count; i++) {
+      out.push({ line: CHAT_SCRIPT[i % CHAT_SCRIPT.length], key: i });
+    }
+    return out;
+  }, [start, count]);
+
+  // ⚡ pin to the bottom whenever the transcript changes
+  useEffect(() => {
+    const el = listRef.current;
+    if (!el) return;
+    el.scrollTop = el.scrollHeight;
+  }, [visible.length, typing]);
+
   return (
     <div className="relative flex h-full w-full flex-col bg-[#08080B]">
       <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_50%_-10%,rgba(200,136,58,0.16),transparent_58%)]" />
@@ -2045,7 +2200,9 @@ function PanelChats({ step }: { step: number }) {
             <Crown size={9} className="text-amber-400" />
           </div>
           <div className="mt-[1px] flex items-center gap-1.5">
-            <span className="text-[8.5px] text-emerald-300/90">Active</span>
+            <span className="text-[8.5px] text-emerald-300/90">
+              {typing === "ava" ? "typing…" : "Active"}
+            </span>
             <span className="text-[8.5px] text-[#E5D6B8]/25">·</span>
             <LockKeyhole size={7} className="text-[#E5D6B8]/35" />
             <span className="text-[8.5px] text-[#E5D6B8]/35">E2E</span>
@@ -2095,272 +2252,81 @@ function PanelChats({ step }: { step: number }) {
         </div>
       </div>
 
-      <div className="relative z-10 flex-1 space-y-2 overflow-hidden px-4 pt-2.5">
-        <div className="flex justify-center">
+      {/* ⚡ scroll container — pins to bottom, masks the top edge so
+          older bubbles fade out as they slide up and away. */}
+      <div
+        ref={listRef}
+        className="relative z-10 flex-1 overflow-y-auto overflow-x-hidden px-4 pt-2.5"
+        style={{
+          scrollbarWidth: "none",
+          msOverflowStyle: "none",
+          maskImage:
+            "linear-gradient(to bottom, transparent 0, black 28px, black calc(100% - 6px), black 100%)",
+          WebkitMaskImage:
+            "linear-gradient(to bottom, transparent 0, black 28px, black calc(100% - 6px), black 100%)",
+        }}
+      >
+        <div className="flex justify-center pb-1">
           <span className="rounded-full bg-white/[0.04] px-2 py-[2px] text-[7.5px] uppercase tracking-[0.16em] tabular-nums text-[#E5D6B8]/40">
             Today · Encrypted
           </span>
         </div>
 
-        {/* 1 · incoming — Ava opens */}
-        {step >= 1 && (
-          <Arrive side={-1} className="flex items-start gap-2">
-            <img
-              src={FACE.ava}
-              alt=""
-              className="mt-0.5 h-5 w-5 shrink-0 rounded-full object-cover ring-1 ring-white/10"
-              loading="lazy"
-              decoding="async"
-            />
-            <div className="max-w-[220px] rounded-[14px] rounded-bl-[4px] border border-white/[0.06] bg-white/[0.055] px-3 py-2 text-[10.5px] leading-[1.5] text-[#E5D6B8]/90">
-              hey, you land okay?
-            </div>
-          </Arrive>
-        )}
+        <div className="space-y-2 pb-3">
+          {visible.map(({ line, key }) => (
+            <ChatBubble key={key} line={line} />
+          ))}
 
-        {/* 2 · outgoing — I confirm */}
-        {step >= 2 && (
-          <Arrive side={1} className="flex flex-col items-end">
-            <div className="max-w-[82%] rounded-[14px] rounded-br-[4px] bg-gradient-to-br from-[#C8883A] to-[#9E6A2A] px-3 py-2 text-[10.5px] font-medium leading-[1.5] text-[#1A1105]">
-              yeah, just got to the hotel
-            </div>
-            <div className="mt-1 flex items-center gap-1 pr-1">
-              <CheckCheck size={9} className="text-amber-400" />
-            </div>
-          </Arrive>
-        )}
-
-        {/* 3 · incoming — follow-up question */}
-        {step >= 3 && (
-          <Arrive side={-1} className="flex items-start gap-2">
-            <img
-              src={FACE.ava}
-              alt=""
-              className="mt-0.5 h-5 w-5 shrink-0 rounded-full object-cover ring-1 ring-white/10"
-              loading="lazy"
-              decoding="async"
-            />
-            <div className="max-w-[220px] rounded-[14px] rounded-bl-[4px] border border-white/[0.06] bg-white/[0.055] px-3 py-2 text-[10.5px] leading-[1.5] text-[#E5D6B8]/90">
-              how was the flight?
-            </div>
-          </Arrive>
-        )}
-
-        {/* 4 · outgoing — answer */}
-        {step >= 4 && (
-          <Arrive side={1} className="flex flex-col items-end">
-            <div className="max-w-[82%] rounded-[14px] rounded-br-[4px] bg-gradient-to-br from-[#C8883A] to-[#9E6A2A] px-3 py-2 text-[10.5px] font-medium leading-[1.5] text-[#1A1105]">
-              long. watched two films back to back
-            </div>
-            <div className="mt-1 flex items-center gap-1 pr-1">
-              <CheckCheck size={9} className="text-amber-400" />
-            </div>
-          </Arrive>
-        )}
-
-        {/* 5 · incoming — follow-up */}
-        {step >= 5 && (
-          <Arrive side={-1} className="flex items-start gap-2">
-            <img
-              src={FACE.ava}
-              alt=""
-              className="mt-0.5 h-5 w-5 shrink-0 rounded-full object-cover ring-1 ring-white/10"
-              loading="lazy"
-              decoding="async"
-            />
-            <div className="max-w-[220px] rounded-[14px] rounded-bl-[4px] border border-white/[0.06] bg-white/[0.055] px-3 py-2 text-[10.5px] leading-[1.5] text-[#E5D6B8]/90">
-              which ones?
-            </div>
-          </Arrive>
-        )}
-
-        {/* 6 · outgoing — the answer sets up the callback */}
-        {step >= 6 && (
-          <Arrive side={1} className="flex flex-col items-end">
-            <div className="max-w-[82%] rounded-[14px] rounded-br-[4px] bg-gradient-to-br from-[#C8883A] to-[#9E6A2A] px-3 py-2 text-[10.5px] font-medium leading-[1.5] text-[#1A1105]">
-              the new Villeneuve, and that French film you told me about
-            </div>
-            <div className="mt-1 flex items-center gap-1 pr-1">
-              <CheckCheck size={9} className="text-amber-400" />
-            </div>
-          </Arrive>
-        )}
-
-        {/* 7 · incoming — callback payoff */}
-        {step >= 7 && (
-          <Arrive side={-1} className="flex items-start gap-2">
-            <img
-              src={FACE.ava}
-              alt=""
-              className="mt-0.5 h-5 w-5 shrink-0 rounded-full object-cover ring-1 ring-white/10"
-              loading="lazy"
-              decoding="async"
-            />
-            <div className="max-w-[220px] rounded-[14px] rounded-bl-[4px] border border-white/[0.06] bg-white/[0.055] px-3 py-2 text-[10.5px] leading-[1.5] text-[#E5D6B8]/90">
-              wait, you actually watched it 🥹
-            </div>
-          </Arrive>
-        )}
-
-        {/* 8 · outgoing */}
-        {step >= 8 && (
-          <Arrive side={1} className="flex flex-col items-end">
-            <div className="max-w-[82%] rounded-[14px] rounded-br-[4px] bg-gradient-to-br from-[#C8883A] to-[#9E6A2A] px-3 py-2 text-[10.5px] font-medium leading-[1.5] text-[#1A1105]">
-              it was gorgeous. you were right
-            </div>
-            <div className="mt-1 flex items-center gap-1 pr-1">
-              <CheckCheck size={9} className="text-amber-400" />
-            </div>
-          </Arrive>
-        )}
-
-        {/* 9 · incoming */}
-        {step >= 9 && (
-          <Arrive side={-1} className="flex items-start gap-2">
-            <img
-              src={FACE.ava}
-              alt=""
-              className="mt-0.5 h-5 w-5 shrink-0 rounded-full object-cover ring-1 ring-white/10"
-              loading="lazy"
-              decoding="async"
-            />
-            <div className="max-w-[220px] rounded-[14px] rounded-bl-[4px] border border-white/[0.06] bg-white/[0.055] px-3 py-2 text-[10.5px] leading-[1.5] text-[#E5D6B8]/90">
-              i'm never wrong about films
-            </div>
-          </Arrive>
-        )}
-
-        {/* 10 · outgoing — small callback */}
-        {step >= 10 && (
-          <Arrive side={1} className="flex flex-col items-end">
-            <div className="max-w-[82%] rounded-[14px] rounded-br-[4px] bg-gradient-to-br from-[#C8883A] to-[#9E6A2A] px-3 py-2 text-[10.5px] font-medium leading-[1.5] text-[#1A1105]">
-              true. i'm taking notes
-            </div>
-            <div className="mt-1 flex items-center gap-1 pr-1">
-              <CheckCheck size={9} className="text-amber-400" />
-            </div>
-          </Arrive>
-        )}
-
-        {/* 11 · incoming — pivot */}
-        {step >= 11 && (
-          <Arrive side={-1} className="flex items-start gap-2">
-            <img
-              src={FACE.ava}
-              alt=""
-              className="mt-0.5 h-5 w-5 shrink-0 rounded-full object-cover ring-1 ring-white/10"
-              loading="lazy"
-              decoding="async"
-            />
-            <div className="max-w-[220px] rounded-[14px] rounded-bl-[4px] border border-white/[0.06] bg-white/[0.055] px-3 py-2 text-[10.5px] leading-[1.5] text-[#E5D6B8]/90">
-              how long are you there for?
-            </div>
-          </Arrive>
-        )}
-
-        {/* 12 · outgoing — the invitation */}
-        {step >= 12 && (
-          <Arrive side={1} className="flex flex-col items-end">
-            <div className="max-w-[82%] rounded-[14px] rounded-br-[4px] bg-gradient-to-br from-[#C8883A] to-[#9E6A2A] px-3 py-2 text-[10.5px] font-medium leading-[1.5] text-[#1A1105]">
-              through sunday. come out?
-            </div>
-            <div className="mt-1 flex items-center gap-1 pr-1">
-              <CheckCheck size={9} className="text-amber-400" />
-            </div>
-          </Arrive>
-        )}
-
-        {/* 13 · incoming — the tease */}
-        {step >= 13 && (
-          <Arrive side={-1} className="flex items-start gap-2">
-            <img
-              src={FACE.ava}
-              alt=""
-              className="mt-0.5 h-5 w-5 shrink-0 rounded-full object-cover ring-1 ring-white/10"
-              loading="lazy"
-              decoding="async"
-            />
-            <div className="max-w-[220px] rounded-[14px] rounded-bl-[4px] border border-white/[0.06] bg-white/[0.055] px-3 py-2 text-[10.5px] leading-[1.5] text-[#E5D6B8]/90">
-              is that an invitation?
-            </div>
-          </Arrive>
-        )}
-
-        {/* 14 · outgoing — decisive */}
-        {step >= 14 && (
-          <Arrive side={1} className="flex flex-col items-end">
-            <div className="max-w-[82%] rounded-[14px] rounded-br-[4px] bg-gradient-to-br from-[#C8883A] to-[#9E6A2A] px-3 py-2 text-[10.5px] font-medium leading-[1.5] text-[#1A1105]">
-              obviously
-            </div>
-            <div className="mt-1 flex items-center gap-1 pr-1">
-              <CheckCheck size={9} className="text-amber-300" />
-            </div>
-          </Arrive>
-        )}
-
-        {/* 15 · incoming — the yes */}
-        {step >= 15 && (
-          <Arrive side={-1} className="flex items-start gap-2">
-            <img
-              src={FACE.ava}
-              alt=""
-              className="mt-0.5 h-5 w-5 shrink-0 rounded-full object-cover ring-1 ring-white/10"
-              loading="lazy"
-              decoding="async"
-            />
-            <div className="max-w-[220px] rounded-[14px] rounded-bl-[4px] border border-white/[0.06] bg-white/[0.055] px-3 py-2 text-[10.5px] leading-[1.5] text-[#E5D6B8]/90">
-              let me check flights
-            </div>
-          </Arrive>
-        )}
-
-        {/* 16 · outgoing — the closer */}
-        {step >= 16 && (
-          <Arrive side={1} className="flex flex-col items-end">
-            <div className="max-w-[82%] rounded-[14px] rounded-br-[4px] bg-gradient-to-br from-[#C8883A] to-[#9E6A2A] px-3 py-2 text-[10.5px] font-medium leading-[1.5] text-[#1A1105]">
-              i'll book dinner
-            </div>
-            <div className="mt-1 flex items-center gap-1 pr-1">
-              <CheckCheck size={9} className="text-amber-400" />
-            </div>
-          </Arrive>
-        )}
-
-        {/* typing — Ava is replying to the closer */}
-        {step >= 17 && (
-          <Arrive side={-1} className="flex items-start gap-2 pt-0.5">
-            <img
-              src={FACE.ava}
-              alt=""
-              className="h-5 w-5 shrink-0 rounded-full object-cover ring-1 ring-white/10"
-              loading="lazy"
-              decoding="async"
-            />
-            <div className="flex items-center gap-1 rounded-full border border-white/[0.06] bg-white/[0.05] px-2.5 py-1.5">
-              {[0, 1, 2].map((i) => (
-                <motion.span
-                  key={i}
-                  animate={{ opacity: [0.3, 1, 0.3], y: [0, -1, 0] }}
-                  transition={{
-                    duration: 1.2,
-                    repeat: Infinity,
-                    delay: i * 0.18,
-                    ease: "easeInOut",
-                  }}
-                  className="h-1 w-1 rounded-full bg-[#E5D6B8]/60"
-                />
-              ))}
-            </div>
-            <span className="text-[8.5px] text-[#E5D6B8]/35">typing…</span>
-          </Arrive>
-        )}
+          {/* ⚡ typing indicator sits on the side whose message is about to land */}
+          <AnimatePresence initial={false}>
+            {typing && (
+              <motion.div
+                key={`typing-${typing}`}
+                initial={{ opacity: 0, y: 6, scale: 0.94 }}
+                animate={{ opacity: 1, y: 0, scale: 1 }}
+                exit={{ opacity: 0, y: -4, scale: 0.96 }}
+                transition={UI_SPRING}
+                className={
+                  typing === "ava"
+                    ? "flex items-start gap-2"
+                    : "flex items-start justify-end gap-2"
+                }
+              >
+                {typing === "ava" && (
+                  <img
+                    src={FACE.ava}
+                    alt=""
+                    className="h-5 w-5 shrink-0 rounded-full object-cover ring-1 ring-white/10"
+                    loading="lazy"
+                    decoding="async"
+                  />
+                )}
+                <div className="flex items-center gap-1 rounded-full border border-white/[0.06] bg-white/[0.05] px-2.5 py-1.5">
+                  {[0, 1, 2].map((i) => (
+                    <motion.span
+                      key={i}
+                      animate={{ opacity: [0.3, 1, 0.3], y: [0, -1, 0] }}
+                      transition={{
+                        duration: 1.1,
+                        repeat: Infinity,
+                        delay: i * 0.16,
+                        ease: "easeInOut",
+                      }}
+                      className="h-1 w-1 rounded-full bg-[#E5D6B8]/60"
+                    />
+                  ))}
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </div>
       </div>
 
       <div className="relative z-10 border-t border-white/[0.05] px-3 pb-6 pt-2.5">
         <div className="mb-1.5 flex items-center gap-2 rounded-lg border-l-2 border-amber-400 bg-white/[0.03] px-2 py-1">
           <CornerUpLeft size={9} className="text-amber-400" />
           <span className="truncate text-[8.5px] text-[#E5D6B8]/50">
-            Replying to Ava · “let me check flights”
+            Replying to Ava · “{LAST_AVA_TEXT}”
           </span>
         </div>
         <div className="flex items-center gap-1.5">
@@ -2588,52 +2554,12 @@ function PanelFaces() {
 
 /* ── Tabbed shell — two tabs ── */
 
-/** ⚡ 16 messages + typing indicator. 850 ms stagger ≈ 13 s full run. */
-const CHAT_STEPS = 17;
-const CHAT_STAGGER_MS = 850;
-
 function TabbedPhoneUI() {
   const [tab, setTab] = useState<TabKey>("chats");
-  const [step, setStep] = useState(0);
-  const hostRef = useRef<HTMLDivElement>(null);
   const reduce = useReducedMotion();
 
-  useEffect(() => {
-    if (reduce) {
-      setStep(CHAT_STEPS);
-      return;
-    }
-    const el = hostRef.current;
-    if (!el) return;
-    const timers: number[] = [];
-    let started = false;
-    const start = () => {
-      if (started) return;
-      started = true;
-      for (let i = 1; i <= CHAT_STEPS; i++) {
-        timers.push(
-          window.setTimeout(() => setStep(i), (i - 1) * CHAT_STAGGER_MS),
-        );
-      }
-    };
-    const io = new IntersectionObserver(
-      (entries) => {
-        if (entries[0] && entries[0].isIntersecting) {
-          start();
-          io.disconnect();
-        }
-      },
-      { threshold: 0.35 },
-    );
-    io.observe(el);
-    return () => {
-      io.disconnect();
-      for (let i = 0; i < timers.length; i++) window.clearTimeout(timers[i]);
-    };
-  }, [reduce]);
-
   return (
-    <div ref={hostRef} className="relative flex h-full w-full flex-col bg-[#08080B]">
+    <div className="relative flex h-full w-full flex-col bg-[#08080B]">
       <div className="relative flex-1 overflow-hidden">
         <AnimatePresence initial={false}>
           <motion.div
@@ -2651,7 +2577,7 @@ function TabbedPhoneUI() {
             className="absolute inset-0 bg-[#08080B]"
             style={{ willChange: "opacity" }}
           >
-            {tab === "chats" && <PanelChats step={step} />}
+            {tab === "chats" && <PanelChats />}
             {tab === "faces" && <PanelFaces />}
           </motion.div>
         </AnimatePresence>
@@ -3461,16 +3387,76 @@ function BeatArrival() {
       </Reveal>
 
       <Reveal delay={0.3}>
-        <div className="mt-8 flex flex-wrap justify-center gap-3">
-          <a
-            href={DOWNLOAD_HREF}
-            download
-            className="inline-flex items-center justify-center gap-2 rounded-full border border-white/10 px-6 py-3 text-[12.5px] text-stone-300 transition-all duration-300 hover:border-white/25 hover:bg-white/[0.05]"
-          >
-            Download for Android
-          </a>
-        </div>
-      </Reveal>
+  <div className="mt-8 flex flex-wrap justify-center gap-3">
+    <a
+      href={DOWNLOAD_HREF}
+      download
+      className="group relative inline-flex items-center gap-3 overflow-hidden rounded-full border border-white/12 bg-white/[0.04] py-2.5 pl-3 pr-5 text-left backdrop-blur-md transition-all duration-300 ease-out will-change-transform hover:-translate-y-0.5 hover:border-amber-400/40 hover:bg-white/[0.07] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-300/70"
+    >
+      {/* soft amber wash that wakes up on hover */}
+      <span
+        aria-hidden="true"
+        className="pointer-events-none absolute inset-0 -z-10 opacity-0 transition-opacity duration-500 group-hover:opacity-100"
+        style={{
+          background:
+            "radial-gradient(120% 140% at 0% 50%, rgba(200,136,58,0.28) 0%, rgba(200,136,58,0.06) 42%, transparent 72%)",
+        }}
+      />
+
+      {/* Android mark */}
+      <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-gradient-to-b from-amber-300 to-amber-500 shadow-[inset_0_1px_0_rgba(255,255,255,0.35),0_6px_20px_-8px_rgba(200,136,58,0.9)]">
+        <svg
+          viewBox="0 0 24 24"
+          className="h-[18px] w-[18px] text-[#150E03]"
+          fill="currentColor"
+          aria-hidden="true"
+        >
+          {/* android robot head, simplified */}
+          <path d="M6 9.5C6 7.57 7.57 6 9.5 6h5C16.43 6 18 7.57 18 9.5V15a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2V9.5Z" />
+          <circle cx="10" cy="10.2" r="0.9" className="text-[#150E03]" fill="#E5D6B8" />
+          <circle cx="14" cy="10.2" r="0.9" className="text-[#150E03]" fill="#E5D6B8" />
+          <path
+            d="M8.5 5.3 7.6 3.8M15.5 5.3l.9-1.5"
+            stroke="currentColor"
+            strokeWidth="1.1"
+            strokeLinecap="round"
+            fill="none"
+          />
+          <path
+            d="M4.4 11.4v4.2M19.6 11.4v4.2"
+            stroke="currentColor"
+            strokeWidth="1.4"
+            strokeLinecap="round"
+            fill="none"
+          />
+          <path
+            d="M9.5 18v2M14.5 18v2"
+            stroke="currentColor"
+            strokeWidth="1.4"
+            strokeLinecap="round"
+            fill="none"
+          />
+        </svg>
+      </span>
+
+      {/* two-line label — the app-store pattern */}
+      <span className="flex flex-col leading-tight">
+        <span className="text-[9px] font-medium uppercase tracking-[0.22em] text-stone-500 transition-colors duration-300 group-hover:text-amber-300/80">
+          Download for
+        </span>
+        <span className="text-[13.5px] font-semibold tracking-[-0.01em] text-stone-100">
+          Android
+        </span>
+      </span>
+
+      {/* chevron that leans out on hover */}
+      <ArrowRight
+        size={15}
+        className="ml-1 text-stone-500 transition-all duration-300 ease-out group-hover:translate-x-0.5 group-hover:text-amber-300"
+      />
+    </a>
+  </div>
+</Reveal>
 
       <Reveal delay={0.36}>
         <div className="mx-auto mt-14 mb-8 h-px w-24 bg-gradient-to-r from-transparent via-amber-500/50 to-transparent" />
