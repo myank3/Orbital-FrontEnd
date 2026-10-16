@@ -140,7 +140,7 @@ const AMBER = "#C8883A";
 const CREAM = "#E5D6B8";
 const DEEP = "#04060A";
 
-const DOWNLOAD_HREF = "/downloads/Orbital.V.0.0.1.apk";
+const DOWNLOAD_HREF = "/downloads/orbital.apk";
 
 const UI_SPRING = { type: "spring", stiffness: 520, damping: 36 } as const;
 const CINEMATIC_SPRING = {
