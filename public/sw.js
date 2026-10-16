@@ -11,7 +11,7 @@
  * If you forget to bump this, clients will keep running old JS.
  */
 
-const SW_VERSION = 'v2';
+const SW_VERSION = 'v3'; // ← bumped from v2
 const CACHE_NAME = `orbital-${SW_VERSION}`;
 
 /* ────────────────────────────────────────────────────────── */
@@ -67,7 +67,20 @@ self.addEventListener('fetch', (event) => {
 
   if (isDocument) {
     event.respondWith(
-      fetch(event.request).catch(() => caches.match(event.request)),
+      fetch(event.request).catch(async () => {
+        // SPA fallback — serve the app shell so the client router
+        // can resolve the route. Never return undefined from a
+        // respondWith() promise: the browser throws
+        // "Failed to convert value to 'Response'".
+        const cached = await caches.match('/index.html');
+        if (cached) return cached;
+
+        return new Response('Offline', {
+          status: 503,
+          statusText: 'Offline',
+          headers: { 'Content-Type': 'text/plain' },
+        });
+      }),
     );
     return;
   }
@@ -88,6 +101,16 @@ self.addEventListener('fetch', (event) => {
         }
         return response;
       })
-      .catch(() => caches.match(event.request)),
+      .catch(async () => {
+        const cached = await caches.match(event.request);
+        // Always return a Response — never undefined.
+        return (
+          cached ??
+          new Response('', {
+            status: 504,
+            statusText: 'Gateway Timeout',
+          })
+        );
+      }),
   );
 });

@@ -12,6 +12,7 @@ import {
   useState,
   type ReactNode,
 } from 'react';
+import { useLocation } from 'react-router-dom';
 import {
   apiService,
   getAccessToken,
@@ -40,7 +41,30 @@ export interface AuthProviderProps {
   children: ReactNode;
 }
 
+/**
+ * Routes that must NOT trigger auth hydration.
+ * Visiting these as a logged-out user is expected and must not
+ * fire /refresh, /api/User/profile, or the SignalR hub — all of
+ * which return 401 and trigger a spurious redirect.
+ */
+const PUBLIC_ROUTES = [
+  '/login',
+  '/register',
+  '/forgot-password',
+  '/reset-password',
+];
+
+function isPublicRoute(pathname: string): boolean {
+  // Exact match, plus allow nested paths under each public route
+  // e.g. /reset-password?token=... still matches /reset-password
+  return PUBLIC_ROUTES.some(
+    (route) => pathname === route || pathname.startsWith(`${route}/`),
+  );
+}
+
 function AuthProviderComponent({ children }: AuthProviderProps) {
+  const location = useLocation();
+
   const [token, setTokenState] = useState<string | null>(() => getAccessToken());
   const [user, setUser] = useState<UserProfileDto | null>(null);
   const [loading, setLoading] = useState(true);
@@ -88,6 +112,18 @@ function AuthProviderComponent({ children }: AuthProviderProps) {
   useEffect(() => {
     let isMounted = true;
 
+    // ── Public-route guard ──────────────────────────────────────
+    // On /login, /register, /forgot-password, /reset-password we
+    // do NOT attempt to hydrate the session. There is no session
+    // to hydrate, and running the flow produces a 401 storm plus
+    // a redirect back to /login after the guard's timeout.
+    if (isPublicRoute(location.pathname)) {
+      setLoading(false);
+      return () => {
+        isMounted = false;
+      };
+    }
+
     const bootstrap = async () => {
       const storedToken = getAccessToken();
 
@@ -128,7 +164,7 @@ function AuthProviderComponent({ children }: AuthProviderProps) {
       isMounted = false;
       window.removeEventListener('auth:unauthorized', handleUnauthorized);
     };
-  }, [clearAuthState, startSignalR, stopSignalR]);
+  }, [location.pathname, clearAuthState, startSignalR, stopSignalR]);
 
   const login = useCallback(
     async (identifier: string, password: string): Promise<UserProfileDto> => {
