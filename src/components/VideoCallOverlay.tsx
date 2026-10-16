@@ -26,7 +26,6 @@ import {
   VolumeX,
   MonitorUp,
   MonitorOff,
-  SwitchCamera,
   Loader2,
 } from 'lucide-react';
 
@@ -96,7 +95,6 @@ function VideoCallOverlay(): React.JSX.Element | null {
     minimize,
     expand,
     endCall,
-    replaceVideoTrack,
   } = useCall();
 
   const { user } = useAuth();
@@ -107,17 +105,6 @@ function VideoCallOverlay(): React.JSX.Element | null {
   const pipRef = useRef<HTMLDivElement | null>(null);
 
   const [screenBusy, setScreenBusy] = useState<boolean>(false);
-  const [camBusy, setCamBusy] = useState<boolean>(false);
-  const [facingMode, setFacingMode] = useState<'user' | 'environment'>('user');
-  /**
-   * Bumped after every camera swap so the local-stream attach effect
-   * re-runs. The MediaStream reference itself doesn't change (we mutate
-   * its track list in place), so without this the effect would never
-   * re-fire and the preview would stay frozen on the old camera.
-   */
-  const [streamVersion, setStreamVersion] = useState<number>(0);
-  const [videoInputCount, setVideoInputCount] = useState<number>(1);
-
   const [peerProfile, setPeerProfile] = useState<UserProfileDto | null>(null);
   // ⚡ Render trigger — flips once the local <video> has decoded a frame.
   //    Never read; the visibility logic is presence-based (see below).
@@ -180,33 +167,8 @@ function VideoCallOverlay(): React.JSX.Element | null {
 
   const peerAvatar = peerProfile?.avatarUrl ?? null;
 
-  /* ── Video-input enumeration (for the flip button) ───── */
-
-  useEffect(() => {
-    let active = true;
-    const update = async () => {
-      try {
-        const devices = await navigator.mediaDevices.enumerateDevices();
-        const cams = devices.filter((d) => d.kind === 'videoinput');
-        if (active) setVideoInputCount(cams.length);
-      } catch {
-        /* ignore */
-      }
-    };
-    void update();
-    // Re-check when the user plugs in / unplugs a camera (desktop).
-    navigator.mediaDevices?.addEventListener?.('devicechange', update);
-    return () => {
-      active = false;
-      navigator.mediaDevices?.removeEventListener?.('devicechange', update);
-    };
-    // Re-run once a stream exists, because labels/ids only populate
-    // after the first getUserMedia permission grant on some browsers.
-  }, [localStream]);
-
   /* ── Attach local stream ─────────────────────────────── */
-  // ⚡ FIX: the deps now include `session`, `isMinimized`, and
-  //    `streamVersion`.
+  // ⚡ FIX: the deps now include `session` and `isMinimized`.
   //
   //    Previously, deps were `[localStream]` only. That broke the
   //    *initiator's* self-view because CallContext.initiateCall does:
@@ -228,11 +190,6 @@ function VideoCallOverlay(): React.JSX.Element | null {
   //    finally mounts. Adding `isMinimized` does the same for
   //    minimize→expand (the <video> unmounts/remounts on those
   //    transitions too).
-  //
-  //    `streamVersion` does the same for the camera-flip flow: the
-  //    MediaStream reference is stable across a flip (we swap tracks
-  //    in place), so bumping this counter is what forces the effect
-  //    to re-run and re-attach the mutated stream to the element.
   //
   //    The acceptor never hit this because acceptCall sets
   //    localStream and session in the same render — that's why only
@@ -269,7 +226,7 @@ function VideoCallOverlay(): React.JSX.Element | null {
       el.removeEventListener('loadedmetadata', onReady);
       el.removeEventListener('canplay', onReady);
     };
-  }, [localStream, session, isMinimized, streamVersion]);
+  }, [localStream, session, isMinimized]);
 
   /* ── Attach remote video stream (MUTED) ──────────────── */
   // Audio playback is handled by the persistent <audio> sink inside
@@ -317,48 +274,6 @@ function VideoCallOverlay(): React.JSX.Element | null {
       setScreenBusy(false);
     }
   }, [isScreenSharing, startScreenShare, stopScreenShare]);
-
-  /* ── Camera flip ─────────────────────────────────────── */
-
-  const handleFlipCamera = useCallback(async () => {
-    if (!localStream) return;
-    const currentTrack = localStream.getVideoTracks()[0];
-    if (!currentTrack) return;
-
-    const next = facingMode === 'user' ? 'environment' : 'user';
-    setCamBusy(true);
-    try {
-      const fresh = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: { ideal: next } },
-        audio: false,
-      });
-      const newTrack = fresh.getVideoTracks()[0];
-      if (!newTrack) throw new Error('getUserMedia returned no video track');
-
-      // 1. Point the outbound sender at the new camera — the peer sees
-      //    the flip immediately, no renegotiation needed.
-      replaceVideoTrack(newTrack);
-
-      // 2. Swap the track on the existing local MediaStream in place so
-      //    every other reference (attach effect, CallContext) stays valid.
-      localStream.removeTrack(currentTrack);
-      localStream.addTrack(newTrack);
-
-      // 3. Stop the old camera only after everything else has moved on.
-      try {
-        currentTrack.stop();
-      } catch {
-        /* ignore */
-      }
-
-      setFacingMode(next);
-      setStreamVersion((v) => v + 1);
-    } catch (err) {
-      console.warn('[Overlay] Camera flip failed:', err);
-    } finally {
-      setCamBusy(false);
-    }
-  }, [localStream, facingMode, replaceVideoTrack]);
 
   /* ── Auto-hide chrome (WhatsApp behaviour, touch only) ─ */
 
@@ -614,9 +529,9 @@ function VideoCallOverlay(): React.JSX.Element | null {
               muted
               onLoadedMetadata={() => setLocalVideoReady(true)}
               onCanPlay={() => setLocalVideoReady(true)}
-              className={`w-full h-full object-cover ${
-                facingMode === 'user' ? '-scale-x-100' : ''
-              } ${hasLocalVideo ? 'block' : 'hidden'}`}
+              className={`w-full h-full object-cover -scale-x-100 ${
+                hasLocalVideo ? 'block' : 'hidden'
+              }`}
             />
 
             {!hasLocalVideo && (
@@ -680,14 +595,6 @@ function VideoCallOverlay(): React.JSX.Element | null {
               onClick={toggleVideo}
               label={isVideoOff ? 'Camera on' : 'Camera off'}
             />
-            {videoInputCount > 1 && (
-              <ControlButton
-                icon={SwitchCamera}
-                onClick={() => void handleFlipCamera()}
-                label="Flip camera"
-                busy={camBusy}
-              />
-            )}
             <ControlButton
               icon={PhoneOff}
               danger
