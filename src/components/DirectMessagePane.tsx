@@ -327,10 +327,18 @@ const REACT_RE = /^\[react:(-?\d+):([^:\]]+)(?::(add|remove))?\]$/;
 const REPLY_RE = /^\[reply:(-?\d+)\]/;
 const V1_RE = /^\[v1\]/;
 const STICKER_RE = /^\[sticker\]/;
+// Call events are self-contained markers — never nested with other prefixes.
+const CALL_RE = /^\[call:(audio|video):(answered|missed|declined):(\d+)\]$/;
 
 export interface ReactionEntry {
   emoji: string;
   userId: string;
+}
+
+export interface CallLogInfo {
+  kind: 'audio' | 'video';
+  result: 'answered' | 'missed' | 'declined';
+  duration: number; // seconds
 }
 
 export interface DecodedMessage {
@@ -339,6 +347,7 @@ export interface DecodedMessage {
   body: string;
   replyToId: number | null;
   isReaction: false;
+  call?: CallLogInfo | null;
 }
 
 export interface DecodedReaction {
@@ -351,6 +360,23 @@ export interface DecodedReaction {
 export type Decoded = DecodedMessage | DecodedReaction;
 
 export function decodeIncoming(text: string): Decoded {
+  // Call events are checked first — they're a standalone payload.
+  const callMatch = text.match(CALL_RE);
+  if (callMatch) {
+    return {
+      viewOnce: false,
+      sticker: false,
+      body: '',
+      replyToId: null,
+      isReaction: false,
+      call: {
+        kind: callMatch[1] as 'audio' | 'video',
+        result: callMatch[2] as 'answered' | 'missed' | 'declined',
+        duration: parseInt(callMatch[3], 10) || 0,
+      },
+    };
+  }
+
   const react = text.match(REACT_RE);
   if (react) {
     return {
@@ -373,7 +399,7 @@ export function decodeIncoming(text: string): Decoded {
   const reply = body.match(REPLY_RE);
   if (reply) { replyToId = parseInt(reply[1], 10); body = body.slice(reply[0].length); }
 
-  return { viewOnce, sticker, body, replyToId, isReaction: false };
+  return { viewOnce, sticker, body, replyToId, isReaction: false, call: null };
 }
 
 export function encodeReaction(
@@ -392,6 +418,14 @@ export function encodeSticker(url: string): string {
   return `[sticker]${url}`;
 }
 
+export function encodeCallLog(
+  kind: 'audio' | 'video',
+  result: 'answered' | 'missed' | 'declined',
+  durationSec: number,
+): string {
+  return `[call:${kind}:${result}:${Math.max(0, Math.floor(durationSec))}]`;
+}
+
 /* ────────────────────────────────────────────────────────── */
 /* Types & persistence                                        */
 /* ────────────────────────────────────────────────────────── */
@@ -401,6 +435,7 @@ type LocalMessage = DirectMessageDto & {
   viewed?: boolean;
   sticker?: boolean;
   replyToId?: number | null;
+  call?: CallLogInfo | null;
 };
 
 interface ReactionEvent {
@@ -575,6 +610,9 @@ async function prepareImage(file: File): Promise<{ file?: File; error?: string }
 }
 
 function messageSnippet(m: LocalMessage): string {
+  if (m.call) {
+    return m.call.kind === 'video' ? '🎥 Call' : '📞 Call';
+  }
   const t = m.plaintext ?? m.content;
   if (t) return t;
   if (m.mediaType === MediaType.Image) return m.sticker ? '🎨 Sticker' : m.viewOnce ? '👁 View once' : '📷 Photo';
@@ -590,6 +628,19 @@ function previewText(msg: DirectMessageDto, myId: string): LastMessagePreview {
   const isMe = msg.senderId === myId;
   const body = msg.plaintext ?? msg.content ?? '';
   const d = decodeIncoming(body);
+
+  // Call events: only surface real answered calls in the sidebar.
+  // Placeholders (duration 0) fall through with empty text so the
+  // FriendRow falls back to the @handle.
+  if (!d.isReaction && d.call) {
+    const duration = d.call.duration;
+    if (!duration || duration <= 0) {
+      return { text: '', sentAt: msg.sentAt, isMe };
+    }
+    const icon = d.call.kind === 'video' ? '📹' : '📞';
+    return { text: `${icon} Call · ${formatDuration(duration)}`, sentAt: msg.sentAt, isMe };
+  }
+
   const viewOnce = Boolean((msg as LocalMessage).viewOnce) || (!d.isReaction && d.viewOnce);
   let text: string;
   if (d.isReaction) text = '👍 Reacted';
@@ -831,7 +882,6 @@ function ViewOnceViewerModal({
         e.preventDefault(); onClose();
       }
     };
-    // Closing when the tab/app is hidden keeps "view once" honest.
     const onVis = () => { if (document.hidden) onClose(); };
     window.addEventListener('keydown', onKey);
     document.addEventListener('visibilitychange', onVis);
@@ -888,6 +938,7 @@ function ViewOnceViewerModal({
 const QUICK_REACTIONS = ['❤️', '😂', '👍', '😮', '😢', '🙏'];
 
 function messageTypeLabel(m: LocalMessage): string {
+  if (m.call) return m.call.kind === 'video' ? 'Video call' : 'Audio call';
   if (m.sticker) return 'Sticker';
   if (m.mediaType === MediaType.Image) return m.viewOnce ? 'View-once photo' : 'Photo';
   if (m.mediaType === MediaType.Audio) return 'Voice message';
@@ -1357,7 +1408,6 @@ const MessageRow = React.memo(
     const touchStartRef = useRef<{ x: number; y: number } | null>(null);
     const swipingRef = useRef(false);
 
-    // Swipe is applied straight to the DOM — no React re-render per touchmove.
     const applySwipe = (x: number) => {
       swipeRef.current = x;
       const el = innerRef.current;
@@ -1425,6 +1475,30 @@ const MessageRow = React.memo(
       }).length;
       return count > 0 && count * 1.5 >= chars.length;
     }, [displayText, hasText]);
+
+    // ── Call events: only render when the call actually happened. ──
+    // Rows with duration === 0 are dial-only placeholders (missed,
+    // declined, cancelled, never-answered) — suppressed entirely.
+    if (message.call) {
+      const duration = message.call.duration;
+      if (!duration || duration <= 0) return null;
+
+      const CallIcon = message.call.kind === 'video' ? Video : Phone;
+
+      return (
+        <div className="flex justify-center my-3 select-none">
+          <div
+            className={`inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full ${theme.subtleBg} border ${theme.subtleBorder} ${theme.textSecondary}`}
+          >
+            <CallIcon className="w-3.5 h-3.5 shrink-0" />
+            <span className="text-[12px] font-medium">Call ended ·</span>
+            <span className="text-[12px] tabular-nums opacity-80">
+              {formatDuration(duration)}
+            </span>
+          </div>
+        </div>
+      );
+    }
 
     const isVoice = message.mediaType === MediaType.Audio;
     const tailClass = isLastOfGroup ? (isMe ? 'rounded-br-[4px]' : 'rounded-bl-[4px]') : '';
@@ -1660,6 +1734,7 @@ const MessageRow = React.memo(
     prev.message.content === next.message.content &&
     prev.message.plaintext === next.message.plaintext &&
     prev.message.mediaUrl === next.message.mediaUrl &&
+    prev.message.call === next.message.call &&
     prev.grouped === next.grouped &&
     prev.isLastOfGroup === next.isLastOfGroup &&
     prev.highlighted === next.highlighted &&
@@ -1723,7 +1798,7 @@ const FriendRow = React.memo(function FriendRow({
             <p className={`text-[14px] font-bold truncate tracking-tight ${theme.textPrimary}`}>{friend.displayName}</p>
             {muted && <BellOff className={`w-3 h-3 shrink-0 ${theme.textSecondary}`} />}
           </div>
-          {preview && (
+          {preview && preview.text && (
             <span className={`shrink-0 text-[10.5px] tabular-nums font-medium ${theme.textSecondary}`}>
               {formatRelativeShort(preview.sentAt)}
             </span>
@@ -1731,7 +1806,9 @@ const FriendRow = React.memo(function FriendRow({
         </div>
         <div className="flex items-center justify-between gap-2 mt-0.5">
           <p className={`text-[12px] truncate ${unread > 0 ? `${theme.textPrimary} font-semibold` : theme.textSecondary}`}>
-            {preview ? `${preview.isMe ? 'You: ' : ''}${preview.text}` : `@${friend.handle}`}
+            {preview && preview.text
+              ? `${preview.isMe ? 'You: ' : ''}${preview.text}`
+              : `@${friend.handle}`}
           </p>
           {unread > 0 && (
             <span className={`shrink-0 min-w-[20px] h-5 px-1.5 rounded-full ${theme.accent} text-[10.5px] font-bold tabular-nums flex items-center justify-center`}>
@@ -2131,7 +2208,6 @@ const Composer = React.memo(function Composer({
       setPanel('none');
       textareaRef.current?.focus();
     } else {
-      // WhatsApp behaviour: hide the system keyboard, show our panel in its place.
       textareaRef.current?.blur();
       setPanel(kind);
     }
@@ -2324,7 +2400,6 @@ const Composer = React.memo(function Composer({
           )}
         </div>
 
-        {/* Keyboard-area panels (WhatsApp style) */}
         {panel === 'emoji' && !voiceOpen && (
           <div className={`relative ${PANEL_HEIGHT} border-t ${theme.subtleBorder} overflow-hidden`}>
             <EmojiPanel
@@ -2377,7 +2452,19 @@ export function DirectMessagePane(): React.JSX.Element {
   const { userId } = useParams<{ userId?: string }>();
   const navigate = useNavigate();
   const { user } = useAuth();
-  const { initiateCall } = useCall();
+
+  // useCall() exposes the live call state. Field names vary between
+  // CallContext implementations, so we cast defensively and read
+  // whichever one exists. If your context uses a different name,
+  // add it to the union below.
+  const callCtx = useCall() as unknown as {
+    initiateCall: (peerId: string, type: CallType) => Promise<void>;
+    activeCall?: { peerId?: string; peerUserId?: string } | null;
+    currentCall?: { peerId?: string; peerUserId?: string } | null;
+    call?: { peerId?: string; peerUserId?: string } | null;
+  };
+  const initiateCall = callCtx.initiateCall;
+  const activeCall = callCtx.activeCall ?? callCtx.currentCall ?? callCtx.call ?? null;
 
   const isPeerTyping = useDmTypingReceiver(userId);
 
@@ -2449,6 +2536,15 @@ export function DirectMessagePane(): React.JSX.Element {
   const processedIdsRef = useRef<Set<DirectMessageDto['id']>>(new Set());
   const stickRef = useRef(true);
   const anchorRef = useRef<number | null>(null);
+  // Tracks the call the local user just initiated, so we can write a
+  // real "Call ended · m:ss" log when the call terminates. Set to null
+  // once the log has been written (or if the call never connected).
+  const callPendingRef = useRef<{
+    peerId: string;
+    kind: 'audio' | 'video';
+    startedAt: number;
+    sawActive: boolean;
+  } | null>(null);
 
   reactionsRef.current = reactions;
   replyToRef.current = replyTo;
@@ -2476,6 +2572,50 @@ export function DirectMessagePane(): React.JSX.Element {
       document.removeEventListener('touchstart', unlock);
     };
   }, []);
+
+  // Watch the live call state. When a call we started transitions from
+  // active back to idle, write a real `[call:kind:answered:duration]`
+  // row through the normal encrypted DM pipeline. Duration is computed
+  // from wall-clock time between "sawActive" and "call ended".
+  useEffect(() => {
+    const pending = callPendingRef.current;
+    if (!pending) return;
+
+    if (activeCall) {
+      // The call became active (connected) — mark it as real.
+      pending.sawActive = true;
+      return;
+    }
+
+    // Call state is now empty.
+    if (!pending.sawActive) {
+      // Never became active — dial-only. Drop the tracker silently.
+      callPendingRef.current = null;
+      return;
+    }
+
+    const durationSec = Math.max(1, Math.round((Date.now() - pending.startedAt) / 1000));
+    callPendingRef.current = null;
+
+    const { peerId, kind } = pending;
+    const payload = encodeCallLog(kind, 'answered', durationSec);
+
+    void (async () => {
+      try {
+        const pub = await getPublicKeyFor(peerId);
+        const enc = await encryptFor(pub, payload);
+        await signalRService.sendDirectMessage({
+          recipientId: peerId,
+          ciphertext: enc.ciphertext,
+          nonce: enc.nonce,
+          mediaUrl: undefined,
+          mediaType: undefined,
+        });
+      } catch (err) {
+        console.warn('call-ended log write failed:', err);
+      }
+    })();
+  }, [activeCall]);
 
   const scrollToBottom = useCallback(() => {
     const el = messagesContainerRef.current;
@@ -2589,7 +2729,6 @@ export function DirectMessagePane(): React.JSX.Element {
     if (viewOnceViewer && typeof viewOnceViewer.messageId === 'number') {
       const id = viewOnceViewer.messageId;
       markV1Seen(currentUserIdRef.current, id);
-      // Drop the image data from memory once it has been seen.
       setMessages((prev) =>
         prev.map((x) => (x.id === id ? { ...x, viewed: true, mediaUrl: NO_MEDIA } : x)),
       );
@@ -2648,7 +2787,6 @@ export function DirectMessagePane(): React.JSX.Element {
     });
   }, [userId]);
 
-  // Reset per-chat state whenever the conversation changes.
   useEffect(() => {
     setMessages([]);
     setReplyTo(null);
@@ -2658,6 +2796,7 @@ export function DirectMessagePane(): React.JSX.Element {
     processedIdsRef.current = new Set();
     stickRef.current = true;
     anchorRef.current = null;
+    callPendingRef.current = null;
   }, [userId]);
 
   const decodeMessages = useCallback(
@@ -2688,6 +2827,7 @@ export function DirectMessagePane(): React.JSX.Element {
           sticker: decoded.sticker,
           viewed,
           replyToId: decoded.replyToId,
+          call: decoded.call ?? null,
         });
       }
       return { msgs, events };
@@ -2695,7 +2835,6 @@ export function DirectMessagePane(): React.JSX.Element {
     [],
   );
 
-  // Initial / "load earlier" history fetch.
   useEffect(() => {
     if (!userId || !user?.id) return;
     let active = true;
@@ -2733,7 +2872,6 @@ export function DirectMessagePane(): React.JSX.Element {
     return () => { active = false; };
   }, [userId, user?.id, historyLimit, reloadTick, decodeMessages]);
 
-  // Light polling: small window, only decrypts messages we haven't seen yet.
   useEffect(() => {
     if (!userId || !user?.id) return;
     let cancelled = false;
@@ -2806,7 +2944,6 @@ export function DirectMessagePane(): React.JSX.Element {
     };
   }, [userId, user?.id, decodeMessages]);
 
-  // Real-time messages
   useEffect(() => {
     const unsub = signalRService.onReceiveDirectMessage(
       async (msg: DirectMessageDto) => {
@@ -2838,6 +2975,7 @@ export function DirectMessagePane(): React.JSX.Element {
           sticker: decoded.sticker,
           viewed: false,
           replyToId: decoded.replyToId,
+          call: decoded.call ?? null,
         };
 
         const otherId = msg.senderId === user?.id ? msg.recipientId : msg.senderId;
@@ -2852,11 +2990,12 @@ export function DirectMessagePane(): React.JSX.Element {
         if (isCurrentChat) {
           startTransition(() => { setMessages((prev) => mergeIncoming(prev, local)); });
           if (msg.senderId === userIdRef.current) {
-            playReceive();
+            // Don't chime for call events.
+            if (!local.call) playReceive();
             void apiService.markDmRead(userIdRef.current!);
           }
         } else if (msg.recipientId === user?.id && msg.senderId !== user?.id) {
-          playReceive();
+          if (!local.call) playReceive();
           setUnreadCounts((prev) => ({ ...prev, [msg.senderId]: (prev[msg.senderId] ?? 0) + 1 }));
         }
       },
@@ -2864,7 +3003,6 @@ export function DirectMessagePane(): React.JSX.Element {
     return () => { unsub(); };
   }, [user?.id]);
 
-  // Scroll management: keep pinned to bottom, or preserve position after "load earlier".
   useLayoutEffect(() => {
     const el = messagesContainerRef.current;
     if (!el) return;
@@ -3047,6 +3185,7 @@ export function DirectMessagePane(): React.JSX.Element {
 
   const handleStartReply = useCallback((m: LocalMessage) => {
     if (typeof m.id === 'number' && m.id < 0) return;
+    if (m.call) return; // Call events aren't repliable.
     setReplyTo(m);
   }, []);
 
@@ -3066,11 +3205,25 @@ export function DirectMessagePane(): React.JSX.Element {
 
   const handleAudioCall = async () => {
     if (!userId) return;
-    try { await initiateCall(userId, CallType.Audio); } catch (err) { alert(`Call failed: ${extractErrorMessage(err)}`); }
+    callPendingRef.current = {
+      peerId: userId,
+      kind: 'audio',
+      startedAt: Date.now(),
+      sawActive: false,
+    };
+    try { await initiateCall(userId, CallType.Audio); }
+    catch (err) { alert(`Call failed: ${extractErrorMessage(err)}`); }
   };
   const handleVideoCall = async () => {
     if (!userId) return;
-    try { await initiateCall(userId, CallType.Video); } catch (err) { alert(`Call failed: ${extractErrorMessage(err)}`); }
+    callPendingRef.current = {
+      peerId: userId,
+      kind: 'video',
+      startedAt: Date.now(),
+      sawActive: false,
+    };
+    try { await initiateCall(userId, CallType.Video); }
+    catch (err) { alert(`Call failed: ${extractErrorMessage(err)}`); }
   };
 
   const handleDeleteForMe = useCallback(async (m: LocalMessage) => {
@@ -3159,6 +3312,10 @@ export function DirectMessagePane(): React.JSX.Element {
     let lastTs = 0;
 
     for (const m of messages) {
+      // Call events with no duration are silent placeholders — skip
+      // them entirely so they don't affect grouping or spacing.
+      if (m.call && (!m.call.duration || m.call.duration <= 0)) continue;
+
       const day = parseUtc(m.sentAt).toDateString();
       if (day !== lastDate) {
         out.push({ type: 'date', key: `d-${day}`, label: formatDayDivider(m.sentAt) });
@@ -3167,17 +3324,31 @@ export function DirectMessagePane(): React.JSX.Element {
         lastTs = 0;
       }
       const ts = getMessageTime(m);
-      const isGrouped = m.senderId === lastSenderId && ts - lastTs < 7 * 60 * 1000;
+      // Call events break the sender group — they're rendered as their
+      // own centered row and the next real message shouldn't be "grouped".
+      const isCallEvent = Boolean(m.call);
+      const isGrouped =
+        !isCallEvent && m.senderId === lastSenderId && ts - lastTs < 7 * 60 * 1000;
       out.push({ type: 'msg', key: String(m.id), message: m, grouped: isGrouped, last: true });
-      lastSenderId = m.senderId ?? '';
-      lastTs = ts;
+      if (isCallEvent) {
+        lastSenderId = '';
+        lastTs = 0;
+      } else {
+        lastSenderId = m.senderId ?? '';
+        lastTs = ts;
+      }
     }
-    // Mark "last of group" (next item is not a message from the same sender).
+    // Mark "last of group" — next item must be a real message from the same sender.
     for (let i = 0; i < out.length; i++) {
       const it = out[i];
       if (it.type !== 'msg') continue;
       const next = out[i + 1];
-      it.last = !(next && next.type === 'msg' && next.message.senderId === it.message.senderId);
+      it.last = !(
+        next &&
+        next.type === 'msg' &&
+        !next.message.call &&
+        next.message.senderId === it.message.senderId
+      );
     }
     return out;
   }, [messages]);

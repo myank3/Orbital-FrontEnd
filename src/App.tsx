@@ -11,6 +11,7 @@ import {
   Navigate,
   useNavigate,
 } from 'react-router-dom';
+import { Toaster } from 'sonner';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { CallProvider } from './context/CallContext';
 import { ScrollToTop } from './components/ScrollToTop';
@@ -173,6 +174,18 @@ export default function App() {
             {/* ── Catch-all ────────────────────────────── */}
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
+
+          <Toaster
+            position="top-center"
+            theme="dark"
+            toastOptions={{
+              style: {
+                background: '#1A1816',
+                border: '1px solid rgba(255,255,255,0.08)',
+                color: '#EDE5D4',
+              },
+            }}
+          />
         </CallProvider>
       </AuthProvider>
     </BrowserRouter>

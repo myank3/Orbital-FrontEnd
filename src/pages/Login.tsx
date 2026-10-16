@@ -2,22 +2,29 @@
  * @license
  * SPDX-License-Identifier: Apache-2.0
  *
- * Login — v2 · ultra-fast pass
+ * Login — v3 · 144Hz pass
  *
- * ⚡ deltas vs previous:
- *   · FRAMER MOTION REMOVED ENTIRELY — no `motion`, no `AnimatePresence`,
- *     no spring solver, no per-component subscription. All entrance and
- *     exit animations are CSS keyframes on transform/opacity only.
- *   · ERROR BANNER IS PURE CSS — grid-template-rows collapse (0fr → 1fr)
- *     instead of animating `height: auto`, which forced a reflow every
- *     frame. Now the compositor drives it.
- *   · NO LAYOUT-THREATENING ANIMATIONS — never animates height, width,
- *     top, left, margin, or padding. Only transform / opacity / grid rows.
- *   · HOISTED REGEX + STYLE CONSTANTS — no new RegExp objects or string
- *     concats per keystroke / per render.
- *   · MEMOIZED — ErrorBanner, GoogleIcon, and the change handlers are
- *     memoized so typing only re-renders the fields that actually change.
- *   · SCRUBBED: useReducedMotion JS hook → CSS @media query.
+ * ⚡ deltas vs v2:
+ *   · ANIMATION FILL-MODE `backwards`, NOT `both`. With `both` the final
+ *     translate3d(0,0,0) sticks around forever, pinning every field on a
+ *     composited layer — which kills subpixel (LCD) text AA and makes the
+ *     form look soft. `backwards` still pre-renders the stagger delay, but
+ *     releases the layer the instant the animation ends → crisp text.
+ *   · NO PERSISTENT transform: translateZ(0) anywhere. Same reason.
+ *     Promotion now happens only while a transform is actually animating.
+ *   · DURATIONS TUNED FOR HIGH REFRESH — 220ms entrance (≈32 frames @144Hz),
+ *     170ms banner, 90ms press. Expo-out cubic-bezier(0.16, 1, 0.3, 1) so
+ *     the motion front-loads instead of trailing.
+ *   · STAGGER COMPRESSED 0.06s → 0.03s. Whole page settles in ~0.37s
+ *     instead of ~0.66s.
+ *   · PRESS FEEDBACK AT 90ms — taps land inside 1–2 frames at 144Hz
+ *     instead of lagging behind the finger.
+ *   · `contain: layout paint` on the error slot — the grid-row collapse
+ *     reflow is fenced off from the rest of the tree.
+ *   · FIELDS + ERROR SLOT EXTRACTED INTO memo() SUBTREES — typing in the
+ *     identifier no longer re-renders the password field, and vice versa.
+ *   · STILL: no framer-motion, no layout-triggering animation, hoisted
+ *     regexes, CSS-only reduced-motion.
  */
 
 import React, {
@@ -69,51 +76,105 @@ const TONES = {
 } as const;
 
 /* ═══════════════════════════════════════════════════════════
-   SCOPED CSS — compositor-only animations, no layout thrash.
+   SCOPED CSS — compositor-only motion, tuned for high refresh.
    Rendered once as a <style> tag inside the page tree.
    ═══════════════════════════════════════════════════════════ */
 
 const LOGIN_CSS = `
-  /* entrance — transform + opacity only, GPU-composited */
+  /* ─────────────────────────────────────────────────────────
+     ENTRANCE — transform + opacity only, expo-out.
+     220ms ≈ 32 frames @144Hz, ≈ 13 frames @60Hz.
+     fill-mode: backwards → the stagger delay is pre-rendered, but the
+     composited layer is RELEASED the moment the animation ends, so
+     text renders with normal subpixel AA afterwards.
+     ───────────────────────────────────────────────────────── */
   @keyframes orbital-fade-up {
-    from { opacity: 0; transform: translate3d(0, 8px, 0); }
+    from { opacity: 0; transform: translate3d(0, 10px, 0); }
     to   { opacity: 1; transform: translate3d(0, 0, 0); }
   }
   .orbital-fade-up {
-    animation: orbital-fade-up 0.36s cubic-bezier(0.22, 1, 0.36, 1) both;
+    animation: orbital-fade-up 220ms cubic-bezier(0.16, 1, 0.3, 1) backwards;
     backface-visibility: hidden;
   }
 
-  /* error banner entrance */
+  /* ─────────────────────────────────────────────────────────
+     ERROR BANNER ENTRANCE — same curve, tighter travel.
+     ───────────────────────────────────────────────────────── */
   @keyframes orbital-error-in {
-    from { opacity: 0; transform: translate3d(0, -4px, 0); }
-    to   { opacity: 1; transform: translate3d(0, 0, 0); }
+    from { opacity: 0; transform: translate3d(0, -6px, 0) scale3d(0.985, 0.985, 1); }
+    to   { opacity: 1; transform: translate3d(0, 0, 0) scale3d(1, 1, 1); }
   }
   .orbital-error-in {
-    animation: orbital-error-in 0.24s cubic-bezier(0.22, 1, 0.36, 1) both;
+    animation: orbital-error-in 170ms cubic-bezier(0.16, 1, 0.3, 1) backwards;
     backface-visibility: hidden;
   }
 
-  /* collapsing slot — grid-template-rows, NOT height:auto.
-     Avoids the reflow-every-frame cost of animating height. */
+  /* ─────────────────────────────────────────────────────────
+     COLLAPSING SLOT — grid-template-rows (0fr -> 1fr), never height:auto.
+     contain: layout paint fences the reflow inside this subtree so the
+     rest of the form never gets laid out again mid-transition.
+     ───────────────────────────────────────────────────────── */
   .orbital-error-slot {
     display: grid;
     grid-template-rows: 0fr;
-    transition: grid-template-rows 220ms cubic-bezier(0.22, 1, 0.36, 1);
+    contain: layout paint;
+    transition: grid-template-rows 170ms cubic-bezier(0.16, 1, 0.3, 1);
   }
-  .orbital-error-slot[data-open='true'] {
-    grid-template-rows: 1fr;
+  .orbital-error-slot[data-open='true'] { grid-template-rows: 1fr; }
+  .orbital-error-slot > .orbital-error-inner { overflow: hidden; min-height: 0; }
+
+  /* ─────────────────────────────────────────────────────────
+     PRESS + HOVER — 90ms transform so a tap resolves within one or two
+     frames at 144Hz. No base transform: the element only gets promoted
+     while it is actually being transformed.
+     ───────────────────────────────────────────────────────── */
+  .orbital-press {
+    transition:
+      transform 90ms cubic-bezier(0.2, 0, 0, 1),
+      background-color 110ms linear,
+      border-color 110ms linear,
+      color 110ms linear,
+      opacity 110ms linear;
   }
-  .orbital-error-slot > .orbital-error-inner {
-    overflow: hidden;
-    min-height: 0;
+  .orbital-press:active:not(:disabled) {
+    transform: scale3d(0.97, 0.97, 1);
   }
 
-  /* respect the user's motion preference without a JS hook */
+  /* submit button — same cadence, applied without editing AuthButton */
+  .orbital-form button[type='submit'] {
+    transition:
+      transform 90ms cubic-bezier(0.2, 0, 0, 1),
+      background-color 120ms linear,
+      opacity 110ms linear,
+      filter 120ms linear;
+  }
+  .orbital-form button[type='submit']:active:not(:disabled) {
+    transform: scale3d(0.98, 0.98, 1);
+  }
+
+  /* input chrome — colour-only, never layout. box-shadow kept short
+     because it is a paint (not composited) property. */
+  .orbital-field input {
+    transition:
+      border-color 110ms linear,
+      background-color 110ms linear,
+      box-shadow 130ms linear;
+  }
+
+  /* ─────────────────────────────────────────────────────────
+     reduced motion — CSS only, no JS hook
+     ───────────────────────────────────────────────────────── */
   @media (prefers-reduced-motion: reduce) {
     .orbital-fade-up,
     .orbital-error-in { animation: none !important; }
     .orbital-error-slot { transition: none !important; }
+    .orbital-press,
+    .orbital-form button[type='submit'],
+    .orbital-field input { transition: none !important; }
+    .orbital-press:active:not(:disabled),
+    .orbital-form button[type='submit']:active:not(:disabled) {
+      transform: none !important;
+    }
   }
 `;
 
@@ -334,7 +395,7 @@ const ErrorBanner = memo(function ErrorBanner({
             <button
               type="button"
               onClick={onResend}
-              className="mt-2 inline-flex items-center gap-1.5 text-[12px] font-medium underline-offset-2 hover:underline"
+              className="orbital-press mt-2 inline-flex items-center gap-1.5 text-[12px] font-medium underline-offset-2 hover:underline"
             >
               <RefreshCw className="w-3 h-3" />
               Resend verification link
@@ -345,7 +406,7 @@ const ErrorBanner = memo(function ErrorBanner({
             <button
               type="button"
               onClick={onRetry}
-              className="mt-2 inline-flex items-center gap-1.5 text-[12px] font-medium underline-offset-2 hover:underline"
+              className="orbital-press mt-2 inline-flex items-center gap-1.5 text-[12px] font-medium underline-offset-2 hover:underline"
             >
               <RefreshCw className="w-3 h-3" />
               Retry
@@ -354,6 +415,151 @@ const ErrorBanner = memo(function ErrorBanner({
         </div>
       </div>
     </div>
+  );
+});
+
+/* ═══════════════════════════════════════════════════════════
+   MEMOIZED FIELD SUBTREES
+   Typing in one field no longer re-renders the other.
+   ═══════════════════════════════════════════════════════════ */
+
+type FieldShellProps = {
+  inputRef: React.RefObject<HTMLDivElement | null>;
+  delay: string;
+};
+
+const IdentifierField = memo(function IdentifierField({
+  value,
+  onChange,
+  error,
+  tag,
+  inputRef,
+  delay,
+}: FieldShellProps & {
+  value: string;
+  onChange: (v: string) => void;
+  error?: string;
+  tag?: string;
+}) {
+  return (
+    <div
+      ref={inputRef}
+      className="orbital-fade-up orbital-field"
+      style={{ animationDelay: delay }}
+    >
+      <AuthInput
+        id="login-identifier"
+        label="Email or handle"
+        type="text"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder="you@orbit"
+        required
+        autoComplete="username"
+        icon={<AtSign className="w-4 h-4" />}
+        trailingTag={tag}
+        error={error}
+        hint="Use your email or handle@orbit"
+      />
+    </div>
+  );
+});
+
+const PasswordField = memo(function PasswordField({
+  value,
+  onChange,
+  error,
+  inputRef,
+  delay,
+}: FieldShellProps & {
+  value: string;
+  onChange: (v: string) => void;
+  error?: string;
+}) {
+  return (
+    <div
+      ref={inputRef}
+      className="orbital-fade-up orbital-field space-y-2"
+      style={{ animationDelay: delay }}
+    >
+      <AuthInput
+        id="login-password"
+        label="Password"
+        type="password"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder="••••••••"
+        required
+        autoComplete="current-password"
+        icon={<KeyRound className="w-4 h-4" />}
+        error={error}
+      />
+      <div className="flex justify-end">
+        <Link
+          to="/forgot-password"
+          className="text-[12px] text-[#A8A29E] hover:text-[#D97706] transition-colors duration-100"
+        >
+          Forgot password?
+        </Link>
+      </div>
+    </div>
+  );
+});
+
+const ErrorSlot = memo(function ErrorSlot({
+  open,
+  error,
+  onResend,
+  onRetry,
+  retryCountdown,
+}: {
+  open: boolean;
+  error: AuthError | null;
+  onResend: () => void;
+  onRetry: () => void;
+  retryCountdown: number | null;
+}) {
+  return (
+    <div className="orbital-error-slot" data-open={open ? 'true' : 'false'}>
+      <div className="orbital-error-inner">
+        {error && (
+          <ErrorBanner
+            key={`${error.kind}-${error.message}`}
+            error={error}
+            onResend={onResend}
+            onRetry={onRetry}
+            retryCountdown={retryCountdown}
+          />
+        )}
+      </div>
+    </div>
+  );
+});
+
+/* ═══════════════════════════════════════════════════════════
+   GOOGLE ICON — static, memoized so it never re-renders
+   ═══════════════════════════════════════════════════════════ */
+
+const GoogleIcon = memo(function GoogleIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 48 48" aria-hidden="true">
+      <path
+        fill="#EA4335"
+        d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"
+      />
+      <path
+        fill="#4285F4"
+        d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"
+      />
+      <path
+        fill="#FBBC05"
+        d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"
+      />
+      <path
+        fill="#34A853"
+        d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"
+      />
+    </svg>
   );
 });
 
@@ -395,12 +601,13 @@ function Login(): React.JSX.Element {
   }, [retryCountdown]);
 
   /* ⚡ keep the exit animation smooth. useLayoutEffect so appearing
-     content lands in the same paint as the container's expansion. */
+     content lands in the same paint as the container's expansion.
+     200ms ≈ the 170ms slot transition + one safety frame. */
   useLayoutEffect(() => {
     if (error) {
       setVisibleError(error);
     } else if (visibleError) {
-      const t = window.setTimeout(() => setVisibleError(null), 240);
+      const t = window.setTimeout(() => setVisibleError(null), 200);
       return () => window.clearTimeout(t);
     }
   }, [error, visibleError]);
@@ -520,7 +727,6 @@ function Login(): React.JSX.Element {
   }, []);
 
   const busy = loading;
-  const errorOpen = error ? 'true' : 'false';
 
   return (
     <AuthShell title="Sign in" subtitle="Welcome back to Orbital.">
@@ -534,7 +740,7 @@ function Login(): React.JSX.Element {
             type="button"
             onClick={handleGoogleLogin}
             disabled={busy}
-            className="w-full h-11 rounded-xl bg-white/[0.04] hover:bg-white/[0.08] border border-white/[0.10] hover:border-white/[0.18] text-[#EDE5D4] text-[13.5px] font-medium inline-flex items-center justify-center gap-2.5 transition-colors duration-200 active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed"
+            className="orbital-press w-full h-11 rounded-xl bg-white/[0.04] hover:bg-white/[0.08] border border-white/[0.10] hover:border-white/[0.18] text-[#EDE5D4] text-[13.5px] font-medium inline-flex items-center justify-center gap-2.5 disabled:opacity-50 disabled:cursor-not-allowed"
           >
             <GoogleIcon />
             <span>Continue with Google</span>
@@ -544,7 +750,7 @@ function Login(): React.JSX.Element {
         {/* Divider */}
         <div
           className="orbital-fade-up relative"
-          style={{ animationDelay: '0.06s' }}
+          style={{ animationDelay: '0.03s' }}
         >
           <div className="absolute inset-0 flex items-center" aria-hidden>
             <div className="w-full border-t border-white/[0.08]" />
@@ -556,74 +762,37 @@ function Login(): React.JSX.Element {
           </div>
         </div>
 
-        <form onSubmit={handleSubmit} className="space-y-4" noValidate>
-          {/* Identifier */}
-          <div
-            ref={identifierRef}
-            className="orbital-fade-up"
-            style={{ animationDelay: '0.12s' }}
-          >
-            <AuthInput
-              id="login-identifier"
-              label="Email or handle"
-              type="text"
-              value={identifier}
-              onChange={(e) => onIdentifierChange(e.target.value)}
-              placeholder="you@orbit"
-              required
-              autoComplete="username"
-              icon={<AtSign className="w-4 h-4" />}
-              trailingTag={identifierTag}
-              error={fieldErrors.identifier}
-              hint="Use your email or handle@orbit"
-            />
-          </div>
+        <form onSubmit={handleSubmit} className="orbital-form space-y-4" noValidate>
+          {/* Identifier — memoized, only re-renders when its own props change */}
+          <IdentifierField
+            inputRef={identifierRef}
+            delay="0.06s"
+            value={identifier}
+            onChange={onIdentifierChange}
+            error={fieldErrors.identifier}
+            tag={identifierTag}
+          />
 
-          {/* Password */}
-          <div
-            ref={passwordRef}
-            className="orbital-fade-up space-y-2"
-            style={{ animationDelay: '0.18s' }}
-          >
-            <AuthInput
-              id="login-password"
-              label="Password"
-              type="password"
-              value={password}
-              onChange={(e) => onPasswordChange(e.target.value)}
-              placeholder="••••••••"
-              required
-              autoComplete="current-password"
-              icon={<KeyRound className="w-4 h-4" />}
-              error={fieldErrors.password}
-            />
-            <div className="flex justify-end">
-              <Link
-                to="/forgot-password"
-                className="text-[12px] text-[#A8A29E] hover:text-[#D97706] transition-colors"
-              >
-                Forgot password?
-              </Link>
-            </div>
-          </div>
+          {/* Password — memoized, isolated from identifier keystrokes */}
+          <PasswordField
+            inputRef={passwordRef}
+            delay="0.09s"
+            value={password}
+            onChange={onPasswordChange}
+            error={fieldErrors.password}
+          />
 
-          {/* ⚡ collapsing error slot — grid-template-rows only, no motion runtime */}
-          <div className="orbital-error-slot" data-open={errorOpen}>
-            <div className="orbital-error-inner">
-              {visibleError && (
-                <ErrorBanner
-                  key={`${visibleError.kind}-${visibleError.message}`}
-                  error={visibleError}
-                  onResend={handleResend}
-                  onRetry={handleRetry}
-                  retryCountdown={retryCountdown}
-                />
-              )}
-            </div>
-          </div>
+          {/* ⚡ collapsing error slot — grid rows only, contained reflow */}
+          <ErrorSlot
+            open={error != null}
+            error={visibleError}
+            onResend={handleResend}
+            onRetry={handleRetry}
+            retryCountdown={retryCountdown}
+          />
 
           {/* Submit */}
-          <div className="orbital-fade-up" style={{ animationDelay: '0.24s' }}>
+          <div className="orbital-fade-up" style={{ animationDelay: '0.12s' }}>
             <AuthButton type="submit" loading={loading} variant="primary">
               {retryCountdown ? `Try again in ${retryCountdown}s` : 'Sign in'}
             </AuthButton>
@@ -633,12 +802,12 @@ function Login(): React.JSX.Element {
         {/* Footer */}
         <div
           className="orbital-fade-up pt-5 border-t border-white/[0.06] text-center text-[12.5px] text-[#A8A29E]"
-          style={{ animationDelay: '0.3s' }}
+          style={{ animationDelay: '0.15s' }}
         >
           Don't have an account?{' '}
           <Link
             to="/register"
-            className="text-[#D97706] hover:text-[#B45309] font-medium transition-colors"
+            className="text-[#D97706] hover:text-[#B45309] font-medium transition-colors duration-100"
           >
             Sign up
           </Link>
@@ -647,32 +816,5 @@ function Login(): React.JSX.Element {
     </AuthShell>
   );
 }
-
-/* ═══════════════════════════════════════════════════════════
-   GOOGLE ICON — static, memoized so it never re-renders
-   ═══════════════════════════════════════════════════════════ */
-
-const GoogleIcon = memo(function GoogleIcon() {
-  return (
-    <svg width="16" height="16" viewBox="0 0 48 48" aria-hidden="true">
-      <path
-        fill="#EA4335"
-        d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"
-      />
-      <path
-        fill="#4285F4"
-        d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"
-      />
-      <path
-        fill="#FBBC05"
-        d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"
-      />
-      <path
-        fill="#34A853"
-        d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"
-      />
-    </svg>
-  );
-});
 
 export default Login;

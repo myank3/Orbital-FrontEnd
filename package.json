@@ -29,6 +29,7 @@
     "react": "^19.0.1",
     "react-dom": "^19.0.1",
     "react-router-dom": "^7.18.4",
+    "sonner": "^2.0.8",
     "three": "^0.186.1",
     "three.js": "^0.77.1",
     "vite": "^8.3.0"

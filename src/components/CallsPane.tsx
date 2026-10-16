@@ -13,6 +13,7 @@ import {
   PhoneCall,
   UserPlus,
 } from 'lucide-react';
+import { toast } from 'sonner';
 import { Avatar } from './Avatar';
 import { apiService, extractErrorMessage } from '../services/api';
 import { FriendDto } from '../types/api';
@@ -30,7 +31,6 @@ function CallsPane(): React.JSX.Element {
   const [friends, setFriends] = useState<FriendDto[]>([]);
   const [loading, setLoading] = useState(true);
   const [query, setQuery] = useState('');
-  const [error, setError] = useState<string | null>(null);
   const [busyPeerId, setBusyPeerId] = useState<string | null>(null);
 
   // Live presence
@@ -50,7 +50,9 @@ function CallsPane(): React.JSX.Element {
         if (active) setFriends(data);
       })
       .catch((err) => {
-        if (active) setError(extractErrorMessage(err, 'Failed to load friends.'));
+        if (active) {
+          toast.error(extractErrorMessage(err, 'Failed to load friends.'));
+        }
       })
       .finally(() => {
         if (active) setLoading(false);
@@ -74,15 +76,14 @@ function CallsPane(): React.JSX.Element {
 
   const handleCall = async (peerId: string, callType: number) => {
     if (callBusy) {
-      setError('You are already in a call.');
+      toast.error('You are already in a call.');
       return;
     }
     setBusyPeerId(peerId);
-    setError(null);
     try {
       await initiateCall(peerId, callType);
     } catch (err) {
-      setError(extractErrorMessage(err, 'Could not start call.'));
+      toast.error(extractErrorMessage(err, 'Could not start call.'));
     } finally {
       setBusyPeerId(null);
     }
@@ -118,13 +119,6 @@ function CallsPane(): React.JSX.Element {
               className="flex-1 bg-transparent text-[12.5px] text-[#EDE5D4] placeholder-[#6B6259] outline-none"
             />
           </div>
-        </div>
-      )}
-
-      {/* Error */}
-      {error && (
-        <div className="mx-4 sm:mx-6 mt-3 p-3 rounded-lg bg-[#B91C1C]/10 border border-[#B91C1C]/20 text-[12px] text-[#F87171]">
-          {error}
         </div>
       )}
 
