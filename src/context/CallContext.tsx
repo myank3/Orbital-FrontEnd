@@ -63,6 +63,8 @@ export interface CallContextType {
   setSpeakerOn: (on: boolean) => void;
   minimize: () => void;
   expand: () => void;
+  /** Swap the outbound video track (used by camera flip). */
+  replaceVideoTrack: (track: MediaStreamTrack) => void;
 }
 
 export const CallContext = createContext<CallContextType | undefined>(undefined);
@@ -1185,6 +1187,27 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
     }
   }, [stopScreenShare]);
 
+  /* ── Camera flip ─────────────────────────────────────── */
+
+  /**
+   * Swap the outbound video track on the peer connection.
+   *
+   * Used by the overlay's camera-flip handler. The local MediaStream is
+   * mutated in place (remove old track, add new one), but the outbound
+   * sender still points at the *old* track until we call replaceTrack
+   * here. Because the kind doesn't change (video → video), this does
+   * not trigger renegotiation — same mechanism screen-share uses.
+   */
+  const replaceVideoTrack = useCallback((track: MediaStreamTrack) => {
+    const pc = peerConnectionRef.current;
+    if (!pc) return;
+    const sender = pc.getSenders().find((s) => s.track?.kind === 'video');
+    if (!sender) return;
+    void sender.replaceTrack(track).catch((err) => {
+      console.warn('[Call] replaceVideoTrack failed:', err);
+    });
+  }, []);
+
   /* ── Speaker toggle ──────────────────────────────────── */
 
   const setSpeakerOn = useCallback((on: boolean) => {
@@ -1381,6 +1404,7 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
       setSpeakerOn,
       minimize,
       expand,
+      replaceVideoTrack,
     }),
     [
       session,
@@ -1406,6 +1430,7 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
       setSpeakerOn,
       minimize,
       expand,
+      replaceVideoTrack,
     ],
   );
 
