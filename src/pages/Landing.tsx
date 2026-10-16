@@ -2,12 +2,13 @@
  * @file src/pages/Landing.tsx
  * Orbital — cinematic 3D journey with live chat.
  *
- * v11 · local textures · Timer · people-first chat imagery
+ * v12 · mobile polish · local textures · people-first imagery
  *
- *   · Textures load from /public/textures/*.jpg (downloaded).
- *   · THREE.Clock replaced with THREE.Timer throughout.
- *   · Chat script now uses people-forward imagery — candid
- *     portraits, friends, moments — not cities or landscapes.
+ *   · Mobile layout rebuilt: hero stacks, sections breathe,
+ *     floating cards simplified for small screens.
+ *   · Text sizes clamp cleanly from 375px to 1440px.
+ *   · Textures load from /public/textures/*.jpg.
+ *   · Chat script uses candid, people-forward imagery.
  *   · Every planet keeps its distinct palette and atmosphere.
  */
 
@@ -48,15 +49,13 @@ import {
 } from "lucide-react";
 
 /* ═══════════════════════════════════════════════════════════
-   IMAGE ASSETS — people-forward editorial
+   IMAGE ASSETS
    ═══════════════════════════════════════════════════════════ */
 
 const u = (id: string, w: number, q = 92) =>
   `https://images.unsplash.com/photo-${id}?w=${w}&q=${q}&auto=format&fit=crop`;
 
-/* Portraits: 20 real faces — diverse, editorial, warm. */
 const PORTRAIT = {
-  /* Women */
   alexa:   u("1517841905240-472988babdf9", 1600),
   maya:    u("1531123897727-8f129e1688ce", 1600),
   jamie:   u("1494790108377-be9c29b29330", 1600),
@@ -68,7 +67,6 @@ const PORTRAIT = {
   nova:    u("1521119989659-a83eee488004", 1600),
   camille: u("1531746020798-e6953c6e8e04", 1600),
 
-  /* Men */
   sam:     u("1506794778202-cad84cf45f1d", 1600),
   blake:   u("1500648767791-00dcc994a43e", 1600),
   noah:    u("1507591064344-4c6ce005b128", 1600),
@@ -81,39 +79,22 @@ const PORTRAIT = {
   ellis:   u("1463453091185-61582044d556", 1600),
 } as const;
 
-/* Media: shared moments — people first, places second. */
 const MEDIA = {
-  /* Two friends, close */
   twoFriends:   u("1543269865-cbf427effbad", 2400),
-  /* Friends laughing outdoors */
   friendsLaugh: u("1529156069898-49953e39b3ac", 2400),
-  /* Woman smiling — editorial */
   womanSmile:   u("1494790108377-be9c29b29330", 2400),
-  /* Man smiling — editorial */
   manSmile:     u("1500648767791-00dcc994a43e", 2400),
-  /* Group of friends at dusk */
   groupDusk:    u("1522071820081-009f0129c71c", 2400),
-  /* Two people at a cafe */
   cafe:         u("1517245386807-bb43f82c33c4", 2400),
-  /* Best friends hugging */
   hug:          u("1523301343968-6a6ebf63c672", 2400),
-  /* Woman on call — remote living */
   womanCall:    u("1519389950473-47ba0277781c", 2400),
-  /* Man on call — casual */
   manCall:      u("1512428559087-560fa5ceab42", 2400),
-  /* Mother and daughter */
   family:       u("1511895426328-dc8714191300", 2400),
-  /* Friends at dinner, warm */
   dinner:       u("1543007630-9710e4a00a20", 2400),
-  /* Couple walking */
   coupleWalk:   u("1518199266791-5375a83190b7", 2400),
-  /* Two friends in a car */
   carRide:      u("1469854523086-cc02fe5d8800", 2400),
-  /* Woman with flowers — warm */
   womanFlowers: u("1487412720507-e7ab37603c6f", 2400),
-  /* Man walking dog */
   manDog:       u("1518712038649-a96c9d2f8a56", 2400),
-  /* Friends on a rooftop */
   rooftop:      u("1499750310107-5fef28a66643", 2400),
 } as const;
 
@@ -209,8 +190,6 @@ function ScrollDriver() {
   }, []);
 
   useFrame(() => {
-    // Timer.update must be called ONCE per frame, before anything
-    // reads getElapsed / getDelta. ScrollDriver runs first.
     timer.update();
 
     const dt = Math.min(timer.getDelta(), 1 / 60);
@@ -291,7 +270,7 @@ function CameraRig() {
 }
 
 /* ═══════════════════════════════════════════════════════════
-   TEXTURE CACHE — tuned for local files
+   TEXTURE CACHE
    ═══════════════════════════════════════════════════════════ */
 
 const texLoader = new THREE.TextureLoader();
@@ -323,7 +302,6 @@ function usePlanetTexture(url: string, isColor = true): THREE.Texture | null {
         t.anisotropy = 8;
         t.generateMipmaps = true;
 
-        // Longitude wraps; latitude clamps.
         t.wrapS = THREE.RepeatWrapping;
         t.wrapT = THREE.ClampToEdgeWrapping;
 
@@ -657,7 +635,7 @@ function ObsidianPlanet({
 }
 
 /* ═══════════════════════════════════════════════════════════
-   INTERSTELLAR BLACK HOLE
+   BLACK HOLE
    ═══════════════════════════════════════════════════════════ */
 
 function BlackHole({
@@ -904,7 +882,6 @@ function OrbitalSystem({ tier }: { tier: "low" | "mid" | "high" }) {
 
       <Starfield count={tier === "low" ? 100 : 180} />
 
-      {/* Beat 0 — Obsidian */}
       <ObsidianPlanet position={[2.7, 0, -2]} radius={1.65} tilt={0.22} />
       <Moon
         texture={PLANET_TEX.moon}
@@ -915,7 +892,6 @@ function OrbitalSystem({ tier }: { tier: "low" | "mid" | "high" }) {
         tilt={0.35}
       />
 
-      {/* Beat 1 — Mars: mustard ochre, thin pale-yellow atmosphere */}
       <Planet
         texture={PLANET_TEX.mars}
         radius={1.15}
@@ -930,7 +906,6 @@ function OrbitalSystem({ tier }: { tier: "low" | "mid" | "high" }) {
         roughness={0.96}
       />
 
-      {/* Beat 2 — Jupiter: cream & coral banded giant */}
       <Planet
         texture={PLANET_TEX.jupiter}
         radius={2.15}
@@ -945,7 +920,6 @@ function OrbitalSystem({ tier }: { tier: "low" | "mid" | "high" }) {
         roughness={0.78}
       />
 
-      {/* Beat 3 — Saturn: pale gold, full rings */}
       <Planet
         texture={PLANET_TEX.saturn}
         radius={1.85}
@@ -969,7 +943,6 @@ function OrbitalSystem({ tier }: { tier: "low" | "mid" | "high" }) {
         orbitSpeed={0.35}
       />
 
-      {/* Beat 4 — Uranus: icy cyan, tilted ~90° */}
       <Planet
         texture={PLANET_TEX.uranus}
         radius={1.2}
@@ -984,7 +957,6 @@ function OrbitalSystem({ tier }: { tier: "low" | "mid" | "high" }) {
         roughness={0.65}
       />
 
-      {/* Beat 5 — Gargantua */}
       <BlackHole position={[0, 0, -72]} radius={1.35} tilt={0.42} />
       <Moon
         texture={PLANET_TEX.moon}
@@ -1022,7 +994,10 @@ function PhoneMockup({ children }: { children?: React.ReactNode }) {
   return (
     <div
       className="relative mx-auto select-none"
-      style={{ width: "clamp(250px, 24vw, 340px)", aspectRatio: "0.4779" }}
+      style={{
+        width: "clamp(240px, 68vw, 340px)",
+        aspectRatio: "0.4779",
+      }}
     >
       <div
         className="absolute inset-0"
@@ -1084,7 +1059,7 @@ function PhoneMockup({ children }: { children?: React.ReactNode }) {
 }
 
 /* ═══════════════════════════════════════════════════════════
-   LIVE CHAT — people-forward script
+   LIVE CHAT
    ═══════════════════════════════════════════════════════════ */
 
 type MsgKind = "text" | "image" | "voice";
@@ -1241,7 +1216,7 @@ function PhoneScreen({
     <div className="relative flex h-full w-full flex-col bg-[#08080B]">
       <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_50%_0%,rgba(245,158,11,0.20),transparent_55%)]" />
 
-      <div className="absolute inset-x-0 top-0 z-30 flex items-center justify-between px-6 pt-3 text-[10px] font-semibold tracking-tight text-white">
+      <div className="absolute inset-x-0 top-0 z-30 flex items-center justify-between px-5 pt-2.5 text-[9px] font-semibold tracking-tight text-white sm:px-6 sm:pt-3 sm:text-[10px]">
         <span className="ml-1">9:41</span>
         <div className="flex items-center gap-1.5">
           <div className="flex items-end gap-[2px]">
@@ -1257,8 +1232,8 @@ function PhoneScreen({
         </div>
       </div>
 
-      <div className="relative z-10 flex items-center gap-2.5 px-4 pb-3 pt-12">
-        <div className="h-9 w-9 shrink-0 overflow-hidden rounded-full ring-1 ring-amber-400/30">
+      <div className="relative z-10 flex items-center gap-2 px-3 pb-2.5 pt-11 sm:gap-2.5 sm:px-4 sm:pb-3 sm:pt-12">
+        <div className="h-8 w-8 shrink-0 overflow-hidden rounded-full ring-1 ring-amber-400/30 sm:h-9 sm:w-9">
           <img
             src={PORTRAIT.alexa}
             alt=""
@@ -1268,30 +1243,30 @@ function PhoneScreen({
           />
         </div>
         <div className="min-w-0 flex-1">
-          <p className="truncate text-[12.5px] font-medium tracking-[-0.01em] text-white">
+          <p className="truncate text-[11.5px] font-medium tracking-[-0.01em] text-white sm:text-[12.5px]">
             alexa
           </p>
           <div className="mt-[2px] flex items-center gap-1.5">
             <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 shadow-[0_0_6px_#34d399]" />
-            <span className="text-[9.5px] text-emerald-300/90">online</span>
-            <span className="text-[9.5px] text-white/25">·</span>
+            <span className="text-[9px] text-emerald-300/90 sm:text-[9.5px]">online</span>
+            <span className="text-[9px] text-white/25 sm:text-[9.5px]">·</span>
             <LockKeyhole size={8} className="text-white/35" />
-            <span className="text-[9.5px] text-white/35">encrypted</span>
+            <span className="text-[9px] text-white/35 sm:text-[9.5px]">encrypted</span>
           </div>
         </div>
         <button
           type="button"
           aria-label="Video call"
-          className="flex h-8 w-8 items-center justify-center rounded-full bg-white/[0.06] transition-colors hover:bg-white/[0.1]"
+          className="flex h-7 w-7 items-center justify-center rounded-full bg-white/[0.06] transition-colors hover:bg-white/[0.1] sm:h-8 sm:w-8"
         >
-          <Video size={13} className="text-white/70" />
+          <Video size={12} className="text-white/70" />
         </button>
         <button
           type="button"
           aria-label="Voice call"
-          className="flex h-8 w-8 items-center justify-center rounded-full bg-white/[0.06] transition-colors hover:bg-white/[0.1]"
+          className="flex h-7 w-7 items-center justify-center rounded-full bg-white/[0.06] transition-colors hover:bg-white/[0.1] sm:h-8 sm:w-8"
         >
-          <Phone size={13} className="text-white/70" />
+          <Phone size={12} className="text-white/70" />
         </button>
       </div>
 
@@ -1299,7 +1274,7 @@ function PhoneScreen({
 
       <div
         ref={scrollRef}
-        className="relative z-10 mt-3 flex-1 space-y-2 overflow-y-auto px-3.5 pb-3 scrollbar-hide"
+        className="relative z-10 mt-2.5 flex-1 space-y-2 overflow-y-auto px-3 pb-3 scrollbar-hide sm:mt-3 sm:px-3.5"
         style={{ scrollbarWidth: "none", msOverflowStyle: "none" }}
       >
         <div className="flex justify-center">
@@ -1315,13 +1290,13 @@ function PhoneScreen({
         {typingFrom === "alexa" && <TypingIndicator />}
       </div>
 
-      <div className="relative z-10 border-t border-white/[0.05] px-3 pb-6 pt-2.5">
+      <div className="relative z-10 border-t border-white/[0.05] px-3 pb-5 pt-2.5 sm:pb-6">
         <div className="flex items-center gap-1.5">
           <button className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-white/[0.06]">
             <Plus size={13} className="text-white/60" />
           </button>
           <div className="flex flex-1 items-center gap-2 rounded-full border border-white/[0.06] bg-white/[0.045] px-3 py-2">
-            <span className="text-[10.5px] text-white/35">Message…</span>
+            <span className="text-[10px] text-white/35 sm:text-[10.5px]">Message…</span>
             <div className="ml-auto flex items-center gap-1.5">
               <Camera size={11} className="text-white/35" />
               <Mic size={11} className="text-white/35" />
@@ -1353,7 +1328,7 @@ function ChatBubble({ message }: { message: Message }) {
       }}
       className={`flex ${isMe ? "justify-end" : "justify-start"}`}
     >
-      <div className={`flex max-w-[78%] flex-col ${isMe ? "items-end" : "items-start"}`}>
+      <div className={`flex max-w-[80%] flex-col ${isMe ? "items-end" : "items-start"}`}>
         {message.kind === "text" && (
           <div
             className={`rounded-[14px] px-3 py-[7px] text-[10px] leading-[1.4] ${
@@ -1371,7 +1346,7 @@ function ChatBubble({ message }: { message: Message }) {
             <img
               src={message.image}
               alt=""
-              className="h-[100px] w-full object-cover"
+              className="h-[96px] w-full object-cover sm:h-[100px]"
               loading="lazy"
               decoding="async"
             />
@@ -1455,7 +1430,7 @@ function TypingIndicator() {
 }
 
 /* ═══════════════════════════════════════════════════════════
-   HERO FLOATING CARDS
+   HERO FLOATING CARDS — show on mobile too, simplified
    ═══════════════════════════════════════════════════════════ */
 
 const FloatCard = memo(function FloatCard({
@@ -1485,7 +1460,7 @@ const FloatCard = memo(function FloatCard({
         scale: { duration: 0.9, delay, ease: [0.16, 1, 0.3, 1] },
         y: { duration, delay, repeat: Infinity, ease: "easeInOut" },
       }}
-      className={`pointer-events-none absolute z-20 hidden lg:block ${className ?? ""}`}
+      className={`pointer-events-none absolute z-20 ${className ?? ""}`}
       aria-hidden="true"
     >
       {children}
@@ -1518,7 +1493,7 @@ function ScrollRail() {
   }, []);
 
   return (
-    <div className="pointer-events-none fixed right-5 top-1/2 z-40 hidden -translate-y-1/2 lg:block">
+    <div className="pointer-events-none fixed right-3 top-1/2 z-40 hidden -translate-y-1/2 sm:right-5 lg:block">
       <ul className="pointer-events-auto space-y-3.5">
         {BEAT_LABELS.map((b, i) => (
           <li key={b.id} className="group flex items-center justify-end gap-3">
@@ -1571,7 +1546,7 @@ const PrimaryButton = memo(function PrimaryButton({
   variant?: "primary" | "secondary";
 }) {
   const base =
-    "group inline-flex items-center justify-center gap-2.5 rounded-full px-6 py-3.5 text-[13.5px] font-semibold tracking-[-0.01em] transition-[transform,box-shadow,background,border-color] duration-300 ease-out will-change-transform focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-300/70";
+    "group inline-flex items-center justify-center gap-2.5 rounded-full px-5 py-3 text-[13px] font-semibold tracking-[-0.01em] transition-[transform,box-shadow,background,border-color] duration-300 ease-out will-change-transform focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-300/70 sm:px-6 sm:py-3.5 sm:text-[13.5px]";
 
   const primary =
     "bg-gradient-to-b from-amber-300 to-amber-500 text-[#150E03] shadow-[0_10px_36px_-14px_rgba(245,158,11,0.9),inset_0_1px_0_rgba(255,255,255,0.35)] hover:-translate-y-0.5 hover:shadow-[0_18px_50px_-14px_rgba(245,158,11,1),inset_0_1px_0_rgba(255,255,255,0.45)]";
@@ -1585,7 +1560,7 @@ const PrimaryButton = memo(function PrimaryButton({
     <>
       {children}
       <ArrowRight
-        size={16}
+        size={15}
         className="transition-transform duration-300 ease-out group-hover:translate-x-1"
       />
     </>
@@ -1613,7 +1588,7 @@ const PrimaryButton = memo(function PrimaryButton({
 
 function Eyebrow({ children }: { children: React.ReactNode }) {
   return (
-    <div className="mb-6 inline-flex items-center gap-3 text-[10px] font-medium uppercase tracking-[0.28em] text-amber-400/90 sm:text-[11px]">
+    <div className="mb-5 inline-flex items-center gap-3 text-[10px] font-medium uppercase tracking-[0.28em] text-amber-400/90 sm:mb-6 sm:text-[11px]">
       <span className="h-px w-8 bg-gradient-to-r from-transparent to-amber-500/80" />
       {children}
     </div>
@@ -1672,7 +1647,7 @@ function Section({
   return (
     <section
       id={id}
-      className={`relative flex h-screen w-full items-center ${justify} px-5 sm:px-8 lg:px-14`}
+      className={`relative flex min-h-screen w-full items-center ${justify} px-5 py-24 sm:px-8 sm:py-28 lg:h-screen lg:px-14 lg:py-0`}
     >
       <div
         className={`relative z-10 w-full max-w-[560px] ${
@@ -1710,19 +1685,20 @@ function BeatOrigin({
   return (
     <section
       id="beat-0"
-      className="relative flex h-screen w-full items-center overflow-hidden px-5 pt-20 sm:px-8 lg:px-14 lg:pt-0"
+      className="relative flex min-h-screen w-full items-center overflow-hidden px-5 pb-16 pt-24 sm:px-8 sm:pb-20 sm:pt-28 lg:h-screen lg:px-14 lg:pb-0 lg:pt-0"
     >
-      <div className="relative z-10 mx-auto grid w-full max-w-[1440px] grid-cols-1 items-center gap-10 lg:grid-cols-[minmax(0,1fr)_minmax(320px,440px)] lg:gap-14">
-        <div className="mx-auto max-w-[620px] lg:mx-0 lg:translate-y-20">
+      <div className="relative z-10 mx-auto grid w-full max-w-[1440px] grid-cols-1 items-center gap-12 lg:grid-cols-[minmax(0,1fr)_minmax(320px,440px)] lg:gap-14">
+        {/* ── TEXT ── */}
+        <div className="mx-auto max-w-[620px] text-center lg:mx-0 lg:translate-y-20 lg:text-left">
           <Reveal>
-            <div className="mb-8 inline-flex items-center gap-3 rounded-full border border-white/[0.09] bg-white/[0.03] py-1.5 pl-1.5 pr-4 backdrop-blur-xl">
+            <div className="mb-6 inline-flex items-center gap-2.5 rounded-full border border-white/[0.09] bg-white/[0.03] py-1.5 pl-1.5 pr-3.5 backdrop-blur-xl sm:mb-8 sm:gap-3 sm:pr-4">
               <div className="flex -space-x-2">
                 {trustFaces.slice(0, 5).map((src, i) => (
                   <img
                     key={i}
                     src={src}
                     alt=""
-                    className="h-6 w-6 rounded-full border border-[#0A0A0E] object-cover"
+                    className="h-5 w-5 rounded-full border border-[#0A0A0E] object-cover sm:h-6 sm:w-6"
                     loading="eager"
                     decoding="async"
                   />
@@ -1732,14 +1708,14 @@ function BeatOrigin({
                 <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-60" />
                 <span className="relative h-2 w-2 rounded-full bg-emerald-400" />
               </span>
-              <span className="text-[10px] uppercase tracking-[0.22em] text-stone-300">
+              <span className="text-[9px] uppercase tracking-[0.18em] text-stone-300 sm:text-[10px] sm:tracking-[0.22em]">
                 A conversation, rebuilt
               </span>
             </div>
           </Reveal>
 
           <Reveal delay={0.06}>
-            <h1 className="text-[clamp(46px,7vw,110px)] font-medium leading-[0.92] tracking-[-0.055em] text-stone-100">
+            <h1 className="text-[clamp(40px,11vw,110px)] font-medium leading-[0.94] tracking-[-0.05em] text-stone-100">
               Where it all
               <br />
               <span
@@ -1752,7 +1728,7 @@ function BeatOrigin({
           </Reveal>
 
           <Reveal delay={0.12}>
-            <p className="mt-8 max-w-[470px] text-[15px] leading-[1.85] text-stone-400 sm:text-[16px]">
+            <p className="mx-auto mt-6 max-w-[470px] text-[14.5px] leading-[1.7] text-stone-400 sm:mt-8 sm:text-[16px] sm:leading-[1.85] lg:mx-0">
               Every message starts somewhere — a glance, a laugh, a
               moment worth keeping. Orbital gives those moments a place
               built only for the people inside them.
@@ -1760,7 +1736,7 @@ function BeatOrigin({
           </Reveal>
 
           <Reveal delay={0.18}>
-            <div className="mt-10 flex flex-wrap items-center gap-3">
+            <div className="mt-8 flex flex-col items-stretch gap-3 sm:mt-10 sm:flex-row sm:flex-wrap sm:items-center sm:justify-center lg:justify-start">
               <PrimaryButton to="/register">Create account</PrimaryButton>
               <PrimaryButton to="/login" variant="secondary">
                 Sign in
@@ -1769,7 +1745,7 @@ function BeatOrigin({
           </Reveal>
 
           <Reveal delay={0.24}>
-            <div className="mt-12 flex flex-wrap gap-x-8 gap-y-3 text-[11.5px] text-stone-500">
+            <div className="mt-8 flex flex-wrap justify-center gap-x-5 gap-y-2.5 text-[11px] text-stone-500 sm:mt-12 sm:gap-x-8 sm:text-[11.5px] lg:justify-start">
               <span className="flex items-center gap-2">
                 <LockKeyhole size={13} className="text-amber-400" />
                 End-to-end encrypted
@@ -1786,6 +1762,7 @@ function BeatOrigin({
           </Reveal>
         </div>
 
+        {/* ── PHONE + FLOATING CARDS ── */}
         <Reveal delay={0.14}>
           <div className="relative mx-auto w-full max-w-[420px]">
             <div
@@ -1808,8 +1785,10 @@ function BeatOrigin({
               </PhoneMockup>
             </motion.div>
 
+            {/* ── Floating cards: tighter on mobile, wide on desktop ── */}
+
             <FloatCard
-              className="left-[-92px] top-[14%]"
+              className="hidden left-[-92px] top-[14%] lg:block"
               delay={0.9}
               duration={8}
               offset={10}
@@ -1840,7 +1819,7 @@ function BeatOrigin({
             </FloatCard>
 
             <FloatCard
-              className="right-[-88px] top-[36%]"
+              className="hidden right-[-88px] top-[36%] lg:block"
               delay={1.15}
               duration={9}
               offset={14}
@@ -1866,7 +1845,7 @@ function BeatOrigin({
             </FloatCard>
 
             <FloatCard
-              className="bottom-[20%] left-[-76px]"
+              className="hidden bottom-[20%] left-[-76px] lg:block"
               delay={1.4}
               duration={7.5}
               offset={9}
@@ -1882,7 +1861,7 @@ function BeatOrigin({
             </FloatCard>
 
             <FloatCard
-              className="bottom-[6%] right-[-64px]"
+              className="hidden bottom-[6%] right-[-64px] lg:block"
               delay={1.6}
               duration={8.5}
               offset={12}
@@ -1921,7 +1900,7 @@ function BeatOrigin({
             </FloatCard>
 
             <FloatCard
-              className="right-[-100px] top-[6%]"
+              className="hidden right-[-100px] top-[6%] lg:block"
               delay={1.9}
               duration={9.5}
               offset={10}
@@ -1946,6 +1925,35 @@ function BeatOrigin({
                 </span>
               </div>
             </FloatCard>
+
+            {/* ── Mobile-only inline cards under the phone ── */}
+            <div className="mt-6 flex flex-wrap justify-center gap-2 lg:hidden">
+              <div className="flex items-center gap-2 rounded-full border border-amber-400/25 bg-black/50 px-3 py-2 backdrop-blur-xl">
+                <LockKeyhole size={11} className="text-amber-400" />
+                <span className="text-[11px] font-medium text-amber-200/90">
+                  Keys sealed on device
+                </span>
+              </div>
+              <div className="flex items-center gap-1.5 rounded-full border border-white/[0.09] bg-black/50 py-1.5 pl-1.5 pr-3 backdrop-blur-xl">
+                <div className="flex -space-x-1.5">
+                  {[PORTRAIT.iris, PORTRAIT.theo, PORTRAIT.nova].map(
+                    (src, i) => (
+                      <img
+                        key={i}
+                        src={src}
+                        alt=""
+                        className="h-5 w-5 rounded-full border border-[#0A0A0E] object-cover"
+                        loading="lazy"
+                        decoding="async"
+                      />
+                    ),
+                  )}
+                </div>
+                <span className="text-[11px] font-medium text-white/75">
+                  4 friends online
+                </span>
+              </div>
+            </div>
           </div>
         </Reveal>
       </div>
@@ -1964,7 +1972,7 @@ function BeatSignal() {
         <Eyebrow>Beat 01 · Signal</Eyebrow>
       </Reveal>
       <Reveal delay={0.06}>
-        <h2 className="text-[clamp(36px,5.2vw,68px)] font-light leading-[1] tracking-[-0.055em] text-stone-100">
+        <h2 className="text-[clamp(32px,7.5vw,68px)] font-light leading-[1.05] tracking-[-0.05em] text-stone-100 sm:leading-[1]">
           A message leaves
           <br />
           <span
@@ -1976,14 +1984,14 @@ function BeatSignal() {
         </h2>
       </Reveal>
       <Reveal delay={0.12}>
-        <p className="mt-7 max-w-[440px] text-[15px] leading-[1.9] text-stone-400">
+        <p className="mt-6 max-w-[440px] text-[14.5px] leading-[1.75] text-stone-400 sm:mt-7 sm:text-[15px] sm:leading-[1.9]">
           Your message is encrypted on your device before it ever touches
           the network. What travels is a cipher that only your circle can
           open — unreadable to anyone else, including us.
         </p>
       </Reveal>
       <Reveal delay={0.18}>
-        <div className="mt-9 grid grid-cols-3 gap-3">
+        <div className="mt-8 grid grid-cols-3 gap-2.5 sm:mt-9 sm:gap-3">
           {[
             { label: "On device", value: "AES-256" },
             { label: "In transit", value: "X25519" },
@@ -1991,12 +1999,12 @@ function BeatSignal() {
           ].map((item) => (
             <div
               key={item.label}
-              className="rounded-2xl border border-white/[0.08] bg-white/[0.025] p-4 backdrop-blur-xl"
+              className="rounded-2xl border border-white/[0.08] bg-white/[0.025] p-3 backdrop-blur-xl sm:p-4"
             >
-              <p className="text-[9.5px] uppercase tracking-[0.2em] text-stone-500">
+              <p className="text-[9px] uppercase tracking-[0.18em] text-stone-500 sm:text-[9.5px] sm:tracking-[0.2em]">
                 {item.label}
               </p>
-              <p className="mt-2 text-[13px] font-medium text-amber-300">
+              <p className="mt-1.5 text-[11.5px] font-medium text-amber-300 sm:mt-2 sm:text-[13px]">
                 {item.value}
               </p>
             </div>
@@ -2015,15 +2023,15 @@ function BeatVault() {
   return (
     <section
       id="beat-2"
-      className="relative flex h-screen w-full items-center px-5 sm:px-8 lg:px-14"
+      className="relative flex min-h-screen w-full items-center px-5 py-24 sm:px-8 sm:py-28 lg:h-screen lg:px-14 lg:py-0"
     >
-      <div className="relative z-10 grid w-full max-w-[1440px] items-center gap-14 lg:grid-cols-[0.9fr_1fr] lg:gap-20">
+      <div className="relative z-10 grid w-full max-w-[1440px] grid-cols-1 items-center gap-10 lg:grid-cols-[0.9fr_1fr] lg:gap-20">
         <Reveal delay={0.06}>
-          <div className="relative overflow-hidden rounded-[28px] border border-white/[0.09] bg-[#0B0A0D]/90 shadow-[0_50px_140px_-70px_rgba(245,158,11,0.5)] backdrop-blur-2xl">
-            <div className="p-7 sm:p-9">
-              <div className="flex items-center justify-between border-b border-white/[0.08] pb-5">
+          <div className="relative overflow-hidden rounded-[24px] border border-white/[0.09] bg-[#0B0A0D]/90 shadow-[0_50px_140px_-70px_rgba(245,158,11,0.5)] backdrop-blur-2xl sm:rounded-[28px]">
+            <div className="p-5 sm:p-7 lg:p-9">
+              <div className="flex items-center justify-between border-b border-white/[0.08] pb-4 sm:pb-5">
                 <div className="flex items-center gap-3">
-                  <div className="h-11 w-11 overflow-hidden rounded-full ring-1 ring-white/10">
+                  <div className="h-10 w-10 overflow-hidden rounded-full ring-1 ring-white/10 sm:h-11 sm:w-11">
                     <img
                       src={PORTRAIT.nova}
                       alt=""
@@ -2033,20 +2041,20 @@ function BeatVault() {
                     />
                   </div>
                   <div>
-                    <p className="text-[10px] uppercase tracking-[0.24em] text-stone-500">
+                    <p className="text-[9.5px] uppercase tracking-[0.22em] text-stone-500 sm:text-[10px] sm:tracking-[0.24em]">
                       Secure thread
                     </p>
-                    <p className="mt-1 text-[14px] text-stone-200">
+                    <p className="mt-0.5 text-[13px] text-stone-200 sm:mt-1 sm:text-[14px]">
                       Sienna Vale
                     </p>
                   </div>
                 </div>
-                <div className="flex h-10 w-10 items-center justify-center rounded-full border border-amber-400/20 bg-amber-400/[0.08]">
-                  <LockKeyhole size={17} className="text-amber-400" />
+                <div className="flex h-9 w-9 items-center justify-center rounded-full border border-amber-400/20 bg-amber-400/[0.08] sm:h-10 sm:w-10">
+                  <LockKeyhole size={16} className="text-amber-400" />
                 </div>
               </div>
 
-              <div className="mt-7 space-y-4">
+              <div className="mt-5 space-y-3.5 sm:mt-7 sm:space-y-4">
                 <motion.div
                   initial={{ opacity: 0, x: -14 }}
                   whileInView={{ opacity: 1, x: 0 }}
@@ -2055,7 +2063,7 @@ function BeatVault() {
                     duration: 0.6,
                     ease: [0.22, 1, 0.36, 1],
                   }}
-                  className="max-w-[82%] rounded-[20px] rounded-tl-[6px] border border-white/[0.07] bg-white/[0.04] px-4 py-3.5 text-[13.5px] leading-[1.55] text-stone-300"
+                  className="max-w-[82%] rounded-[18px] rounded-tl-[6px] border border-white/[0.07] bg-white/[0.04] px-3.5 py-3 text-[12.5px] leading-[1.55] text-stone-300 sm:rounded-[20px] sm:px-4 sm:py-3.5 sm:text-[13.5px]"
                 >
                   Are we still on for the shoot tomorrow?
                 </motion.div>
@@ -2069,7 +2077,7 @@ function BeatVault() {
                     delay: 0.12,
                     ease: [0.22, 1, 0.36, 1],
                   }}
-                  className="ml-auto max-w-[82%] rounded-[20px] rounded-tr-[6px] border border-amber-400/20 bg-amber-400/[0.09] px-4 py-3.5 text-[13.5px] leading-[1.55] text-amber-100"
+                  className="ml-auto max-w-[82%] rounded-[18px] rounded-tr-[6px] border border-amber-400/20 bg-amber-400/[0.09] px-3.5 py-3 text-[12.5px] leading-[1.55] text-amber-100 sm:rounded-[20px] sm:px-4 sm:py-3.5 sm:text-[13.5px]"
                 >
                   Wouldn't miss it ✦
                 </motion.div>
@@ -2083,26 +2091,26 @@ function BeatVault() {
                     delay: 0.24,
                     ease: [0.22, 1, 0.36, 1],
                   }}
-                  className="overflow-hidden rounded-[16px] border border-white/[0.08] bg-white/[0.035]"
+                  className="overflow-hidden rounded-[14px] border border-white/[0.08] bg-white/[0.035] sm:rounded-[16px]"
                 >
                   <img
                     src={MEDIA.cafe}
                     alt=""
-                    className="h-[150px] w-full object-cover"
+                    className="h-[130px] w-full object-cover sm:h-[150px]"
                     loading="lazy"
                     decoding="async"
                   />
-                  <div className="flex items-center justify-between px-4 py-2.5">
-                    <span className="text-[11px] text-stone-400">
+                  <div className="flex items-center justify-between px-3.5 py-2 sm:px-4 sm:py-2.5">
+                    <span className="text-[10.5px] text-stone-400 sm:text-[11px]">
                       Where we met · years ago
                     </span>
-                    <Check size={13} className="text-amber-400" />
+                    <Check size={12} className="text-amber-400" />
                   </div>
                 </motion.div>
               </div>
             </div>
 
-            <div className="flex items-center gap-2 border-t border-white/[0.07] bg-white/[0.015] px-7 py-4 text-[10px] uppercase tracking-[0.2em] text-stone-500">
+            <div className="flex items-center gap-2 border-t border-white/[0.07] bg-white/[0.015] px-5 py-3.5 text-[9.5px] uppercase tracking-[0.18em] text-stone-500 sm:px-7 sm:py-4 sm:text-[10px] sm:tracking-[0.2em]">
               <span className="h-1.5 w-1.5 rounded-full bg-amber-400 shadow-[0_0_10px_#F59E0B]" />
               Sealed before transmission
             </div>
@@ -2114,7 +2122,7 @@ function BeatVault() {
             <Eyebrow>Beat 02 · Vault</Eyebrow>
           </Reveal>
           <Reveal delay={0.06}>
-            <h2 className="text-[clamp(36px,5.2vw,68px)] font-light leading-[1] tracking-[-0.055em] text-stone-100">
+            <h2 className="text-[clamp(32px,7.5vw,68px)] font-light leading-[1.05] tracking-[-0.05em] text-stone-100 sm:leading-[1]">
               The keys stay
               <br />
               <span
@@ -2126,14 +2134,14 @@ function BeatVault() {
             </h2>
           </Reveal>
           <Reveal delay={0.12}>
-            <p className="mt-7 max-w-[440px] text-[15px] leading-[1.9] text-stone-400">
+            <p className="mt-6 max-w-[440px] text-[14.5px] leading-[1.75] text-stone-400 sm:mt-7 sm:text-[15px] sm:leading-[1.9]">
               Encryption keys are generated on your device and never leave
               it. Not to a server, not to a backup, not to us. What you
               send is yours to keep.
             </p>
           </Reveal>
           <Reveal delay={0.18}>
-            <div className="mt-9 space-y-3.5">
+            <div className="mt-7 space-y-3 sm:mt-9 sm:space-y-3.5">
               {[
                 "Keys generated locally, never transmitted",
                 "Independent, verifiable encryption",
@@ -2141,7 +2149,7 @@ function BeatVault() {
               ].map((item) => (
                 <div
                   key={item}
-                  className="flex items-center gap-3 text-[13.5px] text-stone-300"
+                  className="flex items-center gap-3 text-[13px] text-stone-300 sm:text-[13.5px]"
                 >
                   <Check size={15} className="shrink-0 text-amber-400" />
                   {item}
@@ -2179,7 +2187,7 @@ function BeatOrbit() {
         <Eyebrow>Beat 03 · Orbit</Eyebrow>
       </Reveal>
       <Reveal delay={0.06}>
-        <h2 className="text-[clamp(36px,5.2vw,68px)] font-light leading-[1] tracking-[-0.055em] text-stone-100">
+        <h2 className="text-[clamp(32px,7.5vw,68px)] font-light leading-[1.05] tracking-[-0.05em] text-stone-100 sm:leading-[1]">
           Small circles,
           <br />
           <span
@@ -2191,37 +2199,37 @@ function BeatOrbit() {
         </h2>
       </Reveal>
       <Reveal delay={0.12}>
-        <p className="mt-7 max-w-[440px] text-[15px] leading-[1.9] text-stone-400">
+        <p className="mt-6 max-w-[440px] text-[14.5px] leading-[1.75] text-stone-400 sm:mt-7 sm:text-[15px] sm:leading-[1.9]">
           No feeds. No followers. Just the rooms you chose — capped at
           fifty people, sized for real conversation. Messages, photos,
           files, voice notes — all in one place.
         </p>
       </Reveal>
       <Reveal delay={0.18}>
-        <div className="mt-9 flex -space-x-3">
+        <div className="mt-7 flex -space-x-2.5 sm:mt-9 sm:-space-x-3">
           {orbitFaces.map((src, i) => (
             <img
               key={i}
               src={src}
               alt=""
-              className="h-11 w-11 rounded-full border-2 border-[#07070A] object-cover"
+              className="h-9 w-9 rounded-full border-2 border-[#07070A] object-cover sm:h-11 sm:w-11"
               loading="lazy"
               decoding="async"
             />
           ))}
-          <div className="flex h-11 w-11 items-center justify-center rounded-full border-2 border-[#07070A] bg-white/[0.06] text-[10px] text-stone-400">
+          <div className="flex h-9 w-9 items-center justify-center rounded-full border-2 border-[#07070A] bg-white/[0.06] text-[9px] text-stone-400 sm:h-11 sm:w-11 sm:text-[10px]">
             +40
           </div>
         </div>
       </Reveal>
 
       <Reveal delay={0.22}>
-        <div className="mt-6 flex gap-2">
+        <div className="mt-5 flex gap-2 sm:mt-6">
           {[MEDIA.dinner, MEDIA.carRide, MEDIA.rooftop, MEDIA.coupleWalk].map(
             (src, i) => (
               <div
                 key={i}
-                className="h-16 w-16 shrink-0 overflow-hidden rounded-2xl border border-white/[0.08]"
+                className="h-14 w-14 shrink-0 overflow-hidden rounded-xl border border-white/[0.08] sm:h-16 sm:w-16 sm:rounded-2xl"
               >
                 <img
                   src={src}
@@ -2237,7 +2245,7 @@ function BeatOrbit() {
       </Reveal>
 
       <Reveal delay={0.26}>
-        <div className="mt-9">
+        <div className="mt-7 sm:mt-9">
           <PrimaryButton to="/register">Find your orbit</PrimaryButton>
         </div>
       </Reveal>
@@ -2253,15 +2261,15 @@ function BeatResonance() {
   return (
     <section
       id="beat-4"
-      className="relative flex h-screen w-full items-center px-5 sm:px-8 lg:px-14"
+      className="relative flex min-h-screen w-full items-center px-5 py-24 sm:px-8 sm:py-28 lg:h-screen lg:px-14 lg:py-0"
     >
-      <div className="relative z-10 grid w-full max-w-[1440px] items-center gap-14 lg:grid-cols-2 lg:gap-20">
+      <div className="relative z-10 grid w-full max-w-[1440px] grid-cols-1 items-center gap-12 lg:grid-cols-2 lg:gap-20">
         <div>
           <Reveal>
             <Eyebrow>Beat 04 · Resonance</Eyebrow>
           </Reveal>
           <Reveal delay={0.06}>
-            <h2 className="text-[clamp(36px,5.2vw,68px)] font-light leading-[1] tracking-[-0.055em] text-stone-100">
+            <h2 className="text-[clamp(32px,7.5vw,68px)] font-light leading-[1.05] tracking-[-0.05em] text-stone-100 sm:leading-[1]">
               Some things are
               <br />
               <span
@@ -2273,14 +2281,14 @@ function BeatResonance() {
             </h2>
           </Reveal>
           <Reveal delay={0.12}>
-            <p className="mt-7 max-w-[440px] text-[15px] leading-[1.9] text-stone-400">
+            <p className="mt-6 max-w-[440px] text-[14.5px] leading-[1.75] text-stone-400 sm:mt-7 sm:text-[15px] sm:leading-[1.9]">
               When a text isn't enough, move into voice or video. Spatial
               audio, noise suppression, and low-latency calls that hold up
               on a bad connection.
             </p>
           </Reveal>
           <Reveal delay={0.18}>
-            <div className="mt-9 grid grid-cols-2 gap-3">
+            <div className="mt-7 grid grid-cols-2 gap-2.5 sm:mt-9 sm:gap-3">
               {[
                 { icon: Mic, label: "Spatial audio" },
                 { icon: MessageCircle, label: "Low latency" },
@@ -2289,10 +2297,10 @@ function BeatResonance() {
               ].map((item) => (
                 <div
                   key={item.label}
-                  className="flex items-center gap-3 rounded-2xl border border-white/[0.08] bg-white/[0.025] p-3.5 backdrop-blur-xl"
+                  className="flex items-center gap-2.5 rounded-2xl border border-white/[0.08] bg-white/[0.025] p-3 backdrop-blur-xl sm:gap-3 sm:p-3.5"
                 >
-                  <item.icon size={16} className="shrink-0 text-amber-400" />
-                  <span className="text-[12px] text-stone-300">
+                  <item.icon size={15} className="shrink-0 text-amber-400 sm:h-4 sm:w-4" />
+                  <span className="text-[11.5px] text-stone-300 sm:text-[12px]">
                     {item.label}
                   </span>
                 </div>
@@ -2302,7 +2310,7 @@ function BeatResonance() {
         </div>
 
         <Reveal delay={0.1}>
-          <div className="relative overflow-hidden rounded-[28px] border border-white/[0.08] bg-[#0B0A0D]/90 backdrop-blur-2xl">
+          <div className="relative overflow-hidden rounded-[24px] border border-white/[0.08] bg-[#0B0A0D]/90 backdrop-blur-2xl sm:rounded-[28px]">
             <div className="relative aspect-[4/5] w-full overflow-hidden bg-black">
               <img
                 src={MEDIA.womanCall}
@@ -2313,11 +2321,11 @@ function BeatResonance() {
               />
               <div className="absolute inset-0 bg-gradient-to-t from-[#0B0A0D] via-[#0B0A0D]/40 to-transparent" />
 
-              <div className="absolute right-3 top-3 flex flex-col gap-1.5">
+              <div className="absolute right-2.5 top-2.5 flex flex-col gap-1.5 sm:right-3 sm:top-3">
                 {[PORTRAIT.iris, PORTRAIT.theo, PORTRAIT.nova].map((src, i) => (
                   <div
                     key={i}
-                    className="h-10 w-10 overflow-hidden rounded-xl border border-white/20 ring-1 ring-black/40"
+                    className="h-9 w-9 overflow-hidden rounded-xl border border-white/20 ring-1 ring-black/40 sm:h-10 sm:w-10"
                   >
                     <img
                       src={src}
@@ -2330,10 +2338,10 @@ function BeatResonance() {
                 ))}
               </div>
 
-              <div className="absolute inset-x-0 bottom-0 p-6">
-                <div className="rounded-[20px] border border-white/[0.08] bg-black/60 p-4 backdrop-blur-xl">
+              <div className="absolute inset-x-0 bottom-0 p-4 sm:p-6">
+                <div className="rounded-[18px] border border-white/[0.08] bg-black/60 p-3.5 backdrop-blur-xl sm:rounded-[20px] sm:p-4">
                   <div className="flex items-center gap-3">
-                    <div className="h-11 w-11 overflow-hidden rounded-full ring-1 ring-white/10">
+                    <div className="h-10 w-10 overflow-hidden rounded-full ring-1 ring-white/10 sm:h-11 sm:w-11">
                       <img
                         src={PORTRAIT.blake}
                         alt=""
@@ -2343,20 +2351,22 @@ function BeatResonance() {
                       />
                     </div>
                     <div className="flex-1">
-                      <p className="text-[13px] text-white">John Reeves</p>
-                      <div className="mt-1 flex items-center gap-1.5">
+                      <p className="text-[12.5px] text-white sm:text-[13px]">
+                        John Reeves
+                      </p>
+                      <div className="mt-0.5 flex items-center gap-1.5 sm:mt-1">
                         <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-400" />
-                        <span className="text-[10px] text-emerald-300/90">
+                        <span className="text-[9.5px] text-emerald-300/90 sm:text-[10px]">
                           02:47
                         </span>
                       </div>
                     </div>
                     <div className="flex gap-1.5">
-                      <button className="flex h-9 w-9 items-center justify-center rounded-full bg-white/10">
-                        <Mic size={14} className="text-white/80" />
+                      <button className="flex h-8 w-8 items-center justify-center rounded-full bg-white/10 sm:h-9 sm:w-9">
+                        <Mic size={13} className="text-white/80" />
                       </button>
-                      <button className="flex h-9 w-9 items-center justify-center rounded-full bg-white/10">
-                        <Video size={14} className="text-white/80" />
+                      <button className="flex h-8 w-8 items-center justify-center rounded-full bg-white/10 sm:h-9 sm:w-9">
+                        <Video size={13} className="text-white/80" />
                       </button>
                     </div>
                   </div>
@@ -2378,19 +2388,19 @@ function BeatArrival() {
   return (
     <section
       id="beat-5"
-      className="relative flex h-screen w-full items-center px-5 sm:px-8 lg:px-14"
+      className="relative flex min-h-screen w-full items-center px-5 py-24 sm:px-8 sm:py-28 lg:h-screen lg:px-14 lg:py-0"
     >
       <div className="relative z-10 mx-auto grid w-full max-w-[1280px] grid-cols-1 items-center gap-12 lg:grid-cols-[minmax(0,1fr)_minmax(280px,380px)] lg:gap-16">
         <div className="mx-auto max-w-[560px] text-center lg:mx-0 lg:text-left">
           <Reveal>
-            <div className="mb-6 inline-flex items-center gap-3 text-[10px] font-medium uppercase tracking-[0.28em] text-amber-400/90 sm:text-[11px]">
+            <div className="mb-5 inline-flex items-center gap-3 text-[10px] font-medium uppercase tracking-[0.28em] text-amber-400/90 sm:mb-6 sm:text-[11px]">
               <span className="h-px w-8 bg-gradient-to-r from-transparent to-amber-500/80" />
               Beat 05 · Arrival
             </div>
           </Reveal>
 
           <Reveal delay={0.06}>
-            <h2 className="text-[clamp(40px,7.2vw,96px)] font-light leading-[0.96] tracking-[-0.06em] text-stone-100">
+            <h2 className="text-[clamp(38px,10vw,96px)] font-light leading-[0.98] tracking-[-0.05em] text-stone-100 sm:leading-[0.96]">
               Your world.
               <br />
               <span
@@ -2403,7 +2413,7 @@ function BeatArrival() {
           </Reveal>
 
           <Reveal delay={0.12}>
-            <p className="mt-8 max-w-[460px] text-[14.5px] leading-[1.9] text-stone-400 sm:text-[15.5px] lg:mx-0">
+            <p className="mx-auto mt-6 max-w-[460px] text-[14px] leading-[1.75] text-stone-400 sm:mt-8 sm:text-[15.5px] sm:leading-[1.9] lg:mx-0">
               Bring your conversations along. The Orbital Android app
               keeps your circles, your calls, and your keys right where
               they belong — with you.
@@ -2411,7 +2421,7 @@ function BeatArrival() {
           </Reveal>
 
           <Reveal delay={0.18}>
-            <div className="mt-10 flex flex-wrap items-center justify-center gap-3 lg:justify-start">
+            <div className="mt-8 flex flex-col items-stretch gap-3 sm:mt-10 sm:flex-row sm:flex-wrap sm:items-center sm:justify-center lg:justify-start">
               <PrimaryButton to="/register">Create account</PrimaryButton>
               <PrimaryButton to="/login" variant="secondary">
                 Sign in
@@ -2420,7 +2430,7 @@ function BeatArrival() {
           </Reveal>
 
           <Reveal delay={0.24}>
-            <div className="mt-6 flex items-center justify-center gap-3 lg:justify-start">
+            <div className="mt-5 flex items-center justify-center gap-3 sm:mt-6 lg:justify-start">
               <a
                 href={DOWNLOAD_HREF}
                 download
@@ -2437,9 +2447,9 @@ function BeatArrival() {
           </Reveal>
 
           <Reveal delay={0.3}>
-            <div className="mt-14 flex items-center justify-center gap-3 lg:justify-start">
+            <div className="mt-10 flex items-center justify-center gap-3 sm:mt-14 lg:justify-start">
               <span className="h-px w-12 bg-gradient-to-r from-transparent to-amber-500/40" />
-              <p className="text-[10px] uppercase tracking-[0.32em] text-stone-600">
+              <p className="text-[10px] uppercase tracking-[0.28em] text-stone-600 sm:tracking-[0.32em]">
                 For the people who matter
               </p>
             </div>
@@ -2465,21 +2475,21 @@ function BeatArrival() {
                 repeat: Infinity,
                 ease: "easeInOut",
               }}
-              className="relative overflow-hidden rounded-[28px] border border-white/[0.09] bg-[#0B0A0D]/85 p-6 backdrop-blur-2xl shadow-[0_50px_140px_-70px_rgba(245,158,11,0.6)]"
+              className="relative overflow-hidden rounded-[24px] border border-white/[0.09] bg-[#0B0A0D]/85 p-5 backdrop-blur-2xl shadow-[0_50px_140px_-70px_rgba(245,158,11,0.6)] sm:rounded-[28px] sm:p-6"
             >
-              <div className="flex items-center justify-between border-b border-white/[0.06] pb-4">
+              <div className="flex items-center justify-between border-b border-white/[0.06] pb-3.5 sm:pb-4">
                 <div className="flex items-center gap-2.5">
                   <span className="flex h-2 w-2 shrink-0 rounded-full bg-emerald-400 shadow-[0_0_8px_#34d399]" />
-                  <span className="text-[10px] uppercase tracking-[0.24em] text-stone-400">
+                  <span className="text-[9.5px] uppercase tracking-[0.22em] text-stone-400 sm:text-[10px] sm:tracking-[0.24em]">
                     Ready to install
                   </span>
                 </div>
-                <span className="text-[10px] uppercase tracking-[0.24em] text-amber-400/80">
+                <span className="text-[9.5px] uppercase tracking-[0.22em] text-amber-400/80 sm:text-[10px] sm:tracking-[0.24em]">
                   Android
                 </span>
               </div>
 
-              <div className="mt-5 grid grid-cols-2 gap-2.5">
+              <div className="mt-4 grid grid-cols-2 gap-2 sm:mt-5 sm:gap-2.5">
                 {[MEDIA.twoFriends, MEDIA.cafe, MEDIA.hug, MEDIA.groupDusk].map(
                   (src, i) => (
                     <motion.div
@@ -2492,7 +2502,7 @@ function BeatArrival() {
                         delay: 0.2 + i * 0.06,
                         ease: [0.22, 1, 0.36, 1],
                       }}
-                      className="relative aspect-[4/5] overflow-hidden rounded-[18px] border border-white/[0.06]"
+                      className="relative aspect-[4/5] overflow-hidden rounded-[14px] border border-white/[0.06] sm:rounded-[18px]"
                     >
                       <img
                         src={src}
@@ -2507,17 +2517,17 @@ function BeatArrival() {
                 )}
               </div>
 
-              <div className="mt-5 flex items-center justify-between border-t border-white/[0.06] pt-4">
+              <div className="mt-4 flex items-center justify-between border-t border-white/[0.06] pt-3.5 sm:mt-5 sm:pt-4">
                 {[
                   { label: "Circles", value: "Kept" },
                   { label: "Calls", value: "Kept" },
                   { label: "Keys", value: "Yours" },
                 ].map((item) => (
                   <div key={item.label} className="text-center">
-                    <p className="text-[9px] uppercase tracking-[0.2em] text-stone-500">
+                    <p className="text-[9px] uppercase tracking-[0.18em] text-stone-500 sm:tracking-[0.2em]">
                       {item.label}
                     </p>
-                    <p className="mt-1 text-[11px] font-medium text-amber-300">
+                    <p className="mt-0.5 text-[11px] font-medium text-amber-300 sm:mt-1">
                       {item.value}
                     </p>
                   </div>
@@ -2572,6 +2582,7 @@ export function Landing() {
           scroll-behavior: smooth;
           scrollbar-gutter: stable;
           overscroll-behavior-y: none;
+          -webkit-text-size-adjust: 100%;
         }
 
         body {
