@@ -39,6 +39,29 @@ import NotificationsPane from './components/NotificationsPane';
 import OrbitView from './pages/OrbitView';
 
 /**
+ * Routes on which a `?token=` query param represents a *login* token
+ * that should be exchanged for a session via hydrateFromToken().
+ *
+ * Deliberately excludes:
+ *   /reset-password   — owns its own token; the page passes it to
+ *                       POST /api/Auth/reset-password.
+ *   /forgot-password  — no token involved.
+ *   /login, /register — no auto-login from query params.
+ */
+const TOKEN_INTERCEPT_ROUTES = [
+  '/confirm-email',
+  '/verify-email',
+  '/auth/callback',
+  '/magic-login',
+];
+
+function isTokenInterceptRoute(pathname: string): boolean {
+  return TOKEN_INTERCEPT_ROUTES.some(
+    (route) => pathname === route || pathname.startsWith(`${route}/`),
+  );
+}
+
+/**
  * Blocks public pages (landing, login, register) when the user is
  * already authenticated. Sends them to the app instead of showing
  * a marketing page or an empty login form.
@@ -85,14 +108,25 @@ function ProtectedRoute({ children }: { children: ReactElement }) {
 }
 
 /**
- * Catches a `?token=` param on ANY URL before routing can strip it.
- * Runs above <Routes> so no <Navigate> or catch-all can drop the token.
+ * Catches a `?token=` param on auth-callback routes before routing
+ * can strip it. Runs above <Routes> so no <Navigate> or catch-all
+ * can drop the token.
+ *
+ * IMPORTANT: Only runs on TOKEN_INTERCEPT_ROUTES. /reset-password
+ * and /forgot-password must NOT hit this — a reset token is not a
+ * JWT and would 401 when fed to /api/User/profile, sending the
+ * user to /login?error=hydrate_failed.
  */
 function TokenInterceptor() {
   const { hydrateFromToken } = useAuth();
   const navigate = useNavigate();
 
   useEffect(() => {
+    const path = window.location.pathname;
+
+    // Only intercept on routes that treat ?token= as a login token.
+    if (!isTokenInterceptRoute(path)) return;
+
     const params = new URLSearchParams(window.location.search);
     const token = params.get('token');
     if (!token) return;
