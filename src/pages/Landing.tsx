@@ -2,14 +2,16 @@
  * @file src/pages/Landing.tsx
  * Orbital — cinematic 3D journey with live chat.
  *
- * v12 · mobile polish · local textures · people-first imagery
+ * v14 · high-refresh native · smoother + faster
  *
- *   · Mobile layout rebuilt: hero stacks, sections breathe,
- *     floating cards simplified for small screens.
- *   · Text sizes clamp cleanly from 375px to 1440px.
- *   · Textures load from /public/textures/*.jpg.
- *   · Chat script uses candid, people-forward imagery.
- *   · Every planet keeps its distinct palette and atmosphere.
+ *   · Runs natively at 60 / 90 / 120 / 144 Hz — pure delta-time, no frame locks.
+ *   · Post-processing pass removed; ACES tone mapping moved onto the renderer
+ *     (one less full-screen pass + no half-res render target = big GPU win).
+ *   · Adaptive DPR: resolution scales itself to hold your display's refresh rate.
+ *   · Snappier damping + spring constants across scroll, camera and chat.
+ *   · Chat hero floaters memoised so the chat tick never re-renders static DOM.
+ *   · Phone never overflows the viewport — sized from height.
+ *   · Android-safe: dvh units, tap-highlight reset, touch-action.
  */
 
 import React, {
@@ -27,20 +29,16 @@ import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import * as THREE from "three";
 import { Timer } from "three/src/core/Timer.js";
 
-import { EffectComposer, ToneMapping } from "@react-three/postprocessing";
-import { ToneMappingMode } from "postprocessing";
 import { motion, useReducedMotion } from "motion/react";
 import {
   ArrowRight,
   Camera,
   Check,
   CheckCheck,
-  Image as ImageIcon,
   LockKeyhole,
   MessageCircle,
   Mic,
   Phone,
-  Play,
   Plus,
   Send,
   ShieldCheck,
@@ -61,53 +59,30 @@ const PORTRAIT = {
   jamie:   u("1494790108377-be9c29b29330", 1600),
   river:   u("1524253482453-3fed8d2fe12b", 1600),
   aisha:   u("1573496359142-b8d87734a5a2", 1600),
-  aria:    u("1544005313-94ddf0286df2", 1600),
-  lena:    u("1488426862026-3ee34a7d66df", 1600),
   iris:    u("1524504388940-b1c1722653e1", 1600),
   nova:    u("1521119989659-a83eee488004", 1600),
-  camille: u("1531746020798-e6953c6e8e04", 1600),
-
-  sam:     u("1506794778202-cad84cf45f1d", 1600),
-  blake:   u("1500648767791-00dcc994a43e", 1600),
-  noah:    u("1507591064344-4c6ce005b128", 1600),
-  kai:     u("1502823403499-6ccfcf4fb453", 1600),
   theo:    u("1519085360753-af0119f7cbe7", 1600),
-  ezra:    u("1534528741775-53994a69daeb", 1600),
+  blake:   u("1500648767791-00dcc994a43e", 1600),
   finn:    u("1531746020798-e6953c6e8e04", 1600),
-  rowan:   u("1492562080023-ab3db95bfbce", 1600),
-  emery:   u("1521119989659-a83eee488004", 1600),
-  ellis:   u("1463453091185-61582044d556", 1600),
+  camille: u("1531746020798-e6953c6e8e04", 1600),
 } as const;
 
 const MEDIA = {
   twoFriends:   u("1543269865-cbf427effbad", 2400),
   friendsLaugh: u("1529156069898-49953e39b3ac", 2400),
   womanSmile:   u("1494790108377-be9c29b29330", 2400),
-  manSmile:     u("1500648767791-00dcc994a43e", 2400),
   groupDusk:    u("1522071820081-009f0129c71c", 2400),
   cafe:         u("1517245386807-bb43f82c33c4", 2400),
   hug:          u("1523301343968-6a6ebf63c672", 2400),
   womanCall:    u("1519389950473-47ba0277781c", 2400),
-  manCall:      u("1512428559087-560fa5ceab42", 2400),
-  family:       u("1511895426328-dc8714191300", 2400),
   dinner:       u("1543007630-9710e4a00a20", 2400),
   coupleWalk:   u("1518199266791-5375a83190b7", 2400),
   carRide:      u("1469854523086-cc02fe5d8800", 2400),
-  womanFlowers: u("1487412720507-e7ab37603c6f", 2400),
-  manDog:       u("1518712038649-a96c9d2f8a56", 2400),
   rooftop:      u("1499750310107-5fef28a66643", 2400),
 } as const;
 
-const LIFESTYLE = {
-  friendsSunset: u("1529156069898-49953e39b3ac", 2800),
-  dinner:        u("1543269865-cbf427effbad", 2800),
-  womanCall:     u("1519389950473-47ba0277781c", 2800),
-  editorialCity: u("1493663284031-b7e3aefcae8e", 2800),
-  minimal:       u("1550684376-efcbd6e3f031", 2800),
-} as const;
-
 /* ═══════════════════════════════════════════════════════════
-   PLANET TEXTURES — local files
+   PLANET TEXTURES
    ═══════════════════════════════════════════════════════════ */
 
 const PLANET_TEX = {
@@ -124,6 +99,13 @@ const AMBER = "#F59E0B";
 const GOLD = "#FCD34D";
 const DOWNLOAD_HREF = "/downloads/orbital.apk";
 
+/**
+ * Slow-frame guard. Everything is driven by real delta-time, so at 60 / 90 /
+ * 120 / 144 Hz the motion is bit-for-bit identical in *speed* — this only
+ * stops a single 400 ms hitch from teleporting the camera across the scene.
+ */
+const MAX_DT = 1 / 30;
+
 /* ═══════════════════════════════════════════════════════════
    TIMER
    ═══════════════════════════════════════════════════════════ */
@@ -135,6 +117,7 @@ timer.connect(document);
    MATH
    ═══════════════════════════════════════════════════════════ */
 
+/** Frame-rate independent exponential smoothing. */
 function damp(c: number, t: number, λ: number, dt: number) {
   return c + (t - c) * (1 - Math.exp(-λ * dt));
 }
@@ -148,20 +131,70 @@ function dampVec3(c: THREE.Vector3, t: THREE.Vector3, λ: number, dt: number) {
 
 const clamp01 = (v: number) => (v < 0 ? 0 : v > 1 ? 1 : v);
 
+/** Seconds since the last frame, clamped. `Timer.getDelta()` is memoised
+ *  per `update()`, so every component reads the exact same value. */
+const frameDelta = () => Math.min(timer.getDelta(), MAX_DT);
+
 /* ═══════════════════════════════════════════════════════════
-   DEVICE TIER
+   DEVICE TIER — resolved synchronously so the GL context is
+   created once with the right settings (no tier flicker).
    ═══════════════════════════════════════════════════════════ */
 
-function useDeviceTier() {
-  const [tier, setTier] = useState<"low" | "mid" | "high">("mid");
+type Tier = "low" | "mid" | "high";
+
+function detectTier(): Tier {
+  if (typeof navigator === "undefined") return "mid";
+  const cores = (navigator as any).hardwareConcurrency ?? 4;
+  const mem = (navigator as any).deviceMemory ?? 4;
+  const mobile = /Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+  if (mobile || cores <= 4 || mem <= 3) return "low";
+  if (cores >= 8 && mem >= 8) return "high";
+  return "mid";
+}
+
+const useDeviceTier = () => useState<Tier>(detectTier)[0];
+
+/* ═══════════════════════════════════════════════════════════
+   REFRESH RATE — measured from rAF, so it reflects what the
+   browser will *actually* give us (60 / 90 / 120 / 144 …).
+   ═══════════════════════════════════════════════════════════ */
+
+const REFRESH_STEPS = [60, 75, 90, 100, 120, 144, 165, 240];
+
+function useRefreshRate() {
+  const [hz, setHz] = useState(60);
+
   useEffect(() => {
-    const cores = (navigator as any).hardwareConcurrency ?? 4;
-    const mem = (navigator as any).deviceMemory ?? 4;
-    const mobile = /Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
-    if (mobile || cores <= 4 || mem <= 3) setTier("low");
-    else if (cores >= 8 && mem >= 8) setTier("high");
+    let raf = 0;
+    let frames = 0;
+    let start = 0;
+
+    const loop = (t: number) => {
+      if (frames === 0) start = t;
+      frames += 1;
+      const span = t - start;
+
+      if (span >= 420 && frames > 8) {
+        const measured = (frames * 1000) / span;
+        if (measured >= 50) {
+          setHz(
+            REFRESH_STEPS.reduce(
+              (best, v) =>
+                Math.abs(v - measured) < Math.abs(best - measured) ? v : best,
+              60,
+            ),
+          );
+        }
+        return;
+      }
+      raf = requestAnimationFrame(loop);
+    };
+
+    raf = requestAnimationFrame(loop);
+    return () => cancelAnimationFrame(raf);
   }, []);
-  return tier;
+
+  return hz;
 }
 
 /* ═══════════════════════════════════════════════════════════
@@ -176,32 +209,124 @@ function ScrollDriver() {
   const prev = useRef(0);
 
   useEffect(() => {
+    let raf = 0;
+
     const read = () => {
+      raf = 0;
       const max = document.documentElement.scrollHeight - window.innerHeight;
       store.raw = max > 0 ? clamp01(window.scrollY / max) : 0;
     };
+
+    // rAF-throttled: never do layout reads more than once per frame.
+    const onScroll = () => {
+      if (raf) return;
+      raf = requestAnimationFrame(read);
+    };
+
     read();
-    window.addEventListener("scroll", read, { passive: true });
-    window.addEventListener("resize", read);
+    window.addEventListener("scroll", onScroll, { passive: true });
+    window.addEventListener("resize", onScroll);
     return () => {
-      window.removeEventListener("scroll", read);
-      window.removeEventListener("resize", read);
+      if (raf) cancelAnimationFrame(raf);
+      window.removeEventListener("scroll", onScroll);
+      window.removeEventListener("resize", onScroll);
     };
   }, []);
 
   useFrame(() => {
     timer.update();
 
-    const dt = Math.min(timer.getDelta(), 1 / 60);
-    store.smooth = damp(store.smooth, store.raw, 20, dt);
+    const dt = frameDelta();
+
+    // Tighter follow → the scene tracks your finger almost 1:1, but the
+    // exponential still rounds off the rough edges of wheel/trackpad input.
+    store.smooth = damp(store.smooth, store.raw, 26, dt);
+
     const v = (store.smooth - prev.current) / Math.max(dt, 1e-4);
     prev.current = store.smooth;
-    store.velocity = damp(store.velocity, v, 14, dt);
+    store.velocity = damp(store.velocity, v, 20, dt);
 
-    const beat = Math.min(5, Math.floor(store.smooth * 5 + 0.0001));
+    const beat = Math.min(5, Math.floor(store.smooth * 5 + 1e-6));
     if (beat !== lastBeat) {
       lastBeat = beat;
       beatListeners.forEach((fn) => fn(beat));
+    }
+  });
+
+  return null;
+}
+
+/* ═══════════════════════════════════════════════════════════
+   ADAPTIVE RESOLUTION
+   Keeps the render loop glued to the panel's refresh rate by
+   trading pixels, never frames.
+   ═══════════════════════════════════════════════════════════ */
+
+function AdaptiveResolution({
+  min,
+  max,
+  targetFps,
+}: {
+  min: number;
+  max: number;
+  targetFps: number;
+}) {
+  const setDpr = useThree((s) => s.setDpr);
+
+  const cur = useRef(max);
+  const acc = useRef(0);
+  const frames = useRef(0);
+  const cooldown = useRef(3);
+  const low = useRef(0);
+  const high = useRef(0);
+
+  useEffect(() => {
+    cur.current = max;
+    low.current = 0;
+    high.current = 0;
+    cooldown.current = 3;
+    acc.current = 0;
+    frames.current = 0;
+    setDpr(max);
+  }, [max, setDpr]);
+
+  useFrame((_, delta) => {
+    acc.current += Math.min(delta, 0.1);
+    frames.current += 1;
+    if (acc.current < 0.5) return;
+
+    const fps = frames.current / acc.current;
+    acc.current = 0;
+    frames.current = 0;
+
+    if (cooldown.current > 0) {
+      cooldown.current -= 1;
+      return;
+    }
+
+    const target = targetFps * 0.95;
+
+    if (fps < target * 0.85) {
+      low.current += 1;
+      high.current = 0;
+    } else if (fps > target * 0.97) {
+      high.current += 1;
+      low.current = 0;
+    } else {
+      low.current = 0;
+      high.current = 0;
+    }
+
+    if (low.current >= 2 && cur.current > min + 1e-3) {
+      cur.current = Math.max(min, Math.round((cur.current - 0.15) * 1000) / 1000);
+      setDpr(cur.current);
+      low.current = 0;
+      cooldown.current = 4;
+    } else if (high.current >= 6 && cur.current < max - 1e-3) {
+      cur.current = Math.min(max, Math.round((cur.current + 0.1) * 1000) / 1000);
+      setDpr(cur.current);
+      high.current = 0;
+      cooldown.current = 8;
     }
   });
 
@@ -233,7 +358,7 @@ function CameraRig() {
   const tgtLook = useRef(new THREE.Vector3());
 
   useFrame(() => {
-    const dt = Math.min(timer.getDelta(), 1 / 60);
+    const dt = frameDelta();
     const t = store.smooth;
 
     const f = t * (KEYS.length - 1);
@@ -245,8 +370,8 @@ function CameraRig() {
     const B = KEYS[hi];
 
     const time = timer.getElapsed();
-    const swayX = reduce ? 0 : Math.sin(time * 0.26) * 0.07;
-    const swayY = reduce ? 0 : Math.cos(time * 0.20) * 0.05;
+    const swayX = reduce ? 0 : Math.sin(time * 0.26) * 0.06;
+    const swayY = reduce ? 0 : Math.cos(time * 0.20) * 0.045;
 
     const baseX = A.pos[0] + (B.pos[0] - A.pos[0]) * frac;
     const baseY = A.pos[1] + (B.pos[1] - A.pos[1]) * frac;
@@ -259,8 +384,10 @@ function CameraRig() {
     const lookZ = A.look[2] + (B.look[2] - A.look[2]) * frac;
     tgtLook.current.set(lookX, lookY, lookZ);
 
-    dampVec3(curPos.current, tgtPos.current, 12, dt);
-    dampVec3(curLook.current, tgtLook.current, 14, dt);
+    // 18 / 22 — fast enough to feel welded to the scroll, damped enough
+    // that a 144 Hz panel gets a perfectly smooth glide instead of steps.
+    dampVec3(curPos.current, tgtPos.current, 18, dt);
+    dampVec3(curLook.current, tgtLook.current, 22, dt);
 
     camera.position.copy(curPos.current);
     camera.lookAt(curLook.current);
@@ -275,6 +402,7 @@ function CameraRig() {
 
 const texLoader = new THREE.TextureLoader();
 const texCache = new Map<string, THREE.Texture>();
+const MAX_ANISO = typeof navigator === "undefined" ? 4 : 8;
 
 function usePlanetTexture(url: string, isColor = true): THREE.Texture | null {
   const [tex, setTex] = useState<THREE.Texture | null>(
@@ -293,27 +421,20 @@ function usePlanetTexture(url: string, isColor = true): THREE.Texture | null {
       (t) => {
         if (cancelled) return;
 
-        t.colorSpace = isColor
-          ? THREE.SRGBColorSpace
-          : THREE.NoColorSpace;
-
+        t.colorSpace = isColor ? THREE.SRGBColorSpace : THREE.NoColorSpace;
         t.minFilter = THREE.LinearMipmapLinearFilter;
         t.magFilter = THREE.LinearFilter;
-        t.anisotropy = 8;
+        t.anisotropy = MAX_ANISO;
         t.generateMipmaps = true;
-
         t.wrapS = THREE.RepeatWrapping;
         t.wrapT = THREE.ClampToEdgeWrapping;
-
         t.needsUpdate = true;
+
         texCache.set(url, t);
         setTex(t);
       },
       undefined,
-      (err) => {
-        // eslint-disable-next-line no-console
-        console.warn(`[Orbital] texture failed: ${url}`, err);
-
+      () => {
         const canvas = document.createElement("canvas");
         canvas.width = canvas.height = 128;
         const ctx = canvas.getContext("2d")!;
@@ -402,6 +523,7 @@ function AtmosphereShell({
     }),
     [color, intensity, sunDir, power],
   );
+
   return (
     <mesh>
       <sphereGeometry args={[radius, 32, 32]} />
@@ -461,9 +583,10 @@ function Planet({
   const colour = useMemo(() => new THREE.Color(tint), [tint]);
 
   useFrame(() => {
-    if (reduce) return;
-    const dt = Math.min(timer.getDelta(), 1 / 60);
-    if (meshRef.current) meshRef.current.rotation.y += dt * rotationSpeed;
+    if (reduce || rotationSpeed === 0) return;
+    if (meshRef.current) {
+      meshRef.current.rotation.y += frameDelta() * rotationSpeed;
+    }
   });
 
   return (
@@ -590,14 +713,13 @@ function ObsidianPlanet({
     const tex = new THREE.CanvasTexture(canvas);
     tex.colorSpace = THREE.SRGBColorSpace;
     tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
-    tex.anisotropy = 8;
+    tex.anisotropy = MAX_ANISO;
     return tex;
   }, []);
 
   useFrame(() => {
-    if (reduce) return;
-    const dt = Math.min(timer.getDelta(), 1 / 60);
-    if (crustRef.current) crustRef.current.rotation.y += dt * 0.14;
+    if (reduce || !crustRef.current) return;
+    crustRef.current.rotation.y += frameDelta() * 0.14;
   });
 
   return (
@@ -658,22 +780,19 @@ function BlackHole({
 
   useFrame(() => {
     if (reduce) return;
-    const dt = Math.min(timer.getDelta(), 1 / 60);
+    const dt = frameDelta();
     const t = timer.getElapsed();
 
     if (primaryRef.current) primaryRef.current.rotation.z += dt * 0.28;
-    if (primaryInnerRef.current)
-      primaryInnerRef.current.rotation.z -= dt * 0.42;
+    if (primaryInnerRef.current) primaryInnerRef.current.rotation.z -= dt * 0.42;
     if (coolRef.current) coolRef.current.rotation.z += dt * 0.18;
     if (lensedRef.current) lensedRef.current.rotation.z -= dt * 0.08;
 
     if (photonRef.current) {
-      const s = 1 + Math.sin(t * 1.6) * 0.010;
-      photonRef.current.scale.setScalar(s);
+      photonRef.current.scale.setScalar(1 + Math.sin(t * 1.6) * 0.01);
     }
     if (einsteinRef.current) {
-      const s = 1 + Math.sin(t * 0.6) * 0.045;
-      einsteinRef.current.scale.setScalar(s);
+      einsteinRef.current.scale.setScalar(1 + Math.sin(t * 0.6) * 0.045);
     }
     if (rootRef.current) rootRef.current.rotation.y += dt * 0.04;
   });
@@ -784,7 +903,7 @@ function Moon({
 
   useFrame(() => {
     if (!groupRef.current || reduce) return;
-    const dt = Math.min(timer.getDelta(), 1 / 60);
+    const dt = frameDelta();
     const t = timer.getElapsed();
     const angle = t * orbitSpeed;
     groupRef.current.position.x = Math.cos(angle) * orbitRadius;
@@ -857,8 +976,8 @@ function Starfield({ count = 180 }: { count?: number }) {
    SYSTEM
    ═══════════════════════════════════════════════════════════ */
 
-function OrbitalSystem({ tier }: { tier: "low" | "mid" | "high" }) {
-  const seg = tier === "low" ? 32 : 48;
+function OrbitalSystem({ tier }: { tier: Tier }) {
+  const seg = tier === "low" ? 28 : 48;
 
   return (
     <>
@@ -868,19 +987,11 @@ function OrbitalSystem({ tier }: { tier: "low" | "mid" | "high" }) {
       <color attach="background" args={[DEEP]} />
       <fog attach="fog" args={[DEEP, 12, 70]} />
 
-      <directionalLight
-        position={[6, 3.5, 4]}
-        intensity={2.6}
-        color="#FFE9C0"
-      />
-      <directionalLight
-        position={[-5, -2, -8]}
-        intensity={0.35}
-        color="#4A5B8C"
-      />
+      <directionalLight position={[6, 3.5, 4]} intensity={2.6} color="#FFE9C0" />
+      <directionalLight position={[-5, -2, -8]} intensity={0.35} color="#4A5B8C" />
       <ambientLight intensity={0.08} color="#2A2A38" />
 
-      <Starfield count={tier === "low" ? 100 : 180} />
+      <Starfield count={tier === "low" ? 90 : 180} />
 
       <ObsidianPlanet position={[2.7, 0, -2]} radius={1.65} tilt={0.22} />
       <Moon
@@ -970,24 +1081,7 @@ function OrbitalSystem({ tier }: { tier: "low" | "mid" | "high" }) {
 }
 
 /* ═══════════════════════════════════════════════════════════
-   POST-PROCESSING
-   ═══════════════════════════════════════════════════════════ */
-
-function PostFX({ tier }: { tier: "low" | "mid" | "high" }) {
-  if (tier === "low") return null;
-  return (
-    <EffectComposer
-      multisampling={0}
-      resolutionScale={tier === "high" ? 0.85 : 0.7}
-      enableNormalPass={false}
-    >
-      <ToneMapping mode={ToneMappingMode.ACES_FILMIC} />
-    </EffectComposer>
-  );
-}
-
-/* ═══════════════════════════════════════════════════════════
-   PHONE MOCKUP
+   PHONE MOCKUP — height-constrained, never overflows
    ═══════════════════════════════════════════════════════════ */
 
 function PhoneMockup({ children }: { children?: React.ReactNode }) {
@@ -995,14 +1089,15 @@ function PhoneMockup({ children }: { children?: React.ReactNode }) {
     <div
       className="relative mx-auto select-none"
       style={{
-        width: "clamp(240px, 68vw, 340px)",
+        height: "min(72dvh, 620px, 82vw * 2.0926)",
         aspectRatio: "0.4779",
+        maxWidth: "100%",
       }}
     >
       <div
         className="absolute inset-0"
         style={{
-          borderRadius: "clamp(38px, 3.6vw, 54px)",
+          borderRadius: "clamp(32px, 3.2vw, 54px)",
           background: `linear-gradient(155deg,
             #5A5A62 0%, #3A3A42 22%, #232328 45%,
             #1A1A1F 62%, #2F2F36 82%, #4F4F58 100%)`,
@@ -1019,15 +1114,15 @@ function PhoneMockup({ children }: { children?: React.ReactNode }) {
         className="absolute"
         style={{
           inset: "clamp(4px, 0.5vw, 8px)",
-          borderRadius: "clamp(32px, 3.2vw, 48px)",
+          borderRadius: "clamp(28px, 2.8vw, 48px)",
           background: "#08080A",
         }}
       />
       <div
         className="absolute overflow-hidden"
         style={{
-          inset: "clamp(6px, 0.9vw, 12px)",
-          borderRadius: "clamp(30px, 2.9vw, 44px)",
+          inset: "clamp(5px, 0.8vw, 12px)",
+          borderRadius: "clamp(26px, 2.6vw, 44px)",
           background: "#000",
         }}
       >
@@ -1036,9 +1131,9 @@ function PhoneMockup({ children }: { children?: React.ReactNode }) {
       <div
         className="absolute left-1/2 z-30 -translate-x-1/2"
         style={{
-          top: "clamp(14px, 1.7vw, 24px)",
-          width: "clamp(76px, 7.4vw, 104px)",
-          height: "clamp(20px, 2.1vw, 30px)",
+          top: "clamp(12px, 1.5vw, 24px)",
+          width: "clamp(64px, 6.4vw, 104px)",
+          height: "clamp(18px, 1.9vw, 30px)",
           borderRadius: "999px",
           background: "#000",
         }}
@@ -1046,8 +1141,8 @@ function PhoneMockup({ children }: { children?: React.ReactNode }) {
       <div
         className="pointer-events-none absolute z-20"
         style={{
-          inset: "clamp(6px, 0.9vw, 12px)",
-          borderRadius: "clamp(30px, 2.9vw, 44px)",
+          inset: "clamp(5px, 0.8vw, 12px)",
+          borderRadius: "clamp(26px, 2.6vw, 44px)",
           background: `linear-gradient(140deg,
             rgba(255,255,255,0.10) 0%, rgba(255,255,255,0.02) 18%,
             transparent 34%, transparent 66%,
@@ -1059,45 +1154,40 @@ function PhoneMockup({ children }: { children?: React.ReactNode }) {
 }
 
 /* ═══════════════════════════════════════════════════════════
-   LIVE CHAT
+   LIVE CHAT — text-only, continuous, logical
    ═══════════════════════════════════════════════════════════ */
 
-type MsgKind = "text" | "image" | "voice";
 type Message = {
   id: number;
   from: "me" | "alexa";
-  kind: MsgKind;
-  text?: string;
-  image?: string;
-  duration?: string;
+  text: string;
   time: string;
   status: "sent" | "delivered" | "read";
 };
 
+/* A single natural back-and-forth between two people. */
 const CHAT_SCRIPT: Omit<Message, "id" | "time" | "status">[] = [
-  { from: "me",    kind: "text",  text: "just landed" },
-  { from: "alexa", kind: "text",  text: "already? how was the flight" },
-  { from: "me",    kind: "text",  text: "quiet. window seat. finished the book" },
-  { from: "me",    kind: "image", image: MEDIA.twoFriends },
-  { from: "alexa", kind: "text",  text: "who's that with you" },
-  { from: "me",    kind: "text",  text: "old friend from school. surprised me at the gate" },
-  { from: "me",    kind: "image", image: MEDIA.friendsLaugh },
-  { from: "alexa", kind: "voice", duration: "0:14" },
-  { from: "me",    kind: "text",  text: "listening now. you sound happy" },
-  { from: "alexa", kind: "text",  text: "i am. i miss that" },
-  { from: "alexa", kind: "image", image: MEDIA.cafe },
-  { from: "alexa", kind: "text",  text: "remember this place" },
-  { from: "me",    kind: "text",  text: "still my favourite afternoon" },
-  { from: "me",    kind: "image", image: MEDIA.womanSmile },
-  { from: "alexa", kind: "text",  text: "that's me on the left. obviously" },
-  { from: "me",    kind: "text",  text: "obviously" },
-  { from: "alexa", kind: "image", image: MEDIA.groupDusk },
-  { from: "me",    kind: "text",  text: "we should get everyone together again" },
-  { from: "alexa", kind: "text",  text: "sending the address" },
-  { from: "alexa", kind: "image", image: MEDIA.hug },
-  { from: "me",    kind: "text",  text: "walking there now. see you at 8" },
-  { from: "alexa", kind: "text",  text: "don't be late" },
-  { from: "me",    kind: "text",  text: "never" },
+  { from: "me",    text: "hey, just landed" },
+  { from: "alexa", text: "already? how was the flight" },
+  { from: "me",    text: "quiet. window seat. finished the book" },
+  { from: "alexa", text: "which one" },
+  { from: "me",    text: "the one you gave me for my birthday" },
+  { from: "alexa", text: "did you cry at the end" },
+  { from: "me",    text: "obviously" },
+  { from: "alexa", text: "told you" },
+  { from: "me",    text: "walking to the hotel now" },
+  { from: "alexa", text: "how's the city" },
+  { from: "me",    text: "loud. warm. exactly how you described it" },
+  { from: "alexa", text: "i miss it" },
+  { from: "me",    text: "come with me next time" },
+  { from: "alexa", text: "is that an invitation" },
+  { from: "me",    text: "it is" },
+  { from: "alexa", text: "then yes" },
+  { from: "me",    text: "good. i'll book it tonight" },
+  { from: "alexa", text: "text me when you're in the room" },
+  { from: "me",    text: "will do" },
+  { from: "alexa", text: "night ✦" },
+  { from: "me",    text: "night" },
 ];
 
 function useLiveChat(enabled: boolean) {
@@ -1137,7 +1227,7 @@ function useLiveChat(enabled: boolean) {
         return out;
       });
 
-      schedule(380, () => {
+      schedule(300, () => {
         setMessages((prev) =>
           prev.map((p, idx) =>
             idx === prev.length - 1 && p.from === "me"
@@ -1146,7 +1236,7 @@ function useLiveChat(enabled: boolean) {
           ),
         );
       });
-      schedule(950, () => {
+      schedule(760, () => {
         setMessages((prev) =>
           prev.map((p, idx) =>
             idx === prev.length - 1 && p.from === "me"
@@ -1160,11 +1250,11 @@ function useLiveChat(enabled: boolean) {
     const tick = () => {
       const i = nextIndex.current;
       if (i >= CHAT_SCRIPT.length) {
-        schedule(4200, () => {
+        schedule(3200, () => {
           nextIndex.current = 0;
           setMessages([]);
           setTypingFrom(null);
-          schedule(600, tick);
+          schedule(480, tick);
         });
         return;
       }
@@ -1173,20 +1263,20 @@ function useLiveChat(enabled: boolean) {
 
       if (next.from === "alexa") {
         setTypingFrom("alexa");
-        schedule(700, () => {
+        schedule(520, () => {
           setTypingFrom(null);
           pushMessage(next);
           nextIndex.current++;
-          schedule(750 + Math.random() * 400, tick);
+          schedule(520 + Math.random() * 260, tick);
         });
       } else {
         pushMessage(next);
         nextIndex.current++;
-        schedule(850 + Math.random() * 500, tick);
+        schedule(560 + Math.random() * 300, tick);
       }
     };
 
-    schedule(500, tick);
+    schedule(360, tick);
     return clearAll;
   }, [enabled, clearAll]);
 
@@ -1194,7 +1284,7 @@ function useLiveChat(enabled: boolean) {
 }
 
 /* ═══════════════════════════════════════════════════════════
-   PHONE SCREEN
+   PHONE SCREEN — text-only chat
    ═══════════════════════════════════════════════════════════ */
 
 function PhoneScreen({
@@ -1216,7 +1306,8 @@ function PhoneScreen({
     <div className="relative flex h-full w-full flex-col bg-[#08080B]">
       <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_50%_0%,rgba(245,158,11,0.20),transparent_55%)]" />
 
-      <div className="absolute inset-x-0 top-0 z-30 flex items-center justify-between px-5 pt-2.5 text-[9px] font-semibold tracking-tight text-white sm:px-6 sm:pt-3 sm:text-[10px]">
+      {/* Status bar */}
+      <div className="absolute inset-x-0 top-0 z-30 flex items-center justify-between px-4 pt-2 text-[9px] font-semibold tracking-tight text-white sm:px-5 sm:pt-2.5 sm:text-[10px]">
         <span className="ml-1">9:41</span>
         <div className="flex items-center gap-1.5">
           <div className="flex items-end gap-[2px]">
@@ -1232,8 +1323,9 @@ function PhoneScreen({
         </div>
       </div>
 
-      <div className="relative z-10 flex items-center gap-2 px-3 pb-2.5 pt-11 sm:gap-2.5 sm:px-4 sm:pb-3 sm:pt-12">
-        <div className="h-8 w-8 shrink-0 overflow-hidden rounded-full ring-1 ring-amber-400/30 sm:h-9 sm:w-9">
+      {/* Thread header */}
+      <div className="relative z-10 flex items-center gap-2 px-3 pb-2 pt-10 sm:gap-2.5 sm:px-4 sm:pb-2.5 sm:pt-11">
+        <div className="h-7 w-7 shrink-0 overflow-hidden rounded-full ring-1 ring-amber-400/30 sm:h-8 sm:w-8">
           <img
             src={PORTRAIT.alexa}
             alt=""
@@ -1243,42 +1335,47 @@ function PhoneScreen({
           />
         </div>
         <div className="min-w-0 flex-1">
-          <p className="truncate text-[11.5px] font-medium tracking-[-0.01em] text-white sm:text-[12.5px]">
+          <p className="truncate text-[11px] font-medium tracking-[-0.01em] text-white sm:text-[12px]">
             alexa
           </p>
-          <div className="mt-[2px] flex items-center gap-1.5">
+          <div className="mt-[1px] flex items-center gap-1.5">
             <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 shadow-[0_0_6px_#34d399]" />
-            <span className="text-[9px] text-emerald-300/90 sm:text-[9.5px]">online</span>
-            <span className="text-[9px] text-white/25 sm:text-[9.5px]">·</span>
-            <LockKeyhole size={8} className="text-white/35" />
-            <span className="text-[9px] text-white/35 sm:text-[9.5px]">encrypted</span>
+            <span className="text-[8.5px] text-emerald-300/90 sm:text-[9px]">
+              online
+            </span>
+            <span className="text-[8.5px] text-white/25 sm:text-[9px]">·</span>
+            <LockKeyhole size={7} className="text-white/35" />
+            <span className="text-[8.5px] text-white/35 sm:text-[9px]">
+              encrypted
+            </span>
           </div>
         </div>
         <button
           type="button"
           aria-label="Video call"
-          className="flex h-7 w-7 items-center justify-center rounded-full bg-white/[0.06] transition-colors hover:bg-white/[0.1] sm:h-8 sm:w-8"
+          className="flex h-6 w-6 items-center justify-center rounded-full bg-white/[0.06] transition-colors hover:bg-white/[0.1] sm:h-7 sm:w-7"
         >
-          <Video size={12} className="text-white/70" />
+          <Video size={11} className="text-white/70" />
         </button>
         <button
           type="button"
           aria-label="Voice call"
-          className="flex h-7 w-7 items-center justify-center rounded-full bg-white/[0.06] transition-colors hover:bg-white/[0.1] sm:h-8 sm:w-8"
+          className="flex h-6 w-6 items-center justify-center rounded-full bg-white/[0.06] transition-colors hover:bg-white/[0.1] sm:h-7 sm:w-7"
         >
-          <Phone size={12} className="text-white/70" />
+          <Phone size={11} className="text-white/70" />
         </button>
       </div>
 
-      <div className="mx-4 h-px bg-white/[0.05]" />
+      <div className="mx-3 h-px bg-white/[0.05] sm:mx-4" />
 
+      {/* Message thread */}
       <div
         ref={scrollRef}
-        className="relative z-10 mt-2.5 flex-1 space-y-2 overflow-y-auto px-3 pb-3 scrollbar-hide sm:mt-3 sm:px-3.5"
+        className="relative z-10 mt-2 flex-1 space-y-1.5 overflow-y-auto px-3 pb-2 scrollbar-hide sm:mt-2.5 sm:space-y-2 sm:px-3.5"
         style={{ scrollbarWidth: "none", msOverflowStyle: "none" }}
       >
         <div className="flex justify-center">
-          <span className="rounded-full bg-white/[0.04] px-2.5 py-[3px] text-[8.5px] uppercase tracking-[0.16em] text-white/40">
+          <span className="rounded-full bg-white/[0.04] px-2 py-[2px] text-[7.5px] uppercase tracking-[0.16em] text-white/40 sm:px-2.5 sm:py-[3px] sm:text-[8px]">
             Today
           </span>
         </div>
@@ -1290,101 +1387,80 @@ function PhoneScreen({
         {typingFrom === "alexa" && <TypingIndicator />}
       </div>
 
-      <div className="relative z-10 border-t border-white/[0.05] px-3 pb-5 pt-2.5 sm:pb-6">
+      {/* Composer */}
+      <div className="relative z-10 border-t border-white/[0.05] px-2.5 pb-4 pt-2 sm:px-3 sm:pb-5 sm:pt-2.5">
         <div className="flex items-center gap-1.5">
-          <button className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-white/[0.06]">
-            <Plus size={13} className="text-white/60" />
+          <button
+            type="button"
+            aria-label="Add"
+            className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-white/[0.06] transition-colors hover:bg-white/[0.1] sm:h-8 sm:w-8"
+          >
+            <Plus size={12} className="text-white/60" />
           </button>
-          <div className="flex flex-1 items-center gap-2 rounded-full border border-white/[0.06] bg-white/[0.045] px-3 py-2">
-            <span className="text-[10px] text-white/35 sm:text-[10.5px]">Message…</span>
+          <div className="flex flex-1 items-center gap-2 rounded-full border border-white/[0.06] bg-white/[0.045] px-3 py-1.5 sm:py-2">
+            <span className="text-[10px] text-white/35 sm:text-[10.5px]">
+              Message…
+            </span>
             <div className="ml-auto flex items-center gap-1.5">
-              <Camera size={11} className="text-white/35" />
-              <Mic size={11} className="text-white/35" />
+              <Camera size={10} className="text-white/35 sm:h-3 sm:w-3" />
+              <Mic size={10} className="text-white/35 sm:h-3 sm:w-3" />
             </div>
           </div>
-          <button className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-[#F59E0B] to-[#D97706]">
-            <Send size={11} className="text-[#1A1105]" />
+          <button
+            type="button"
+            aria-label="Send"
+            className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-[#F59E0B] to-[#D97706] shadow-[0_6px_16px_-6px_rgba(245,158,11,0.8)] transition-transform active:scale-95 sm:h-8 sm:w-8"
+          >
+            <Send size={10} className="text-[#1A1105] sm:h-3 sm:w-3" />
           </button>
         </div>
       </div>
 
-      <div className="pointer-events-none absolute bottom-1.5 left-1/2 z-30 h-[3px] w-20 -translate-x-1/2 rounded-full bg-white/40" />
+      <div className="pointer-events-none absolute bottom-1 left-1/2 z-30 h-[3px] w-16 -translate-x-1/2 rounded-full bg-white/40 sm:w-20" />
     </div>
   );
 }
 
-function ChatBubble({ message }: { message: Message }) {
+/* Message bubbles are cheap to reconcile but expensive to *animate* —
+   keep the spring tight so a burst of messages never queues up. */
+const BUBBLE_SPRING = {
+  type: "spring" as const,
+  stiffness: 480,
+  damping: 30,
+  mass: 0.55,
+};
+
+const ChatBubble = memo(function ChatBubble({ message }: { message: Message }) {
   const isMe = message.from === "me";
 
   return (
     <motion.div
-      initial={{ opacity: 0, y: 8, scale: 0.94 }}
+      initial={{ opacity: 0, y: 6, scale: 0.96 }}
       animate={{ opacity: 1, y: 0, scale: 1 }}
-      transition={{
-        type: "spring",
-        stiffness: 420,
-        damping: 32,
-        mass: 0.7,
-      }}
+      transition={BUBBLE_SPRING}
       className={`flex ${isMe ? "justify-end" : "justify-start"}`}
     >
-      <div className={`flex max-w-[80%] flex-col ${isMe ? "items-end" : "items-start"}`}>
-        {message.kind === "text" && (
-          <div
-            className={`rounded-[14px] px-3 py-[7px] text-[10px] leading-[1.4] ${
-              isMe
-                ? "rounded-br-[4px] bg-gradient-to-br from-[#F59E0B] to-[#D97706] font-medium text-[#1A1105] shadow-[0_6px_18px_-8px_rgba(245,158,11,0.8)]"
-                : "rounded-bl-[4px] border border-white/[0.06] bg-white/[0.06] text-white/90"
-            }`}
-          >
-            {message.text}
-          </div>
-        )}
+      <div
+        className={`flex max-w-[82%] flex-col ${isMe ? "items-end" : "items-start"}`}
+      >
+        <div
+          className={`rounded-[13px] px-2.5 py-[6px] text-[9.5px] leading-[1.4] sm:rounded-[14px] sm:px-3 sm:py-[7px] sm:text-[10px] ${
+            isMe
+              ? "rounded-br-[3px] bg-gradient-to-br from-[#F59E0B] to-[#D97706] font-medium text-[#1A1105] shadow-[0_4px_14px_-6px_rgba(245,158,11,0.8)]"
+              : "rounded-bl-[3px] border border-white/[0.06] bg-white/[0.06] text-white/90"
+          }`}
+        >
+          {message.text}
+        </div>
 
-        {message.kind === "image" && (
-          <div className="overflow-hidden rounded-[14px] border border-white/[0.07] bg-white/[0.04]">
-            <img
-              src={message.image}
-              alt=""
-              className="h-[96px] w-full object-cover sm:h-[100px]"
-              loading="lazy"
-              decoding="async"
-            />
-          </div>
-        )}
-
-        {message.kind === "voice" && (
-          <div
-            className={`flex items-center gap-2 rounded-[14px] px-3 py-2 ${
-              isMe
-                ? "bg-gradient-to-br from-[#F59E0B] to-[#D97706] text-[#1A1105]"
-                : "border border-white/[0.06] bg-white/[0.06] text-white/90"
-            }`}
-          >
-            <div className="flex h-5 w-5 items-center justify-center rounded-full bg-black/15">
-              <Play size={8} fill="currentColor" />
-            </div>
-            <div className="flex items-center gap-[2px]">
-              {[3, 5, 8, 6, 9, 4, 7, 5, 3, 6, 8, 4].map((h, i) => (
-                <span
-                  key={i}
-                  className="block w-[2px] rounded-full bg-current opacity-70"
-                  style={{ height: `${h}px` }}
-                />
-              ))}
-            </div>
-            <span className="text-[9px] font-medium">{message.duration}</span>
-          </div>
-        )}
-
-        <div className="mt-1 flex items-center gap-1 px-1">
-          <span className="text-[8px] text-white/30">{message.time}</span>
+        <div className="mt-0.5 flex items-center gap-1 px-1">
+          <span className="text-[7.5px] text-white/30">{message.time}</span>
           {isMe && (
             <span className="text-white/40">
-              {message.status === "sent" && <Check size={9} />}
-              {message.status === "delivered" && <CheckCheck size={9} />}
+              {message.status === "sent" && <Check size={8} />}
+              {message.status === "delivered" && <CheckCheck size={8} />}
               {message.status === "read" && (
-                <CheckCheck size={9} className="text-amber-300" />
+                <CheckCheck size={8} className="text-amber-300" />
               )}
             </span>
           )}
@@ -1392,16 +1468,17 @@ function ChatBubble({ message }: { message: Message }) {
       </div>
     </motion.div>
   );
-}
+});
 
-function TypingIndicator() {
+const TypingIndicator = memo(function TypingIndicator() {
   return (
     <motion.div
       initial={{ opacity: 0, y: 4 }}
       animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.2, ease: [0.22, 1, 0.36, 1] }}
       className="flex items-start gap-2"
     >
-      <div className="h-5 w-5 shrink-0 overflow-hidden rounded-full ring-1 ring-white/10">
+      <div className="h-4 w-4 shrink-0 overflow-hidden rounded-full ring-1 ring-white/10 sm:h-5 sm:w-5">
         <img
           src={PORTRAIT.alexa}
           alt=""
@@ -1410,7 +1487,7 @@ function TypingIndicator() {
           decoding="async"
         />
       </div>
-      <div className="flex items-center gap-1 rounded-full border border-white/[0.06] bg-white/[0.05] px-2.5 py-1.5">
+      <div className="flex items-center gap-1 rounded-full border border-white/[0.06] bg-white/[0.05] px-2 py-1 sm:px-2.5 sm:py-1.5">
         {[0, 1, 2].map((i) => (
           <motion.span
             key={i}
@@ -1427,17 +1504,17 @@ function TypingIndicator() {
       </div>
     </motion.div>
   );
-}
+});
 
 /* ═══════════════════════════════════════════════════════════
-   HERO FLOATING CARDS — show on mobile too, simplified
+   FLOATING CARDS — softer motion
    ═══════════════════════════════════════════════════════════ */
 
 const FloatCard = memo(function FloatCard({
   className,
   delay = 0,
-  duration = 8,
-  offset = 10,
+  duration = 9,
+  offset = 7,
   children,
 }: {
   className?: string;
@@ -1449,15 +1526,13 @@ const FloatCard = memo(function FloatCard({
   const reduce = useReducedMotion();
   return (
     <motion.div
-      initial={reduce ? false : { opacity: 0, y: 14, scale: 0.94 }}
+      initial={reduce ? false : { opacity: 0, y: 12, scale: 0.96 }}
       animate={
-        reduce
-          ? { opacity: 1 }
-          : { opacity: 1, y: [0, -offset, 0], scale: 1 }
+        reduce ? { opacity: 1 } : { opacity: 1, y: [0, -offset, 0], scale: 1 }
       }
       transition={{
-        opacity: { duration: 0.9, delay, ease: [0.16, 1, 0.3, 1] },
-        scale: { duration: 0.9, delay, ease: [0.16, 1, 0.3, 1] },
+        opacity: { duration: 0.7, delay, ease: [0.16, 1, 0.3, 1] },
+        scale: { duration: 0.7, delay, ease: [0.16, 1, 0.3, 1] },
         y: { duration, delay, repeat: Infinity, ease: "easeInOut" },
       }}
       className={`pointer-events-none absolute z-20 ${className ?? ""}`}
@@ -1473,12 +1548,12 @@ const FloatCard = memo(function FloatCard({
    ═══════════════════════════════════════════════════════════ */
 
 const BEAT_LABELS = [
-  { id: "beat-0", label: "Obsidian" },
-  { id: "beat-1", label: "Mars" },
-  { id: "beat-2", label: "Jupiter" },
-  { id: "beat-3", label: "Saturn" },
-  { id: "beat-4", label: "Uranus" },
-  { id: "beat-5", label: "Gargantua" },
+  { id: "beat-0", label: "Origin"    },
+  { id: "beat-1", label: "Signal"    },
+  { id: "beat-2", label: "Vault"     },
+  { id: "beat-3", label: "Orbit"     },
+  { id: "beat-4", label: "Resonance" },
+  { id: "beat-5", label: "Arrival"   },
 ];
 
 function ScrollRail() {
@@ -1498,7 +1573,7 @@ function ScrollRail() {
         {BEAT_LABELS.map((b, i) => (
           <li key={b.id} className="group flex items-center justify-end gap-3">
             <span
-              className={`pointer-events-none text-right text-[10px] uppercase tracking-[0.24em] transition-all duration-500 ${
+              className={`pointer-events-none text-right text-[10px] uppercase tracking-[0.24em] transition-all duration-300 ${
                 active === i
                   ? "translate-x-0 text-amber-300 opacity-100"
                   : "translate-x-3 text-stone-500 opacity-0 group-hover:translate-x-0 group-hover:opacity-70"
@@ -1512,7 +1587,7 @@ function ScrollRail() {
               className="flex h-3 w-3 items-center justify-center"
             >
               <span
-                className={`block rounded-full transition-all duration-500 ${
+                className={`block rounded-full transition-all duration-300 ${
                   active === i
                     ? "h-2.5 w-2.5 bg-amber-400 shadow-[0_0_10px_#F59E0B]"
                     : "h-1.5 w-1.5 bg-stone-600 group-hover:bg-stone-400"
@@ -1546,7 +1621,7 @@ const PrimaryButton = memo(function PrimaryButton({
   variant?: "primary" | "secondary";
 }) {
   const base =
-    "group inline-flex items-center justify-center gap-2.5 rounded-full px-5 py-3 text-[13px] font-semibold tracking-[-0.01em] transition-[transform,box-shadow,background,border-color] duration-300 ease-out will-change-transform focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-300/70 sm:px-6 sm:py-3.5 sm:text-[13.5px]";
+    "group inline-flex items-center justify-center gap-2.5 rounded-full px-5 py-3 text-[13px] font-semibold tracking-[-0.01em] transition-[transform,box-shadow,background,border-color] duration-200 ease-out will-change-transform focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-300/70 active:scale-[0.98] sm:px-6 sm:py-3.5 sm:text-[13.5px]";
 
   const primary =
     "bg-gradient-to-b from-amber-300 to-amber-500 text-[#150E03] shadow-[0_10px_36px_-14px_rgba(245,158,11,0.9),inset_0_1px_0_rgba(255,255,255,0.35)] hover:-translate-y-0.5 hover:shadow-[0_18px_50px_-14px_rgba(245,158,11,1),inset_0_1px_0_rgba(255,255,255,0.45)]";
@@ -1561,7 +1636,7 @@ const PrimaryButton = memo(function PrimaryButton({
       {children}
       <ArrowRight
         size={15}
-        className="transition-transform duration-300 ease-out group-hover:translate-x-1"
+        className="transition-transform duration-200 ease-out group-hover:translate-x-1"
       />
     </>
   );
@@ -1599,7 +1674,7 @@ function Reveal({
   children,
   className = "",
   delay = 0,
-  y = 28,
+  y = 24,
 }: {
   children: React.ReactNode;
   className?: string;
@@ -1613,8 +1688,8 @@ function Reveal({
       whileInView={{ opacity: 1, y: 0 }}
       viewport={{ once: true, amount: 0.15, margin: "0px 0px -60px 0px" }}
       transition={{
-        duration: reduce ? 0 : 0.9,
-        delay: reduce ? 0 : delay,
+        duration: reduce ? 0 : 0.62,
+        delay: reduce ? 0 : delay * 0.8,
         ease: [0.22, 1, 0.36, 1],
       }}
       className={`will-change-transform ${className}`}
@@ -1647,7 +1722,7 @@ function Section({
   return (
     <section
       id={id}
-      className={`relative flex min-h-screen w-full items-center ${justify} px-5 py-24 sm:px-8 sm:py-28 lg:h-screen lg:px-14 lg:py-0`}
+      className={`relative flex min-h-screen w-full items-center ${justify} px-5 py-20 sm:px-8 sm:py-24 lg:h-screen lg:px-14 lg:py-0`}
     >
       <div
         className={`relative z-10 w-full max-w-[560px] ${
@@ -1661,39 +1736,167 @@ function Section({
 }
 
 /* ═══════════════════════════════════════════════════════════
+   HERO FLOATERS — static, memoised, never re-rendered by chat
+   ═══════════════════════════════════════════════════════════ */
+
+const HeroFloatCards = memo(function HeroFloatCards() {
+  return (
+    <>
+      <FloatCard
+        className="hidden left-[-88px] top-[12%] xl:block"
+        delay={0.75}
+        duration={8}
+        offset={7}
+      >
+        <div className="flex w-[200px] items-center gap-2.5 rounded-2xl border border-white/[0.08] bg-black/60 p-2.5 backdrop-blur-xl shadow-[0_20px_60px_-20px_rgba(0,0,0,0.9)]">
+          <div className="relative h-8 w-8 shrink-0 overflow-hidden rounded-full ring-1 ring-white/15">
+            <img
+              src={PORTRAIT.maya}
+              alt=""
+              className="h-full w-full object-cover"
+              loading="lazy"
+              decoding="async"
+            />
+          </div>
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center gap-1">
+              <p className="truncate text-[10px] font-medium text-white">
+                Sophie
+              </p>
+              <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-amber-400" />
+            </div>
+            <p className="mt-[1px] truncate text-[9px] text-white/55">
+              sending a photo…
+            </p>
+          </div>
+        </div>
+      </FloatCard>
+
+      <FloatCard
+        className="hidden right-[-88px] top-[38%] xl:block"
+        delay={0.95}
+        duration={9}
+        offset={9}
+      >
+        <div className="overflow-hidden rounded-2xl border border-white/[0.1] bg-black/60 backdrop-blur-xl shadow-[0_24px_70px_-24px_rgba(0,0,0,0.9)]">
+          <div className="relative h-[110px] w-[142px]">
+            <img
+              src={MEDIA.twoFriends}
+              alt=""
+              className="h-full w-full object-cover"
+              loading="lazy"
+              decoding="async"
+            />
+            <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent" />
+            <div className="absolute bottom-1.5 left-2">
+              <span className="text-[8.5px] font-medium text-white/85">
+                With an old friend
+              </span>
+            </div>
+          </div>
+        </div>
+      </FloatCard>
+
+      <FloatCard
+        className="hidden bottom-[22%] left-[-72px] xl:block"
+        delay={1.15}
+        duration={7}
+        offset={6}
+      >
+        <div className="flex items-center gap-2 rounded-full border border-amber-400/25 bg-black/65 py-1.5 pl-2 pr-3 backdrop-blur-xl shadow-[0_16px_44px_-18px_rgba(245,158,11,0.5)]">
+          <div className="flex h-5 w-5 items-center justify-center rounded-full bg-amber-400/15">
+            <LockKeyhole size={9} className="text-amber-400" />
+          </div>
+          <span className="text-[9.5px] font-medium text-amber-200/90">
+            Keys sealed on device
+          </span>
+        </div>
+      </FloatCard>
+
+      <FloatCard
+        className="hidden bottom-[8%] right-[-68px] xl:block"
+        delay={1.35}
+        duration={8}
+        offset={8}
+      >
+        <div className="flex items-center gap-2 rounded-2xl border border-white/[0.09] bg-black/65 p-2 pr-3 backdrop-blur-xl shadow-[0_20px_60px_-22px_rgba(0,0,0,0.9)]">
+          <div className="relative h-8 w-8 shrink-0 overflow-hidden rounded-lg ring-1 ring-emerald-400/40">
+            <img
+              src={PORTRAIT.jamie}
+              alt=""
+              className="h-full w-full object-cover"
+              loading="lazy"
+              decoding="async"
+            />
+            <span className="absolute -bottom-[1px] -right-[1px] h-2 w-2 rounded-full border border-black bg-emerald-400" />
+          </div>
+          <div className="min-w-0">
+            <p className="text-[9.5px] font-medium text-white">Jamie · live</p>
+            <div className="mt-[2px] flex items-end gap-[2px]">
+              {[3, 6, 4, 8, 5, 7, 3, 6, 9, 4, 5].map((h, i) => (
+                <motion.span
+                  key={i}
+                  animate={{ height: [`${h}px`, `${h + 4}px`, `${h}px`] }}
+                  transition={{
+                    duration: 0.9 + (i % 3) * 0.15,
+                    repeat: Infinity,
+                    ease: "easeInOut",
+                  }}
+                  className="block w-[2px] rounded-full bg-amber-400/80"
+                />
+              ))}
+            </div>
+          </div>
+        </div>
+      </FloatCard>
+
+      {/* Mobile inline badge */}
+      <div className="pointer-events-none absolute -bottom-10 left-1/2 flex -translate-x-1/2 flex-nowrap justify-center gap-2 lg:hidden">
+        <div className="flex items-center gap-2 whitespace-nowrap rounded-full border border-amber-400/25 bg-black/60 px-3 py-1.5 backdrop-blur-xl">
+          <LockKeyhole size={10} className="text-amber-400" />
+          <span className="text-[10px] font-medium text-amber-200/90">
+            Keys sealed on device
+          </span>
+        </div>
+      </div>
+    </>
+  );
+});
+
+/* ═══════════════════════════════════════════════════════════
    BEAT 0 — ORIGIN
    ═══════════════════════════════════════════════════════════ */
 
-function BeatOrigin({
+const TRUST_FACES = [
+  PORTRAIT.alexa,
+  PORTRAIT.maya,
+  PORTRAIT.jamie,
+  PORTRAIT.river,
+  PORTRAIT.aisha,
+  PORTRAIT.blake,
+  PORTRAIT.iris,
+  PORTRAIT.nova,
+];
+
+const BeatOrigin = memo(function BeatOrigin({
   messages,
   typingFrom,
 }: {
   messages: Message[];
   typingFrom: "me" | "alexa" | null;
 }) {
-  const trustFaces = [
-    PORTRAIT.alexa,
-    PORTRAIT.maya,
-    PORTRAIT.jamie,
-    PORTRAIT.sam,
-    PORTRAIT.river,
-    PORTRAIT.blake,
-    PORTRAIT.aisha,
-    PORTRAIT.noah,
-  ];
-
   return (
     <section
       id="beat-0"
-      className="relative flex min-h-screen w-full items-center overflow-hidden px-5 pb-16 pt-24 sm:px-8 sm:pb-20 sm:pt-28 lg:h-screen lg:px-14 lg:pb-0 lg:pt-0"
+      className="relative flex min-h-screen w-full items-center overflow-hidden px-5 pb-14 pt-20 sm:px-8 sm:pb-16 sm:pt-24 lg:h-screen lg:px-14 lg:pb-0 lg:pt-0"
     >
-      <div className="relative z-10 mx-auto grid w-full max-w-[1440px] grid-cols-1 items-center gap-12 lg:grid-cols-[minmax(0,1fr)_minmax(320px,440px)] lg:gap-14">
+      <div className="relative z-10 mx-auto grid w-full max-w-[1440px] grid-cols-1 items-center gap-10 lg:grid-cols-[minmax(0,1fr)_minmax(280px,440px)] lg:gap-14">
         {/* ── TEXT ── */}
-        <div className="mx-auto max-w-[620px] text-center lg:mx-0 lg:translate-y-20 lg:text-left">
+        <div className="mx-auto max-w-[620px] text-center lg:mx-0 lg:translate-y-16 lg:text-left">
           <Reveal>
             <div className="mb-6 inline-flex items-center gap-2.5 rounded-full border border-white/[0.09] bg-white/[0.03] py-1.5 pl-1.5 pr-3.5 backdrop-blur-xl sm:mb-8 sm:gap-3 sm:pr-4">
               <div className="flex -space-x-2">
-                {trustFaces.slice(0, 5).map((src, i) => (
+                {TRUST_FACES.slice(0, 5).map((src, i) => (
                   <img
                     key={i}
                     src={src}
@@ -1715,7 +1918,7 @@ function BeatOrigin({
           </Reveal>
 
           <Reveal delay={0.06}>
-            <h1 className="text-[clamp(40px,11vw,110px)] font-medium leading-[0.94] tracking-[-0.05em] text-stone-100">
+            <h1 className="text-[clamp(38px,10.5vw,110px)] font-medium leading-[0.94] tracking-[-0.05em] text-stone-100">
               Where it all
               <br />
               <span
@@ -1729,9 +1932,9 @@ function BeatOrigin({
 
           <Reveal delay={0.12}>
             <p className="mx-auto mt-6 max-w-[470px] text-[14.5px] leading-[1.7] text-stone-400 sm:mt-8 sm:text-[16px] sm:leading-[1.85] lg:mx-0">
-              Every message starts somewhere — a glance, a laugh, a
-              moment worth keeping. Orbital gives those moments a place
-              built only for the people inside them.
+              Every message starts somewhere — a glance, a laugh, a moment
+              worth keeping. Orbital gives those moments a place built only
+              for the people inside them.
             </p>
           </Reveal>
 
@@ -1762,9 +1965,9 @@ function BeatOrigin({
           </Reveal>
         </div>
 
-        {/* ── PHONE + FLOATING CARDS ── */}
+        {/* ── PHONE ── */}
         <Reveal delay={0.14}>
-          <div className="relative mx-auto w-full max-w-[420px]">
+          <div className="relative mx-auto flex w-full max-w-[400px] items-center justify-center">
             <div
               aria-hidden="true"
               className="pointer-events-none absolute left-1/2 top-1/2 -z-10 h-[110%] w-[110%] -translate-x-1/2 -translate-y-1/2 rounded-full"
@@ -1776,7 +1979,7 @@ function BeatOrigin({
             />
 
             <motion.div
-              animate={{ y: [0, -8, 0] }}
+              animate={{ y: [0, -6, 0] }}
               transition={{ duration: 6, repeat: Infinity, ease: "easeInOut" }}
               className="will-change-transform"
             >
@@ -1785,181 +1988,13 @@ function BeatOrigin({
               </PhoneMockup>
             </motion.div>
 
-            {/* ── Floating cards: tighter on mobile, wide on desktop ── */}
-
-            <FloatCard
-              className="hidden left-[-92px] top-[14%] lg:block"
-              delay={0.9}
-              duration={8}
-              offset={10}
-            >
-              <div className="flex w-[210px] items-center gap-2.5 rounded-2xl border border-white/[0.08] bg-black/60 p-2.5 backdrop-blur-xl shadow-[0_20px_60px_-20px_rgba(0,0,0,0.9)]">
-                <div className="relative h-9 w-9 shrink-0 overflow-hidden rounded-full ring-1 ring-white/15">
-                  <img
-                    src={PORTRAIT.maya}
-                    alt=""
-                    className="h-full w-full object-cover"
-                    loading="lazy"
-                    decoding="async"
-                  />
-                </div>
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-1">
-                    <p className="truncate text-[10.5px] font-medium text-white">
-                      Maya Chen
-                    </p>
-                    <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-amber-400" />
-                  </div>
-                  <p className="mt-[1px] truncate text-[9.5px] text-white/55">
-                    sending a photo…
-                  </p>
-                </div>
-                <span className="text-[8px] text-white/35">now</span>
-              </div>
-            </FloatCard>
-
-            <FloatCard
-              className="hidden right-[-88px] top-[36%] lg:block"
-              delay={1.15}
-              duration={9}
-              offset={14}
-            >
-              <div className="overflow-hidden rounded-2xl border border-white/[0.1] bg-black/60 backdrop-blur-xl shadow-[0_24px_70px_-24px_rgba(0,0,0,0.9)]">
-                <div className="relative h-[116px] w-[150px]">
-                  <img
-                    src={MEDIA.twoFriends}
-                    alt=""
-                    className="h-full w-full object-cover"
-                    loading="lazy"
-                    decoding="async"
-                  />
-                  <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent" />
-                  <div className="absolute bottom-1.5 left-2 flex items-center gap-1.5">
-                    <ImageIcon size={9} className="text-white/80" />
-                    <span className="text-[8.5px] font-medium text-white/85">
-                      With an old friend
-                    </span>
-                  </div>
-                </div>
-              </div>
-            </FloatCard>
-
-            <FloatCard
-              className="hidden bottom-[20%] left-[-76px] lg:block"
-              delay={1.4}
-              duration={7.5}
-              offset={9}
-            >
-              <div className="flex items-center gap-2 rounded-full border border-amber-400/25 bg-black/65 py-1.5 pl-2 pr-3 backdrop-blur-xl shadow-[0_16px_44px_-18px_rgba(245,158,11,0.5)]">
-                <div className="flex h-5 w-5 items-center justify-center rounded-full bg-amber-400/15">
-                  <LockKeyhole size={9} className="text-amber-400" />
-                </div>
-                <span className="text-[9.5px] font-medium text-amber-200/90">
-                  Keys sealed on device
-                </span>
-              </div>
-            </FloatCard>
-
-            <FloatCard
-              className="hidden bottom-[6%] right-[-64px] lg:block"
-              delay={1.6}
-              duration={8.5}
-              offset={12}
-            >
-              <div className="flex items-center gap-2 rounded-2xl border border-white/[0.09] bg-black/65 p-2 pr-3 backdrop-blur-xl shadow-[0_20px_60px_-22px_rgba(0,0,0,0.9)]">
-                <div className="relative h-8 w-8 shrink-0 overflow-hidden rounded-lg ring-1 ring-emerald-400/40">
-                  <img
-                    src={PORTRAIT.jamie}
-                    alt=""
-                    className="h-full w-full object-cover"
-                    loading="lazy"
-                    decoding="async"
-                  />
-                  <span className="absolute -bottom-[1px] -right-[1px] h-2 w-2 rounded-full border border-black bg-emerald-400" />
-                </div>
-                <div className="min-w-0">
-                  <p className="text-[9.5px] font-medium text-white">
-                    Jamie · live
-                  </p>
-                  <div className="mt-[2px] flex items-end gap-[2px]">
-                    {[3, 6, 4, 8, 5, 7, 3, 6, 9, 4, 5].map((h, i) => (
-                      <motion.span
-                        key={i}
-                        animate={{ height: [`${h}px`, `${h + 4}px`, `${h}px`] }}
-                        transition={{
-                          duration: 0.9 + (i % 3) * 0.15,
-                          repeat: Infinity,
-                          ease: "easeInOut",
-                        }}
-                        className="block w-[2px] rounded-full bg-amber-400/80"
-                      />
-                    ))}
-                  </div>
-                </div>
-              </div>
-            </FloatCard>
-
-            <FloatCard
-              className="hidden right-[-100px] top-[6%] lg:block"
-              delay={1.9}
-              duration={9.5}
-              offset={10}
-            >
-              <div className="flex items-center gap-2 rounded-full border border-white/[0.09] bg-black/60 py-1.5 pl-1.5 pr-3.5 backdrop-blur-xl shadow-[0_18px_54px_-20px_rgba(0,0,0,0.9)]">
-                <div className="flex -space-x-2">
-                  {[PORTRAIT.iris, PORTRAIT.theo, PORTRAIT.nova, PORTRAIT.finn].map(
-                    (src, i) => (
-                      <img
-                        key={i}
-                        src={src}
-                        alt=""
-                        className="h-6 w-6 rounded-full border border-[#0A0A0E] object-cover"
-                        loading="lazy"
-                        decoding="async"
-                      />
-                    ),
-                  )}
-                </div>
-                <span className="text-[9.5px] font-medium text-white/75">
-                  4 friends online
-                </span>
-              </div>
-            </FloatCard>
-
-            {/* ── Mobile-only inline cards under the phone ── */}
-            <div className="mt-6 flex flex-wrap justify-center gap-2 lg:hidden">
-              <div className="flex items-center gap-2 rounded-full border border-amber-400/25 bg-black/50 px-3 py-2 backdrop-blur-xl">
-                <LockKeyhole size={11} className="text-amber-400" />
-                <span className="text-[11px] font-medium text-amber-200/90">
-                  Keys sealed on device
-                </span>
-              </div>
-              <div className="flex items-center gap-1.5 rounded-full border border-white/[0.09] bg-black/50 py-1.5 pl-1.5 pr-3 backdrop-blur-xl">
-                <div className="flex -space-x-1.5">
-                  {[PORTRAIT.iris, PORTRAIT.theo, PORTRAIT.nova].map(
-                    (src, i) => (
-                      <img
-                        key={i}
-                        src={src}
-                        alt=""
-                        className="h-5 w-5 rounded-full border border-[#0A0A0E] object-cover"
-                        loading="lazy"
-                        decoding="async"
-                      />
-                    ),
-                  )}
-                </div>
-                <span className="text-[11px] font-medium text-white/75">
-                  4 friends online
-                </span>
-              </div>
-            </div>
+            <HeroFloatCards />
           </div>
         </Reveal>
       </div>
     </section>
   );
-}
+});
 
 /* ═══════════════════════════════════════════════════════════
    BEAT 1 — SIGNAL
@@ -2023,7 +2058,7 @@ function BeatVault() {
   return (
     <section
       id="beat-2"
-      className="relative flex min-h-screen w-full items-center px-5 py-24 sm:px-8 sm:py-28 lg:h-screen lg:px-14 lg:py-0"
+      className="relative flex min-h-screen w-full items-center px-5 py-20 sm:px-8 sm:py-24 lg:h-screen lg:px-14 lg:py-0"
     >
       <div className="relative z-10 grid w-full max-w-[1440px] grid-cols-1 items-center gap-10 lg:grid-cols-[0.9fr_1fr] lg:gap-20">
         <Reveal delay={0.06}>
@@ -2059,10 +2094,7 @@ function BeatVault() {
                   initial={{ opacity: 0, x: -14 }}
                   whileInView={{ opacity: 1, x: 0 }}
                   viewport={{ once: true }}
-                  transition={{
-                    duration: 0.6,
-                    ease: [0.22, 1, 0.36, 1],
-                  }}
+                  transition={{ duration: 0.45, ease: [0.22, 1, 0.36, 1] }}
                   className="max-w-[82%] rounded-[18px] rounded-tl-[6px] border border-white/[0.07] bg-white/[0.04] px-3.5 py-3 text-[12.5px] leading-[1.55] text-stone-300 sm:rounded-[20px] sm:px-4 sm:py-3.5 sm:text-[13.5px]"
                 >
                   Are we still on for the shoot tomorrow?
@@ -2073,8 +2105,8 @@ function BeatVault() {
                   whileInView={{ opacity: 1, x: 0 }}
                   viewport={{ once: true }}
                   transition={{
-                    duration: 0.6,
-                    delay: 0.12,
+                    duration: 0.45,
+                    delay: 0.1,
                     ease: [0.22, 1, 0.36, 1],
                   }}
                   className="ml-auto max-w-[82%] rounded-[18px] rounded-tr-[6px] border border-amber-400/20 bg-amber-400/[0.09] px-3.5 py-3 text-[12.5px] leading-[1.55] text-amber-100 sm:rounded-[20px] sm:px-4 sm:py-3.5 sm:text-[13.5px]"
@@ -2087,8 +2119,8 @@ function BeatVault() {
                   whileInView={{ opacity: 1, y: 0 }}
                   viewport={{ once: true }}
                   transition={{
-                    duration: 0.6,
-                    delay: 0.24,
+                    duration: 0.45,
+                    delay: 0.2,
                     ease: [0.22, 1, 0.36, 1],
                   }}
                   className="overflow-hidden rounded-[14px] border border-white/[0.08] bg-white/[0.035] sm:rounded-[16px]"
@@ -2167,20 +2199,20 @@ function BeatVault() {
    BEAT 3 — ORBIT
    ═══════════════════════════════════════════════════════════ */
 
-function BeatOrbit() {
-  const orbitFaces = [
-    PORTRAIT.alexa,
-    PORTRAIT.maya,
-    PORTRAIT.jamie,
-    PORTRAIT.sam,
-    PORTRAIT.river,
-    PORTRAIT.blake,
-    PORTRAIT.aisha,
-    PORTRAIT.noah,
-    PORTRAIT.iris,
-    PORTRAIT.theo,
-  ];
+const ORBIT_FACES = [
+  PORTRAIT.alexa,
+  PORTRAIT.maya,
+  PORTRAIT.jamie,
+  PORTRAIT.river,
+  PORTRAIT.aisha,
+  PORTRAIT.blake,
+  PORTRAIT.iris,
+  PORTRAIT.nova,
+  PORTRAIT.theo,
+  PORTRAIT.finn,
+];
 
+function BeatOrbit() {
   return (
     <Section id="beat-3" align="right">
       <Reveal>
@@ -2207,7 +2239,7 @@ function BeatOrbit() {
       </Reveal>
       <Reveal delay={0.18}>
         <div className="mt-7 flex -space-x-2.5 sm:mt-9 sm:-space-x-3">
-          {orbitFaces.map((src, i) => (
+          {ORBIT_FACES.map((src, i) => (
             <img
               key={i}
               src={src}
@@ -2261,7 +2293,7 @@ function BeatResonance() {
   return (
     <section
       id="beat-4"
-      className="relative flex min-h-screen w-full items-center px-5 py-24 sm:px-8 sm:py-28 lg:h-screen lg:px-14 lg:py-0"
+      className="relative flex min-h-screen w-full items-center px-5 py-20 sm:px-8 sm:py-24 lg:h-screen lg:px-14 lg:py-0"
     >
       <div className="relative z-10 grid w-full max-w-[1440px] grid-cols-1 items-center gap-12 lg:grid-cols-2 lg:gap-20">
         <div>
@@ -2299,7 +2331,10 @@ function BeatResonance() {
                   key={item.label}
                   className="flex items-center gap-2.5 rounded-2xl border border-white/[0.08] bg-white/[0.025] p-3 backdrop-blur-xl sm:gap-3 sm:p-3.5"
                 >
-                  <item.icon size={15} className="shrink-0 text-amber-400 sm:h-4 sm:w-4" />
+                  <item.icon
+                    size={15}
+                    className="shrink-0 text-amber-400 sm:h-4 sm:w-4"
+                  />
                   <span className="text-[11.5px] text-stone-300 sm:text-[12px]">
                     {item.label}
                   </span>
@@ -2388,7 +2423,7 @@ function BeatArrival() {
   return (
     <section
       id="beat-5"
-      className="relative flex min-h-screen w-full items-center px-5 py-24 sm:px-8 sm:py-28 lg:h-screen lg:px-14 lg:py-0"
+      className="relative flex min-h-screen w-full items-center px-5 py-20 sm:px-8 sm:py-24 lg:h-screen lg:px-14 lg:py-0"
     >
       <div className="relative z-10 mx-auto grid w-full max-w-[1280px] grid-cols-1 items-center gap-12 lg:grid-cols-[minmax(0,1fr)_minmax(280px,380px)] lg:gap-16">
         <div className="mx-auto max-w-[560px] text-center lg:mx-0 lg:text-left">
@@ -2414,9 +2449,9 @@ function BeatArrival() {
 
           <Reveal delay={0.12}>
             <p className="mx-auto mt-6 max-w-[460px] text-[14px] leading-[1.75] text-stone-400 sm:mt-8 sm:text-[15.5px] sm:leading-[1.9] lg:mx-0">
-              Bring your conversations along. The Orbital Android app
-              keeps your circles, your calls, and your keys right where
-              they belong — with you.
+              Bring your conversations along. The Orbital Android app keeps
+              your circles, your calls, and your keys right where they
+              belong — with you.
             </p>
           </Reveal>
 
@@ -2434,12 +2469,12 @@ function BeatArrival() {
               <a
                 href={DOWNLOAD_HREF}
                 download
-                className="group inline-flex items-center gap-2.5 text-[13px] text-stone-400 transition-colors duration-300 hover:text-amber-300"
+                className="group inline-flex items-center gap-2.5 text-[13px] text-stone-400 transition-colors duration-200 hover:text-amber-300"
               >
-                <span className="flex h-8 w-8 items-center justify-center rounded-full border border-white/10 bg-white/[0.03] transition-colors duration-300 group-hover:border-amber-400/40 group-hover:bg-amber-400/[0.08]">
+                <span className="flex h-8 w-8 items-center justify-center rounded-full border border-white/10 bg-white/[0.03] transition-colors duration-200 group-hover:border-amber-400/40 group-hover:bg-amber-400/[0.08]">
                   <ArrowRight size={13} className="rotate-90" />
                 </span>
-                <span className="border-b border-transparent pb-[1px] transition-colors duration-300 group-hover:border-amber-400/40">
+                <span className="border-b border-transparent pb-[1px] transition-colors duration-200 group-hover:border-amber-400/40">
                   Download for Android
                 </span>
               </a>
@@ -2469,12 +2504,8 @@ function BeatArrival() {
             />
 
             <motion.div
-              animate={{ y: [0, -8, 0] }}
-              transition={{
-                duration: 7,
-                repeat: Infinity,
-                ease: "easeInOut",
-              }}
+              animate={{ y: [0, -6, 0] }}
+              transition={{ duration: 7, repeat: Infinity, ease: "easeInOut" }}
               className="relative overflow-hidden rounded-[24px] border border-white/[0.09] bg-[#0B0A0D]/85 p-5 backdrop-blur-2xl shadow-[0_50px_140px_-70px_rgba(245,158,11,0.6)] sm:rounded-[28px] sm:p-6"
             >
               <div className="flex items-center justify-between border-b border-white/[0.06] pb-3.5 sm:pb-4">
@@ -2498,8 +2529,8 @@ function BeatArrival() {
                       whileInView={{ opacity: 1, y: 0 }}
                       viewport={{ once: true }}
                       transition={{
-                        duration: 0.6,
-                        delay: 0.2 + i * 0.06,
+                        duration: 0.45,
+                        delay: 0.16 + i * 0.05,
                         ease: [0.22, 1, 0.36, 1],
                       }}
                       className="relative aspect-[4/5] overflow-hidden rounded-[14px] border border-white/[0.06] sm:rounded-[18px]"
@@ -2549,6 +2580,7 @@ export function Landing() {
   const reduce = useReducedMotion();
   const [webGLAvailable, setWebGLAvailable] = useState(true);
   const tier = useDeviceTier();
+  const hz = useRefreshRate();
 
   const [heroOnScreen, setHeroOnScreen] = useState(true);
   useEffect(() => {
@@ -2561,11 +2593,20 @@ export function Landing() {
 
   const { messages, typingFrom } = useLiveChat(heroOnScreen);
 
-  const dpr: [number, number] = useMemo(() => {
-    if (tier === "low") return [1, 1];
-    if (tier === "mid") return [1, 1.1];
-    return [1, 1.2];
-  }, [tier]);
+  /**
+   * Resolution budget.
+   *  · Higher refresh → fewer pixels, so the GPU can actually finish inside
+   *    a 6.9 ms (144 Hz) or 8.3 ms (120 Hz) frame.
+   *  · Never render above 2× native — beyond that it's pure cost.
+   */
+  const { maxDpr, minDpr } = useMemo(() => {
+    const native =
+      typeof window === "undefined" ? 1 : Math.min(window.devicePixelRatio || 1, 2);
+    const headroom = hz >= 120 ? 0.72 : hz >= 90 ? 0.85 : 1;
+    const tierCap = tier === "low" ? 1 : tier === "mid" ? 1.35 : 1.6;
+    const hi = Math.max(0.75, Math.min(native, tierCap) * headroom);
+    return { maxDpr: Math.round(hi * 100) / 100, minDpr: Math.max(0.6, Math.round(hi * 0.55 * 100) / 100) };
+  }, [tier, hz]);
 
   return (
     <main
@@ -2573,6 +2614,7 @@ export function Landing() {
       style={{
         fontFamily:
           '"Inter Tight", "SF Pro Text", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+        WebkitTapHighlightColor: "transparent",
       }}
     >
       <style>{`
@@ -2592,6 +2634,8 @@ export function Landing() {
           -moz-osx-font-smoothing: grayscale;
           text-rendering: optimizeLegibility;
           overflow-x: hidden;
+          -webkit-tap-highlight-color: transparent;
+          touch-action: manipulation;
         }
 
         .orbital-content {
@@ -2613,6 +2657,9 @@ export function Landing() {
           backface-visibility: hidden;
         }
 
+        /* Keep compositor-only animations GPU-resident on high-refresh panels. */
+        .orbital-content canvas { display: block; }
+
         @media (prefers-reduced-motion: reduce) {
           html { scroll-behavior: auto; }
           *, *::before, *::after {
@@ -2626,19 +2673,23 @@ export function Landing() {
       {!reduce && webGLAvailable && (
         <div className="pointer-events-none fixed inset-0 z-0" aria-hidden="true">
           <Canvas
-            dpr={dpr}
+            dpr={maxDpr}
             camera={{ position: [0, 0.6, 9], fov: 50, near: 0.1, far: 220 }}
             gl={{
-              antialias: false,
+              antialias: tier !== "low",
               alpha: false,
               powerPreference: "high-performance",
               stencil: false,
               depth: true,
+              desynchronized: true,
+              preserveDrawingBuffer: false,
             }}
             onCreated={({ gl }) => {
               gl.setClearColor(DEEP, 1);
+              // ACES applied by the renderer itself — no post-processing pass.
               gl.toneMapping = THREE.ACESFilmicToneMapping;
               gl.toneMappingExposure = 1.08;
+              gl.outputColorSpace = THREE.SRGBColorSpace;
               const canvas = gl.domElement;
               canvas.addEventListener(
                 "webglcontextlost",
@@ -2650,7 +2701,7 @@ export function Landing() {
           >
             <Suspense fallback={null}>
               <OrbitalSystem tier={tier} />
-              <PostFX tier={tier} />
+              <AdaptiveResolution min={minDpr} max={maxDpr} targetFps={hz} />
             </Suspense>
           </Canvas>
 
