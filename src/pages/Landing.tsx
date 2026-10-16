@@ -1,26 +1,27 @@
 /**
  * @file src/pages/Landing.tsx
- * Orbital — v10 · "The Thread"
+ * Orbital — v11 · "The Thread"
  *
- * ⚡ v10 deltas — mobile-first performance (nothing else changed):
- *   · useIsMobile() resolves synchronously (no render flicker) and drives
- *     every quality knob below.
- *   · Backdrop shader: 5-octave fbm × 5 calls → 2-octave × 4 calls on
- *     mobile. ~10× cheaper. That shader alone was eating ~60 % of the
- *     phone GPU budget.
- *   · Bloom / Vignette / ACES post-FX OFF on mobile. The Thread, Portal
- *     and glow shaders already use AdditiveBlending, so the look survives.
- *   · DPR capped at 1.0 on mobile (was 1.3–1.5) → 2–3× fewer composited
- *     pixels / frame. AdaptiveResolution floor drops to 0.5 on mobile.
- *   · `backdrop-filter` disabled globally on coarse-pointer devices — the
- *     single biggest DOM cost in iOS Safari.
- *   · Scroll listener rAF-throttled; `resize` only re-measures when the
- *     *width* changed, so iOS URL-bar show/hide no longer shakes the rig.
- *   · overscroll-behavior: none on touch — kills rubber-band + the
- *     fixed-canvas repaint that follows it.
- *   · Geometry: tube 700→380, strands 1500→700, dust 1700→260, bars
- *     264→112, shards 24→10, gallery skips every 3rd card on mobile.
- *   · Canvas: powerPreference "default" on mobile (thermal headroom).
+ * ⚡ v11 deltas — smoother rope · no section collapse · better refresh
+ *   (nothing else changed):
+ *
+ *   · ROPE: the visible edges had two sources.
+ *       a) Tube cross-section: 6–8 radial segments → visibly faceted.
+ *          Now 12 (mobile) / 16 (desktop) — round at every zoom.
+ *       b) Shader aliasing: the `packets` wave ran at 260 cycles over a
+ *          700-segment tube = 2.7 tris/cycle. Each triangle showed a
+ *          chunk of the sine, reading as edges. Frequency now 180 and
+ *          tubular segments up to 800/1200 → ~5 tris/cycle. Clean.
+ *     Strands also thicker (0.011 → 0.013) and helix wider (46 → 40
+ *     turns) so they read as rope, not wire.
+ *
+ *   · MOBILE SECTIONS: `.section-safe` — min-height 100svh + safe-area
+ *     padding. Content grows when stacked; desktop `lg:` reset keeps the
+ *     pinned one-screen-per-beat layout byte-identical.
+ *
+ *   · REFRESH: AdaptiveResolution drops less (0.1 → 0.06 mobile, 0.1 → 0.08
+ *     desktop), recovers faster (0.03 → 0.05 mobile, 0.05 → 0.06 desktop).
+ *     minDpr floor on mobile raised 0.5 → 0.65 — never visibly soft.
  *
  * No planets. The world is a single ribbon of light — your message —
  * flying through six chambers made of photographs, glass and sound.
@@ -168,7 +169,7 @@ const FOV = 50;
 const TAN_HALF = Math.tan((FOV * Math.PI) / 360);
 
 /* ═══════════════════════════════════════════════════════════
-   MATH — frame-rate independent damping
+   MATH
    ═══════════════════════════════════════════════════════════ */
 
 function damp(c: number, t: number, λ: number, dt: number) {
@@ -199,7 +200,7 @@ function mulberry32(seed: number) {
 }
 
 /* ═══════════════════════════════════════════════════════════
-   DEVICE TIER  ⚡ + mobile detection (synchronous, no flicker)
+   DEVICE TIER + MOBILE DETECTION
    ═══════════════════════════════════════════════════════════ */
 
 type Tier = "low" | "mid" | "high";
@@ -217,7 +218,6 @@ function useDeviceTier() {
   return tier;
 }
 
-/** ⚡ Synchronous — so the whole tree commits once at the right quality. */
 function useIsMobile() {
   const [m] = useState(() => {
     if (typeof navigator === "undefined") return false;
@@ -232,7 +232,7 @@ function useIsMobile() {
 }
 
 /* ═══════════════════════════════════════════════════════════
-   REFRESH RATE — measured from rAF
+   REFRESH RATE
    ═══════════════════════════════════════════════════════════ */
 
 const REFRESH_STEPS = [60, 75, 90, 100, 120, 144, 165, 240];
@@ -308,8 +308,6 @@ let lastBeatIndex = -1;
 let _fast = 0;
 let _slow = 0;
 
-/** ⚡ Scroll listener rAF-throttled + resize only re-measures when the
- *  *width* changes — so iOS URL-bar show/hide never shakes the rig. */
 function ScrollDriver() {
   const prev = useRef(0);
 
@@ -388,7 +386,7 @@ function ScrollDriver() {
 }
 
 /* ═══════════════════════════════════════════════════════════
-   ADAPTIVE RESOLUTION  ⚡ tighter on mobile
+   ADAPTIVE RESOLUTION  ⚡ gentler drops, quicker recovery
    ═══════════════════════════════════════════════════════════ */
 
 function AdaptiveResolution({
@@ -448,12 +446,12 @@ function AdaptiveResolution({
       high.current = 0;
     }
 
-    // ⚡ mobile drops faster, recovers slower — bounces are worse than
-    //    a slightly lower steady-state.
-    const dropStep = mobile ? 0.2 : 0.1;
-    const upStep = mobile ? 0.03 : 0.05;
+    // ⚡ Drop LESS but still correctly; recover faster. Bounces hurt more
+    //    than staying 1 step below max.
+    const dropStep = mobile ? 0.06 : 0.08;
+    const upStep = mobile ? 0.05 : 0.06;
     const lowNeed = mobile ? 1 : 2;
-    const highNeed = mobile ? 10 : 6;
+    const highNeed = mobile ? 6 : 5;
 
     if (low.current >= lowNeed && cur.current > min + 1e-3) {
       cur.current = Math.max(
@@ -462,7 +460,7 @@ function AdaptiveResolution({
       );
       setDpr(cur.current);
       low.current = 0;
-      cooldown.current = mobile ? 6 : 4;
+      cooldown.current = mobile ? 5 : 4;
     } else if (high.current >= highNeed && cur.current < max - 1e-3) {
       cur.current = Math.min(
         max,
@@ -470,7 +468,7 @@ function AdaptiveResolution({
       );
       setDpr(cur.current);
       high.current = 0;
-      cooldown.current = mobile ? 16 : 8;
+      cooldown.current = mobile ? 12 : 8;
     }
   });
 
@@ -603,8 +601,7 @@ function CameraRig() {
 }
 
 /* ═══════════════════════════════════════════════════════════
-   BACKDROP  ⚡ two shader variants — mobile runs a 2-octave fbm
-   (was 5 octaves × 5 calls ≈ 30 noise evals / pixel → 2 × 4 ≈ 8).
+   BACKDROP — 2-octave fbm on mobile, 5-octave on desktop
    ═══════════════════════════════════════════════════════════ */
 
 const BG_VERT = /* glsl */ `
@@ -639,7 +636,6 @@ const BG_COMMON = /* glsl */ `
   }
 `;
 
-/** Full-quality fbm — 5 octaves. */
 const BG_FBM_HIGH = /* glsl */ `
   float fbm(vec2 p) {
     float v = 0.0;
@@ -654,7 +650,6 @@ const BG_FBM_HIGH = /* glsl */ `
   }
 `;
 
-/** ⚡ Mobile fbm — 2 octaves. */
 const BG_FBM_LOW = /* glsl */ `
   float fbm(vec2 p) {
     float v = 0.0;
@@ -713,7 +708,6 @@ const BG_BODY_HIGH = /* glsl */ `
   }
 `;
 
-/** ⚡ Mobile body — drops the micro-warp `m` entirely. */
 const BG_BODY_LOW = /* glsl */ `
   void main() {
     vec2 uv = vUv - 0.5;
@@ -789,7 +783,18 @@ function Backdrop({ mobile }: { mobile: boolean }) {
 }
 
 /* ═══════════════════════════════════════════════════════════
-   THE THREAD  ⚡ segments scale with device class
+   THE THREAD  ⚡ smoother rope
+   ────────────────────────────────────────────────────────────
+   Two changes kill the visible edges:
+     1. Radial segments: 6–8 → 12–16. The cross-section is now round
+        at every zoom and lighting angle.
+     2. Shader packet frequency: 260 → 180. At 260 cycles over ~700
+        tubular segments that was 2.7 tris/cycle — every triangle
+        showed a chunk of the sine, reading as banding. Now the tube
+        has 800–1200 segments and the wave runs at 180, so ~5 tris
+        per cycle. Clean.
+   Strands also thicker (0.011 → 0.013) and helix wider (46 → 40)
+   so they read as rope, not wire.
    ═══════════════════════════════════════════════════════════ */
 
 const THREAD_VERT = /* glsl */ `
@@ -816,7 +821,8 @@ const THREAD_FRAG = /* glsl */ `
     float s = vUv.x;
     float d = s - uHead;
 
-    float packets = pow(0.5 + 0.5 * sin(s * 260.0 - uTime * 3.2 + uPhase), 7.0);
+    // ⚡ 180 (was 260) — matches the mesh's tubular resolution.
+    float packets = pow(0.5 + 0.5 * sin(s * 180.0 - uTime * 3.2 + uPhase), 7.0);
     float behind = 1.0 - smoothstep(0.0, 0.46, -d);
 
     float lit   = d < 0.0 ? mix(0.30, 1.0, behind) : 0.0;
@@ -837,13 +843,24 @@ const THREAD_FRAG = /* glsl */ `
 
 function Thread({ mobile }: { mobile: boolean }) {
   const parts = useMemo(() => {
-    // ⚡ segment counts trade visual fidelity for GPU time
-    const mainSegs = mobile ? 380 : 700;
-    const N = mobile ? 200 : 360;
-    const strandSegs = mobile ? 700 : 1500;
-    const turns = mobile ? 40 : 46;
+    // ⚡ tubular segments ≈ 5–8× the shader packet frequency so the
+    //    sine resolves cleanly. Radial segments 12/16 → round tube.
+    const mainTubular = mobile ? 800 : 1200;
+    const mainRadial = mobile ? 12 : 16;
 
-    const main = new THREE.TubeGeometry(PATH, mainSegs, 0.03, mobile ? 6 : 8, false);
+    const N = mobile ? 400 : 600;
+    const strandTubular = mobile ? 1200 : 2500;
+    const strandRadial = mobile ? 8 : 10;
+    const turns = mobile ? 36 : 40;
+    const strandRadius = 0.013;
+
+    const main = new THREE.TubeGeometry(
+      PATH,
+      mainTubular,
+      0.03,
+      mainRadial,
+      false,
+    );
 
     const frames = PATH.computeFrenetFrames(N, false);
     const strands: THREE.TubeGeometry[] = [];
@@ -865,8 +882,16 @@ function Thread({ mobile }: { mobile: boolean }) {
         );
       }
       const curve = new THREE.CatmullRomCurve3(pts, false, "catmullrom", 0.5);
-      curve.arcLengthDivisions = mobile ? 1200 : 2400;
-      strands.push(new THREE.TubeGeometry(curve, strandSegs, 0.011, mobile ? 4 : 6, false));
+      curve.arcLengthDivisions = mobile ? 1800 : 3000;
+      strands.push(
+        new THREE.TubeGeometry(
+          curve,
+          strandTubular,
+          strandRadius,
+          strandRadial,
+          false,
+        ),
+      );
     }
 
     const mk = (phase: number, gain: number) =>
@@ -911,7 +936,7 @@ function Thread({ mobile }: { mobile: boolean }) {
 }
 
 /* ═══════════════════════════════════════════════════════════
-   DUST  ⚡ count scales with device
+   DUST
    ═══════════════════════════════════════════════════════════ */
 
 const DUST_VERT = /* glsl */ `
@@ -949,7 +974,6 @@ const DUST_FRAG = /* glsl */ `
 
 function Dust({ tier, mobile }: { tier: Tier; mobile: boolean }) {
   const { size, gl } = useThree();
-  // ⚡ 260 on mobile · 500 low · 1000 mid · 1700 high
   const count = mobile ? 260 : tier === "low" ? 500 : tier === "mid" ? 1000 : 1700;
 
   const geo = useMemo(() => {
@@ -1258,7 +1282,7 @@ function makeCardMaterial(
     fog: false,
   });
 
-  mat.customProgramCacheKey = () => "orbital-card-v10";
+  mat.customProgramCacheKey = () => "orbital-card-v11";
 
   mat.onBeforeCompile = (shader) => {
     Object.assign(shader.uniforms, uniforms);
@@ -1369,7 +1393,6 @@ const PhotoCard = memo(function PhotoCard({
   );
 });
 
-/** ⚡ Gallery culling: mobile keeps every 3rd card (≈18), low every 2nd. */
 function Gallery({ tier, mobile }: { tier: Tier; mobile: boolean }) {
   const specs = useMemo(() => {
     if (mobile) return ALL_CARDS.filter((_, i) => i % 3 === 0);
@@ -1393,7 +1416,7 @@ function Gallery({ tier, mobile }: { tier: Tier; mobile: boolean }) {
 }
 
 /* ═══════════════════════════════════════════════════════════
-   SIGNAL — gates of light (instanced)
+   SIGNAL — gates (instanced)
    ═══════════════════════════════════════════════════════════ */
 
 const _m4 = new THREE.Matrix4();
@@ -1467,7 +1490,7 @@ function Gates({ mobile }: { mobile: boolean }) {
 }
 
 /* ═══════════════════════════════════════════════════════════
-   VAULT — faceted glass cage, drifting shards, floating key
+   VAULT
    ═══════════════════════════════════════════════════════════ */
 
 const SHARD_VERT = /* glsl */ `
@@ -1521,7 +1544,6 @@ const GLOW_FRAG = /* glsl */ `
 `;
 
 function VaultCrystal({ mobile }: { mobile: boolean }) {
-  // ⚡ 10 shards on mobile · 24 on desktop
   const SHARD_N = mobile ? 10 : 24;
 
   const cageRef = useRef<THREE.LineSegments>(null);
@@ -1688,11 +1710,10 @@ function VaultCrystal({ mobile }: { mobile: boolean }) {
 }
 
 /* ═══════════════════════════════════════════════════════════
-   RESONANCE — concentric rings of sound bars (instanced)
+   RESONANCE — sound bars (instanced)
    ═══════════════════════════════════════════════════════════ */
 
 function SoundRings({ mobile }: { mobile: boolean }) {
-  // ⚡ 4 × 28 = 112 bars on mobile · 6 × 44 = 264 on desktop
   const RINGS = mobile ? 4 : 6;
   const PER = mobile ? 28 : 44;
   const N = RINGS * PER;
@@ -1867,9 +1888,8 @@ function Portal({ mobile }: { mobile: boolean }) {
 }
 
 /* ═══════════════════════════════════════════════════════════
-   POST FX  ⚡ disabled entirely on mobile — the Thread, Portal
-   and glow shaders already use AdditiveBlending, so the look
-   survives. On desktop it stays exactly as v9.
+   POST FX — off on mobile & low tier, bloom resolution scales
+   with panel refresh on desktop.
    ═══════════════════════════════════════════════════════════ */
 
 function PostFX({
@@ -1986,7 +2006,6 @@ function PhoneMockup({
             #1A1A20 62%,
             #2A2A32 82%,
             #46464E 100%)`,
-          // ⚡ mobile gets a 2-layer shadow instead of 6
           boxShadow: mobile
             ? `inset 0 0 0 1.5px rgba(255,255,255,0.14),
                0 30px 80px -22px rgba(0,0,0,0.92)`
@@ -3100,6 +3119,9 @@ function Reveal({
   );
 }
 
+/** ⚡ `.section-safe` — see the <style> block near the bottom. On mobile
+ *  the section grows to fit stacked content and never clips; on `lg:` it
+ *  collapses back to exactly one viewport, byte-identical to v10. */
 function Section({
   id,
   children,
@@ -3121,7 +3143,7 @@ function Section({
   return (
     <section
       id={id}
-      className={`relative flex h-screen w-full items-center ${justify} px-5 sm:px-8 lg:px-14`}
+      className={`section-safe relative flex w-full items-center ${justify} px-5 sm:px-8 lg:px-14`}
       style={{ contain: "layout paint" }}
     >
       <div
@@ -3149,7 +3171,7 @@ function BeatOrigin({ mobile }: { mobile: boolean }) {
   return (
     <section
       id="beat-0"
-      className="relative flex h-screen w-full items-center px-5 sm:px-8 lg:px-14"
+      className="section-safe relative flex w-full items-center px-5 sm:px-8 lg:px-14"
       style={{ contain: "layout paint" }}
     >
       <div className="relative z-10 grid w-full max-w-[1440px] items-center gap-12 lg:grid-cols-[1fr_0.9fr] lg:gap-20">
@@ -3322,7 +3344,7 @@ function BeatVault() {
   return (
     <section
       id="beat-2"
-      className="relative flex h-screen w-full items-center px-5 sm:px-8 lg:px-14"
+      className="section-safe relative flex w-full items-center px-5 sm:px-8 lg:px-14"
       style={{ contain: "layout paint" }}
     >
       <div className="relative z-10 grid w-full max-w-[1440px] items-center gap-14 lg:grid-cols-[0.9fr_1fr] lg:gap-20">
@@ -3517,7 +3539,7 @@ function BeatResonance() {
   return (
     <section
       id="beat-4"
-      className="relative flex h-screen w-full items-center px-5 sm:px-8 lg:px-14"
+      className="section-safe relative flex w-full items-center px-5 sm:px-8 lg:px-14"
       style={{ contain: "layout paint" }}
     >
       <div className="relative z-10 grid w-full max-w-[1440px] items-center gap-14 lg:grid-cols-2 lg:gap-20">
@@ -3766,10 +3788,8 @@ export function Landing() {
   const mobile = useIsMobile();
   const hz = useRefreshRate();
 
-  /** ⚡ DPR budget — mobile caps at 1.0 so phones composite 2–3× fewer
-   *  pixels / frame. Desktop unchanged from v9. */
   const { maxDpr, minDpr } = useMemo(() => {
-    if (mobile) return { maxDpr: 1, minDpr: 0.5 };
+    if (mobile) return { maxDpr: 1, minDpr: 0.65 };
     const native =
       typeof window === "undefined"
         ? 1
@@ -3823,11 +3843,27 @@ export function Landing() {
           backface-visibility: hidden;
         }
 
+        /* ⚡ .section-safe — mobile grows to fit stacked content and clears
+           the notch/dynamic island. Desktop (lg+) collapses back to
+           exactly one viewport, byte-identical to v10. */
+        .section-safe {
+          min-height: 100vh;              /* fallback for old browsers */
+          min-height: 100svh;             /* modern — small viewport unit */
+          padding-top: calc(5.5rem + env(safe-area-inset-top, 0px));
+          padding-bottom: calc(5rem  + env(safe-area-inset-bottom, 0px));
+        }
+        @media (min-width: 1024px) {
+          .section-safe {
+            min-height: 0;
+            height: 100vh;
+            padding-top: 0;
+            padding-bottom: 0;
+          }
+        }
+
         /* ⚡ MOBILE PERF MODE
            — backdrop-filter is the single most expensive DOM effect on
-             iOS/Android GPUs. We don't lose the look: every blurred surface
-             here is a translucent dark panel over a dark scene, and the
-             un-blurred version reads almost identically at phone size.
+             iOS/Android GPUs.
            — overscroll-behavior kills rubber-band + the fixed-canvas
              repaint that follows every bounce. */
         @media (hover: none) and (pointer: coarse) {
@@ -3861,8 +3897,6 @@ export function Landing() {
             gl={{
               antialias: false,
               alpha: false,
-              // ⚡ mobile: default power profile → better thermals, no
-              //    sustained-clock throttle. Desktop: high-performance.
               powerPreference: mobile ? "default" : "high-performance",
               stencil: false,
               depth: true,
