@@ -2,13 +2,23 @@
  * @license
  * SPDX-License-Identifier: Apache-2.0
  *
- * Auth shell — Instagram-style centered layout.
- * Dark glass card on an ambient background.
+ * Auth shell — centered glass card on an ambient background.
+ *
+ * ⚡ 144 Hz pass:
+ *   · Zero framer-motion. All motion is CSS keyframes on
+ *     transform / opacity only — fully compositor-driven.
+ *   · The three ambient blobs are pure CSS animated divs, not
+ *     React-rendered. No JS work per frame.
+ *   · Blur is applied ONCE via a static wrapper; the inner blob
+ *     moves with translate3d so the blur is rasterized once and
+ *     only the transform is re-composited.
+ *   · Stagger is CSS `animation-delay`, no JS sequencing.
+ *   · Honors prefers-reduced-motion via CSS media query —
+ *     no useReducedMotion hook, no re-render on toggle.
  */
 
-import React from 'react';
+import React, { memo } from 'react';
 import { Link } from 'react-router-dom';
-import { motion, useReducedMotion } from 'motion/react';
 import { ArrowLeft, Lock } from 'lucide-react';
 
 export interface AuthShellProps {
@@ -19,7 +29,73 @@ export interface AuthShellProps {
 }
 
 const SERIF = '"Instrument Serif", "Iowan Old Style", Georgia, serif';
-const SPRING = { type: 'spring' as const, stiffness: 220, damping: 28 };
+
+const SHELL_CSS = `
+  /* ────────────── entrance ────────────── */
+  @keyframes orbital-shell-fade-up {
+    from { opacity: 0; transform: translate3d(0, 10px, 0); }
+    to   { opacity: 1; transform: translate3d(0, 0, 0); }
+  }
+  .orbital-shell-item {
+    animation: orbital-shell-fade-up 260ms cubic-bezier(0.16, 1, 0.3, 1) backwards;
+    backface-visibility: hidden;
+  }
+
+  /* ────────────── ambient blob drift ──────────────
+     Each blob is a static rasterized radial-gradient div with an
+     inner child that only translates. This keeps the blur pass
+     off the hot path — only transforms recomposite per frame. */
+  @keyframes orbital-drift-a {
+    0%   { transform: translate3d(0, 0, 0) scale(1); }
+    33%  { transform: translate3d(80px, -50px, 0) scale(1.06); }
+    66%  { transform: translate3d(-40px, 60px, 0) scale(0.96); }
+    100% { transform: translate3d(0, 0, 0) scale(1); }
+  }
+  @keyframes orbital-drift-b {
+    0%   { transform: translate3d(0, 0, 0) scale(1); }
+    33%  { transform: translate3d(-60px, 40px, 0) scale(0.95); }
+    66%  { transform: translate3d(30px, -30px, 0) scale(1.05); }
+    100% { transform: translate3d(0, 0, 0) scale(1); }
+  }
+  @keyframes orbital-drift-c {
+    0%   { transform: translate3d(0, 0, 0); opacity: 0.5; }
+    50%  { transform: translate3d(30px, -25px, 0); opacity: 0.9; }
+    100% { transform: translate3d(0, 0, 0); opacity: 0.5; }
+  }
+
+  .orbital-blob-a {
+    animation: orbital-drift-a 30s ease-in-out infinite;
+    will-change: transform;
+  }
+  .orbital-blob-b {
+    animation: orbital-drift-b 36s ease-in-out infinite;
+    animation-delay: 3s;
+    will-change: transform;
+  }
+  .orbital-blob-c {
+    animation: orbital-drift-c 24s ease-in-out infinite;
+    animation-delay: 5s;
+    will-change: transform, opacity;
+  }
+
+  /* ────────────── wordmark dot ────────────── */
+  @keyframes orbital-dot-in {
+    from { transform: scale(0); }
+    to   { transform: scale(1); }
+  }
+  .orbital-dot {
+    animation: orbital-dot-in 320ms cubic-bezier(0.34, 1.56, 0.64, 1) 350ms backwards;
+  }
+
+  /* ────────────── reduced motion ────────────── */
+  @media (prefers-reduced-motion: reduce) {
+    .orbital-shell-item,
+    .orbital-dot { animation: none !important; }
+    .orbital-blob-a,
+    .orbital-blob-b,
+    .orbital-blob-c { animation: none !important; }
+  }
+`;
 
 function AuthShell({
   children,
@@ -27,66 +103,50 @@ function AuthShell({
   subtitle,
   hideBack = false,
 }: AuthShellProps): React.JSX.Element {
-  const reduceMotion = useReducedMotion();
-
-  const stagger = (delay: number) =>
-    reduceMotion
-      ? {}
-      : {
-          initial: { opacity: 0, y: 12 },
-          animate: { opacity: 1, y: 0 },
-          transition: { ...SPRING, delay },
-        };
-
   return (
     <div className="min-h-screen bg-[#0F0D0A] text-[#EDE5D4] relative overflow-hidden flex flex-col">
-      {/* ─── Ambient background (behind everything) ─────────── */}
-      {!reduceMotion && (
-        <div aria-hidden className="pointer-events-none fixed inset-0 overflow-hidden">
-          <motion.div
-            className="absolute top-[-15%] left-[-10%] w-[700px] h-[700px] rounded-full"
+      <style>{SHELL_CSS}</style>
+
+      {/* ─── Ambient background ─────────────────────────────
+          Static rasterization: outer div holds the radial-gradient
+          and blur, inner div only translates. The blur is
+          rasterized once by the compositor; only the transform
+          updates each frame. */}
+      <div aria-hidden className="pointer-events-none fixed inset-0 overflow-hidden">
+        <div className="absolute top-[-15%] left-[-10%] w-[700px] h-[700px]">
+          <div
+            className="orbital-blob-a w-full h-full rounded-full"
             style={{
               background:
                 'radial-gradient(circle, rgba(217,119,6,0.20) 0%, rgba(217,119,6,0.04) 45%, rgba(217,119,6,0) 72%)',
               filter: 'blur(80px)',
+              transform: 'translate3d(0,0,0)',
             }}
-            animate={{
-              x: [0, 80, -40, 0],
-              y: [0, -50, 60, 0],
-              scale: [1, 1.06, 0.96, 1],
-            }}
-            transition={{ duration: 30, repeat: Infinity, ease: 'easeInOut' }}
           />
-          <motion.div
-            className="absolute bottom-[-15%] right-[-10%] w-[600px] h-[600px] rounded-full"
+        </div>
+        <div className="absolute bottom-[-15%] right-[-10%] w-[600px] h-[600px]">
+          <div
+            className="orbital-blob-b w-full h-full rounded-full"
             style={{
               background:
                 'radial-gradient(circle, rgba(139,111,71,0.18) 0%, rgba(139,111,71,0.03) 45%, rgba(139,111,71,0) 72%)',
               filter: 'blur(80px)',
+              transform: 'translate3d(0,0,0)',
             }}
-            animate={{
-              x: [0, -60, 30, 0],
-              y: [0, 40, -30, 0],
-              scale: [1, 0.95, 1.05, 1],
-            }}
-            transition={{ duration: 36, repeat: Infinity, ease: 'easeInOut', delay: 3 }}
           />
-          <motion.div
-            className="absolute top-[35%] left-[40%] w-[420px] h-[420px] rounded-full"
+        </div>
+        <div className="absolute top-[35%] left-[40%] w-[420px] h-[420px]">
+          <div
+            className="orbital-blob-c w-full h-full rounded-full"
             style={{
               background:
                 'radial-gradient(circle, rgba(120,80,60,0.14) 0%, rgba(120,80,60,0) 70%)',
               filter: 'blur(70px)',
+              transform: 'translate3d(0,0,0)',
             }}
-            animate={{
-              x: [0, 30, -20, 0],
-              y: [0, -25, 25, 0],
-              opacity: [0.5, 0.9, 0.6, 0.5],
-            }}
-            transition={{ duration: 24, repeat: Infinity, ease: 'easeInOut', delay: 5 }}
           />
         </div>
-      )}
+      </div>
 
       {/* ─── Paper grain overlay ────────────────────────────── */}
       <div
@@ -98,56 +158,55 @@ function AuthShell({
         }}
       />
 
-      {/* ─── Back button (top-left, floating) ───────────────── */}
+      {/* ─── Back button ────────────────────────────────────── */}
       {!hideBack && (
-        <motion.div
-          {...stagger(0.05)}
-          className="absolute top-6 left-6 sm:top-8 sm:left-8 z-10"
+        <div
+          className="orbital-shell-item absolute top-6 left-6 sm:top-8 sm:left-8 z-10"
+          style={{ animationDelay: '0.05s' }}
         >
           <Link
             to="/"
-            className="group inline-flex items-center gap-1.5 text-[12px] text-[#A8A29E] hover:text-[#EDE5D4] transition-colors"
+            className="group inline-flex items-center gap-1.5 text-[12px] text-[#A8A29E] hover:text-[#EDE5D4] transition-colors duration-100"
           >
             <ArrowLeft
               size={14}
-              className="transition-transform duration-200 group-hover:-translate-x-0.5"
+              className="transition-transform duration-150 group-hover:-translate-x-0.5"
             />
             Back
           </Link>
-        </motion.div>
+        </div>
       )}
 
       {/* ─── Centered column ────────────────────────────────── */}
       <div className="relative flex-1 flex flex-col items-center justify-center px-5 sm:px-6 py-14">
         <div className="w-full max-w-[380px]">
           {/* Wordmark */}
-          <motion.div {...stagger(0.1)} className="flex justify-center mb-8">
+          <div
+            className="orbital-shell-item flex justify-center mb-8"
+            style={{ animationDelay: '0.10s' }}
+          >
             <Link
               to="/"
               className="inline-flex items-baseline gap-2 select-none group"
             >
               <span
-                className="text-[38px] leading-none text-[#EDE5D4] tracking-tight transition-colors group-hover:text-[#D97706]"
+                className="text-[38px] leading-none text-[#EDE5D4] tracking-tight transition-colors duration-100 group-hover:text-[#D97706]"
                 style={{ fontFamily: SERIF }}
               >
                 Orbital
               </span>
-              <motion.span
+              <span
                 aria-hidden
-                initial={reduceMotion ? false : { scale: 0 }}
-                animate={{ scale: 1 }}
-                transition={{ ...SPRING, delay: 0.35 }}
-                className="w-2 h-2 rounded-full bg-[#D97706] inline-block translate-y-[-6px] shadow-[0_0_14px_rgba(217,119,6,0.8)]"
+                className="orbital-dot w-2 h-2 rounded-full bg-[#D97706] inline-block translate-y-[-6px] shadow-[0_0_14px_rgba(217,119,6,0.8)]"
               />
             </Link>
-          </motion.div>
+          </div>
 
           {/* Card */}
-          <motion.div
-            {...stagger(0.2)}
-            className="rounded-2xl bg-white/[0.03] backdrop-blur-xl border border-white/[0.08] shadow-[0_20px_60px_-20px_rgba(0,0,0,0.6)] p-7 sm:p-8"
+          <div
+            className="orbital-shell-item relative rounded-2xl bg-white/[0.03] backdrop-blur-xl border border-white/[0.08] shadow-[0_20px_60px_-20px_rgba(0,0,0,0.6)] p-7 sm:p-8"
+            style={{ animationDelay: '0.20s' }}
           >
-            {/* Top-edge glass highlight */}
             <div
               aria-hidden
               className="pointer-events-none absolute inset-x-6 top-0 h-px"
@@ -157,7 +216,6 @@ function AuthShell({
               }}
             />
 
-            {/* Title */}
             <div className="mb-6">
               <h1 className="text-[20px] sm:text-[22px] leading-[1.2] tracking-[-0.01em] text-[#EDE5D4] font-medium text-center">
                 {title}
@@ -169,14 +227,13 @@ function AuthShell({
               )}
             </div>
 
-            {/* Form */}
             {children}
-          </motion.div>
+          </div>
 
-          {/* Trust line below card */}
-          <motion.div
-            {...stagger(0.35)}
-            className="mt-6 flex justify-center"
+          {/* Trust line */}
+          <div
+            className="orbital-shell-item mt-6 flex justify-center"
+            style={{ animationDelay: '0.35s' }}
           >
             <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-white/[0.03] backdrop-blur-md border border-white/[0.06]">
               <Lock className="w-3 h-3 text-[#D97706]" />
@@ -184,20 +241,19 @@ function AuthShell({
                 End-to-end encrypted
               </span>
             </div>
-          </motion.div>
+          </div>
 
-          {/* Footer */}
-          <motion.div
-            {...stagger(0.45)}
-            className="mt-10 text-center text-[11px] text-[#6B6259]"
+          <div
+            className="orbital-shell-item mt-10 text-center text-[11px] text-[#6B6259]"
+            style={{ animationDelay: '0.45s' }}
           >
             © {new Date().getFullYear()} Orbital
-          </motion.div>
+          </div>
         </div>
       </div>
     </div>
   );
 }
 
-export default AuthShell;
+export default memo(AuthShell);
 export { AuthShell };
