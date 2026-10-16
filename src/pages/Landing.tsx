@@ -2037,9 +2037,9 @@ const CHAT_SCRIPT: ChatLine[] = [
   { from: "ava", text: "what time should i get in?",                                 hold: 1100, typing: 700 },
   { from: "me",  text: "late. i'll wait up",                                         hold: 1200, typing: 650 },
   { from: "ava", text: "okay 🫶",                                                    hold: 1300, typing: 550 },
-  { from: "me",  text: "text me when you're boarding",                               hold: 1100, typing: 700 },
+  { from: "me",  text: "any questions?",                               hold: 1100, typing: 700 },
   { from: "ava", text: "Designed and created by?",                                           hold: 1100, typing: 600 },
-  { from: "me",  text: "by MAYANK 💙",                             hold: 1800, typing: 650 },
+  { from: "me",  text: "by MAYANK ",                             hold: 1800, typing: 650 },
 ];
 
 /** ⚡ how many bubbles stay mounted — older ones scroll off naturally */
