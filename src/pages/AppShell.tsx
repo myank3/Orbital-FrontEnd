@@ -5,7 +5,6 @@
 
 import React, { useEffect, useState } from 'react';
 import { NavLink, Outlet, useNavigate, Link } from 'react-router-dom';
-import { motion, AnimatePresence, useReducedMotion } from 'motion/react';
 import { useAuth } from '../context/AuthContext';
 import { useCall } from '../context/CallContext';
 import { apiService } from '../services/api';
@@ -35,11 +34,37 @@ interface NavItem {
   highlight?: boolean;
 }
 
+const SHELL_CSS = `
+  @keyframes signal-shine {
+    0% { transform: translateX(-200%) skewX(-20deg); }
+    100% { transform: translateX(200%) skewX(-20deg); }
+  }
+  .signal-shine {
+    animation: signal-shine 2.5s ease-in-out infinite;
+    animation-delay: 1s;
+  }
+  
+  @keyframes call-pulse {
+    0%, 100% { transform: scale(1); opacity: 1; }
+    50% { transform: scale(1.08); opacity: 0.8; }
+  }
+  .call-pulse {
+    animation: call-pulse 1.6s ease-in-out infinite;
+  }
+
+  @keyframes drawer-in {
+    from { transform: translateX(-100%); }
+    to { transform: translateX(0); }
+  }
+  .drawer-in {
+    animation: drawer-in 200ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  }
+`;
+
 function AppShell(): React.JSX.Element {
   const navigate = useNavigate();
   const { user, logout } = useAuth();
   const { incomingCall, acceptCall, rejectCall } = useCall();
-  const reduceMotion = useReducedMotion();
 
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [railHovered, setRailHovered] = useState(false);
@@ -107,92 +132,80 @@ function AppShell(): React.JSX.Element {
   ];
 
   const railWidth = railHovered ? 224 : 68;
-
   const incomingDisplayName = callerName ?? 'Someone';
 
   return (
     <div className="flex h-screen bg-[#0B0A08] text-[#EDE5D4] overflow-hidden selection:bg-[#D97706]/30 selection:text-[#EDE5D4]">
-      
+      <style>{SHELL_CSS}</style>
+
       {/* ─── MOBILE DRAWER ─────────────────────────────────── */}
-      <AnimatePresence>
-        {mobileMenuOpen && (
-          <>
-            <motion.div
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              transition={{ duration: 0.2 }}
-              className="fixed inset-0 bg-black/60 backdrop-blur-sm z-30 md:hidden"
-              onClick={() => setMobileMenuOpen(false)}
-            />
-            <motion.aside
-              initial={{ x: '-100%' }}
-              animate={{ x: 0 }}
-              exit={{ x: '-100%' }}
-              transition={{ type: 'spring', stiffness: 350, damping: 35 }}
-              className="fixed inset-y-0 left-0 z-40 w-[280px] bg-[#0F0D0A]/80 backdrop-blur-3xl border-r border-white/[0.08] shadow-[20px_0_60px_rgba(0,0,0,0.8)] flex flex-col md:hidden"
-            >
-              <div className="h-16 px-4 border-b border-white/[0.06] flex items-center justify-between shrink-0">
-                <Link
-                  to="/app/orbit"
-                  onClick={() => setMobileMenuOpen(false)}
-                  className="flex items-baseline gap-2"
+      {mobileMenuOpen && (
+        <>
+          <div
+            className="fixed inset-0 bg-black/60 backdrop-blur-sm z-30 md:hidden"
+            onClick={() => setMobileMenuOpen(false)}
+          />
+          <aside className="drawer-in fixed inset-y-0 left-0 z-40 w-[280px] bg-[#0F0D0A]/95 backdrop-blur-3xl border-r border-white/[0.08] shadow-[20px_0_60px_rgba(0,0,0,0.8)] flex flex-col md:hidden">
+            <div className="h-16 px-4 border-b border-white/[0.06] flex items-center justify-between shrink-0">
+              <Link
+                to="/app/orbit"
+                onClick={() => setMobileMenuOpen(false)}
+                className="flex items-baseline gap-2"
+              >
+                <span
+                  className="text-[22px] leading-none text-[#EDE5D4] tracking-tight drop-shadow-[0_0_15px_rgba(237,229,212,0.2)]"
+                  style={{ fontFamily: '"Instrument Serif", Georgia, serif' }}
                 >
-                  <span
-                    className="text-[22px] leading-none text-[#EDE5D4] tracking-tight drop-shadow-[0_0_15px_rgba(237,229,212,0.2)]"
-                    style={{ fontFamily: '"Instrument Serif", Georgia, serif' }}
-                  >
-                    Orbital
-                  </span>
-                  <span
-                    aria-hidden
-                    className="w-1.5 h-1.5 rounded-full bg-[#D97706] inline-block translate-y-[-2px] shadow-[0_0_12px_rgba(217,119,6,0.8)]"
+                  Orbital
+                </span>
+                <span
+                  aria-hidden
+                  className="w-1.5 h-1.5 rounded-full bg-[#D97706] inline-block translate-y-[-2px] shadow-[0_0_12px_rgba(217,119,6,0.8)]"
+                />
+              </Link>
+              <button
+                onClick={() => setMobileMenuOpen(false)}
+                className="p-1.5 rounded-md text-[#A8A29E] hover:text-[#EDE5D4] hover:bg-white/[0.06] transition-colors"
+                aria-label="Close menu"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <nav className="flex-1 px-3 py-5 overflow-y-auto custom-scrollbar">
+              <MobileSection label="Messages">
+                {primaryNav.map((item) => (
+                  <MobileItem
+                    key={item.to}
+                    item={item}
+                    onNavigate={() => setMobileMenuOpen(false)}
                   />
-                </Link>
-                <button
-                  onClick={() => setMobileMenuOpen(false)}
-                  className="p-1.5 rounded-md text-[#A8A29E] hover:text-[#EDE5D4] hover:bg-white/[0.06] transition-colors"
-                  aria-label="Close menu"
-                >
-                  <X className="w-5 h-5" />
-                </button>
-              </div>
+                ))}
+              </MobileSection>
 
-              <nav className="flex-1 px-3 py-5 overflow-y-auto custom-scrollbar">
-                <MobileSection label="Messages">
-                  {primaryNav.map((item) => (
-                    <MobileItem
-                      key={item.to}
-                      item={item}
-                      onNavigate={() => setMobileMenuOpen(false)}
-                    />
-                  ))}
-                </MobileSection>
+              <MobileSection label="Activity" className="mt-6">
+                {activityNav.map((item) => (
+                  <MobileItem
+                    key={item.to}
+                    item={item}
+                    onNavigate={() => setMobileMenuOpen(false)}
+                  />
+                ))}
+              </MobileSection>
+            </nav>
 
-                <MobileSection label="Activity" className="mt-6">
-                  {activityNav.map((item) => (
-                    <MobileItem
-                      key={item.to}
-                      item={item}
-                      onNavigate={() => setMobileMenuOpen(false)}
-                    />
-                  ))}
-                </MobileSection>
-              </nav>
-
-              <div className="p-3 border-t border-white/[0.06]">
-                <button
-                  onClick={() => void handleSignOut()}
-                  className="w-full flex items-center gap-3 px-3 h-11 rounded-xl text-[13.5px] font-medium text-[#A8A29E] hover:text-[#F87171] hover:bg-[#B91C1C]/[0.1] transition-colors"
-                >
-                  <LogOut className="w-4 h-4" />
-                  <span>Sign out</span>
-                </button>
-              </div>
-            </motion.aside>
-          </>
-        )}
-      </AnimatePresence>
+            <div className="p-3 border-t border-white/[0.06]">
+              <button
+                onClick={() => void handleSignOut()}
+                className="w-full flex items-center gap-3 px-3 h-11 rounded-xl text-[13.5px] font-medium text-[#A8A29E] hover:text-[#F87171] hover:bg-[#B91C1C]/[0.1] transition-colors"
+              >
+                <LogOut className="w-4 h-4" />
+                <span>Sign out</span>
+              </button>
+            </div>
+          </aside>
+        </>
+      )}
 
       {/* ─── DESKTOP RAIL ─── */}
       <div
@@ -200,10 +213,8 @@ function AppShell(): React.JSX.Element {
         onMouseEnter={() => setRailHovered(true)}
         onMouseLeave={() => setRailHovered(false)}
       >
-        <motion.aside
-          initial={false}
-          animate={{ width: railWidth }}
-          transition={{ type: 'spring', stiffness: 400, damping: 32 }}
+        <aside
+          style={{ width: railWidth, transition: 'width 250ms cubic-bezier(0.16, 1, 0.3, 1)' }}
           className="absolute inset-y-0 left-0 flex flex-col overflow-hidden z-30
                      bg-[#0F0D0A]/60 backdrop-blur-[40px]
                      border-r border-white/[0.08]
@@ -289,70 +300,63 @@ function AppShell(): React.JSX.Element {
               </button>
 
               {/* Dropdown Menu */}
-              <AnimatePresence>
-                {userMenuOpen && (
-                  <motion.div
-                    initial={reduceMotion ? false : { opacity: 0, y: 8, scale: 0.96 }}
-                    animate={{ opacity: 1, y: 0, scale: 1 }}
-                    exit={reduceMotion ? undefined : { opacity: 0, y: 8, scale: 0.96 }}
-                    transition={{ type: 'spring', stiffness: 400, damping: 30 }}
-                    className="absolute bottom-full mb-3 left-0 right-0 min-w-[220px] rounded-2xl bg-[#131110]/90 backdrop-blur-3xl border border-white/[0.1] shadow-[0_20px_60px_-12px_rgba(0,0,0,0.95),inset_0_1px_0_rgba(255,255,255,0.05)] overflow-hidden z-50"
-                    onClick={(e) => e.stopPropagation()}
-                  >
-                    <div className="px-4 py-4 border-b border-white/[0.06] bg-gradient-to-b from-white/[0.02] to-transparent">
-                      <div className="flex items-center gap-3">
-                        <Avatar
-                          name={user?.displayName || 'User'}
-                          src={user?.avatarUrl}
-                          size="sm"
-                        />
-                        <div className="min-w-0">
-                          <p className="text-[13px] font-medium text-[#EDE5D4] truncate">
-                            {user?.displayName || 'Active User'}
-                          </p>
-                          <p className="text-[11px] text-[#6B6259] truncate mt-0.5">
-                            @{user?.userHandle || 'guest'}
-                          </p>
-                        </div>
+              {userMenuOpen && (
+                <div
+                  className="absolute bottom-full mb-3 left-0 right-0 min-w-[220px] rounded-2xl bg-[#131110]/95 backdrop-blur-3xl border border-white/[0.1] shadow-[0_20px_60px_-12px_rgba(0,0,0,0.95),inset_0_1px_0_rgba(255,255,255,0.05)] overflow-hidden z-50 origin-bottom-left transition-all duration-200 opacity-100 translate-y-0 scale-100"
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <div className="px-4 py-4 border-b border-white/[0.06] bg-gradient-to-b from-white/[0.02] to-transparent">
+                    <div className="flex items-center gap-3">
+                      <Avatar
+                        name={user?.displayName || 'User'}
+                        src={user?.avatarUrl}
+                        size="sm"
+                      />
+                      <div className="min-w-0">
+                        <p className="text-[13px] font-medium text-[#EDE5D4] truncate">
+                          {user?.displayName || 'Active User'}
+                        </p>
+                        <p className="text-[11px] text-[#6B6259] truncate mt-0.5">
+                          @{user?.userHandle || 'guest'}
+                        </p>
                       </div>
                     </div>
+                  </div>
+                  
+                  <div className="p-1.5">
+                    <Link
+                      to="/app/settings"
+                      onClick={() => setUserMenuOpen(false)}
+                      className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-[13px] font-medium text-[#A8A29E] hover:text-[#EDE5D4] hover:bg-white/[0.06] transition-colors"
+                    >
+                      <Settings className="w-4 h-4" />
+                      <span>Settings</span>
+                    </Link>
                     
-                    <div className="p-1.5">
-                      <Link
-                        to="/app/settings"
-                        onClick={() => setUserMenuOpen(false)}
-                        className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-[13px] font-medium text-[#A8A29E] hover:text-[#EDE5D4] hover:bg-white/[0.06] transition-colors"
-                      >
-                        <Settings className="w-4 h-4" />
-                        <span>Settings</span>
-                      </Link>
-                      
-                      <Link
-                        to="/app/orbit"
-                        onClick={() => setUserMenuOpen(false)}
-                        className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-[13px] font-medium text-[#A8A29E] hover:text-[#EDE5D4] hover:bg-white/[0.06] transition-colors"
-                      >
-                        <Orbit className="w-4 h-4" />
-                        <span>Your Orbit</span>
-                      </Link>
-                    </div>
+                    <Link
+                      to="/app/orbit"
+                      onClick={() => setUserMenuOpen(false)}
+                      className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-[13px] font-medium text-[#A8A29E] hover:text-[#EDE5D4] hover:bg-white/[0.06] transition-colors"
+                    >
+                      <Orbit className="w-4 h-4" />
+                      <span>Your Orbit</span>
+                    </Link>
+                  </div>
 
-                    <div className="p-1.5 border-t border-white/[0.06]">
-                      <button
-                        onClick={() => void handleSignOut()}
-                        className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-[13px] font-medium text-[#A8A29E] hover:text-[#F87171] hover:bg-[#B91C1C]/[0.1] transition-colors"
-                      >
-                        <LogOut className="w-4 h-4" />
-                        <span>Sign out</span>
-                      </button>
-                    </div>
-
-                  </motion.div>
-                )}
-              </AnimatePresence>
+                  <div className="p-1.5 border-t border-white/[0.06]">
+                    <button
+                      onClick={() => void handleSignOut()}
+                      className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-[13px] font-medium text-[#A8A29E] hover:text-[#F87171] hover:bg-[#B91C1C]/[0.1] transition-colors"
+                    >
+                      <LogOut className="w-4 h-4" />
+                      <span>Sign out</span>
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
-        </motion.aside>
+        </aside>
       </div>
 
       {/* ─── MAIN COLUMN ───────────────────────────────────── */}
@@ -374,53 +378,41 @@ function AppShell(): React.JSX.Element {
           <div className="w-8" />
         </header>
 
-        <AnimatePresence>
-          {incomingCall && (
-            <motion.div
-              initial={reduceMotion ? false : { opacity: 0, y: -12 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={reduceMotion ? undefined : { opacity: 0, y: -12 }}
-              transition={{ duration: 0.3, ease: [0.22, 1, 0.36, 1] }}
-              className="shrink-0 z-30 px-4 sm:px-6 py-3 bg-[#0F0D0A] border-b border-[#22C55E]/30 shadow-[0_10px_30px_-10px_rgba(34,197,94,0.15)]"
-            >
-              <div className="flex items-center justify-between gap-4">
-                <div className="flex items-center gap-3 min-w-0">
-                  <motion.div
-                    animate={reduceMotion ? undefined : { scale: [1, 1.08, 1] }}
-                    transition={{ duration: 1.6, repeat: Infinity, ease: 'easeInOut' }}
-                    className="w-10 h-10 rounded-full bg-[#22C55E]/15 border border-[#22C55E]/30 text-[#22C55E] flex items-center justify-center shrink-0 shadow-[0_0_20px_rgba(34,197,94,0.3)]"
-                  >
-                    <Phone className="w-4 h-4" />
-                  </motion.div>
-                  <div className="min-w-0">
-                    <p className="text-[11px] uppercase tracking-[0.24em] text-[#22C55E] font-semibold">
-                      Incoming call
-                    </p>
-                    <p className="text-[14px] text-[#EDE5D4] truncate font-medium">
-                      {incomingDisplayName} is calling
-                    </p>
-                  </div>
+        {incomingCall && (
+          <div className="shrink-0 z-30 px-4 sm:px-6 py-3 bg-[#0F0D0A] border-b border-[#22C55E]/30 shadow-[0_10px_30px_-10px_rgba(34,197,94,0.15)]">
+            <div className="flex items-center justify-between gap-4">
+              <div className="flex items-center gap-3 min-w-0">
+                <div className="call-pulse w-10 h-10 rounded-full bg-[#22C55E]/15 border border-[#22C55E]/30 text-[#22C55E] flex items-center justify-center shrink-0 shadow-[0_0_20px_rgba(34,197,94,0.3)]">
+                  <Phone className="w-4 h-4" />
                 </div>
-                <div className="flex items-center gap-2 shrink-0">
-                  <button
-                    onClick={() => void rejectCall()}
-                    className="h-9 px-4 rounded-xl bg-white/[0.05] hover:bg-[#B91C1C]/15 border border-white/[0.08] hover:border-[#B91C1C]/40 text-[#EDE5D4] hover:text-[#F87171] text-[13px] font-medium transition-colors inline-flex items-center gap-1.5"
-                  >
-                    <PhoneOff className="w-3.5 h-3.5" />
-                    <span className="hidden sm:inline">Decline</span>
-                  </button>
-                  <button
-                    onClick={() => void acceptCall()}
-                    className="h-9 px-4 rounded-xl bg-[#22C55E] hover:bg-[#16A34A] text-[#0F0D0A] text-[13px] font-semibold transition-colors shadow-[0_6px_20px_-8px_rgba(34,197,94,0.7)] inline-flex items-center gap-1.5"
-                  >
-                    <Phone className="w-3.5 h-3.5" />
-                    <span>Accept</span>
-                  </button>
+                <div className="min-w-0">
+                  <p className="text-[11px] uppercase tracking-[0.24em] text-[#22C55E] font-semibold">
+                    Incoming call
+                  </p>
+                  <p className="text-[14px] text-[#EDE5D4] truncate font-medium">
+                    {incomingDisplayName} is calling
+                  </p>
                 </div>
               </div>
-            </motion.div>
-          )}
-        </AnimatePresence>
+              <div className="flex items-center gap-2 shrink-0">
+                <button
+                  onClick={() => void rejectCall()}
+                  className="h-9 px-4 rounded-xl bg-white/[0.05] hover:bg-[#B91C1C]/15 border border-white/[0.08] hover:border-[#B91C1C]/40 text-[#EDE5D4] hover:text-[#F87171] text-[13px] font-medium transition-colors inline-flex items-center gap-1.5"
+                >
+                  <PhoneOff className="w-3.5 h-3.5" />
+                  <span className="hidden sm:inline">Decline</span>
+                </button>
+                <button
+                  onClick={() => void acceptCall()}
+                  className="h-9 px-4 rounded-xl bg-[#22C55E] hover:bg-[#16A34A] text-[#0F0D0A] text-[13px] font-semibold transition-colors shadow-[0_6px_20px_-8px_rgba(34,197,94,0.7)] inline-flex items-center gap-1.5"
+                >
+                  <Phone className="w-3.5 h-3.5" />
+                  <span>Accept</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
 
         <main className="flex-1 overflow-y-auto bg-[#0B0A08] relative custom-scrollbar">
           <Outlet />
@@ -461,18 +453,8 @@ function RailItem({
     >
       {({ isActive }) => (
         <>
-          {/* Swipe Left to Right Shine */}
           {highlight && !isActive && (
-            <motion.div
-              animate={{ x: ['-200%', '200%'] }}
-              transition={{ 
-                duration: 2.5, 
-                repeat: Infinity, 
-                ease: "easeInOut", 
-                repeatDelay: 1.5 
-              }}
-              className="absolute inset-0 z-0 w-1/2 bg-gradient-to-r from-transparent via-white/[0.15] to-transparent skew-x-[-20deg] pointer-events-none"
-            />
+            <div className="signal-shine absolute inset-0 z-0 w-1/2 bg-gradient-to-r from-transparent via-white/[0.15] to-transparent pointer-events-none" />
           )}
 
           {!isActive && (
@@ -480,32 +462,20 @@ function RailItem({
           )}
 
           {isActive && (
-            <motion.span
-              layoutId="rail-active-bg"
-              transition={{ type: 'spring', stiffness: 400, damping: 34 }}
-              className={`absolute inset-0 rounded-xl ring-1 ring-inset z-0 ${
+            <div className={`absolute inset-0 rounded-xl ring-1 ring-inset z-0 ${
                 accent
                   ? 'bg-gradient-to-r from-[#D97706]/20 to-transparent ring-[#D97706]/40'
                   : 'bg-gradient-to-r from-[#D97706]/15 to-transparent ring-[#D97706]/20'
-              }`}
+              }`} 
             />
           )}
 
           {isActive && (
-            <motion.span
-              layoutId="rail-active-bar"
-              transition={{ type: 'spring', stiffness: 400, damping: 34 }}
-              className="absolute left-0 top-2.5 bottom-2.5 w-[3px] rounded-r-full bg-[#D97706] shadow-[0_0_15px_rgba(217,119,6,1)] z-10"
-            />
+            <div className="absolute left-0 top-2.5 bottom-2.5 w-[3px] rounded-r-full bg-[#D97706] shadow-[0_0_15px_rgba(217,119,6,1)] z-10" />
           )}
 
           <span className="w-[68px] shrink-0 flex items-center justify-center relative z-10">
-            <motion.span
-              whileHover={{ scale: 1.12, rotate: isActive ? 0 : 5 }}
-              whileTap={{ scale: 0.9 }}
-              transition={{ type: 'spring', stiffness: 420, damping: 18 }}
-              className="inline-flex"
-            >
+            <span className="inline-flex transition-transform group-hover:scale-110 group-active:scale-90">
               <Icon
                 className={`w-[19px] h-[19px] transition-all duration-300 ${
                   isActive
@@ -515,7 +485,7 @@ function RailItem({
                     : 'text-[#A8A29E] group-hover:text-[#EDE5D4]'
                 }`}
               />
-            </motion.span>
+            </span>
           </span>
 
           <span

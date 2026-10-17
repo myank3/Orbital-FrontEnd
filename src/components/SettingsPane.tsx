@@ -340,7 +340,7 @@ function SettingsPane(): React.JSX.Element {
           className="rounded-2xl bg-[#14120F] border border-white/[0.06] overflow-hidden"
         >
           <div className="px-5 py-3.5 border-b border-white/[0.06] flex items-center gap-2">
-            <Sparkles className="w-4 h-4 text-[#D97706]" />
+           
             <h2 className="text-[14px] font-semibold text-[#EDE5D4] tracking-tight">
               Edit profile
             </h2>

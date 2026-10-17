@@ -44,6 +44,7 @@ import SignalsPage from './pages/SignalsPage'; // <-- Added import
  * that should be exchanged for a session via hydrateFromToken().
  */
 const TOKEN_INTERCEPT_ROUTES = [
+'/auth/google/success',                
   '/confirm-email',
   '/verify-email',
   '/auth/callback',
