@@ -131,6 +131,12 @@ function AppShell(): React.JSX.Element {
     { to: '/app/signals', label: 'Signals', icon: Compass, highlight: true },
   ];
 
+  // Added for the mobile drawer
+  const accountNav: NavItem[] = [
+    { to: '/app/settings', label: 'Settings', icon: Settings },
+    { to: '/app/orbit', label: 'Your Orbit', icon: Orbit, accent: true },
+  ];
+
   const railWidth = railHovered ? 224 : 68;
   const incomingDisplayName = callerName ?? 'Someone';
 
@@ -185,6 +191,17 @@ function AppShell(): React.JSX.Element {
 
               <MobileSection label="Activity" className="mt-6">
                 {activityNav.map((item) => (
+                  <MobileItem
+                    key={item.to}
+                    item={item}
+                    onNavigate={() => setMobileMenuOpen(false)}
+                  />
+                ))}
+              </MobileSection>
+
+              {/* Added Account section for Settings and Your Orbit */}
+              <MobileSection label="Account" className="mt-6">
+                {accountNav.map((item) => (
                   <MobileItem
                     key={item.to}
                     item={item}
