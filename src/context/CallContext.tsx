@@ -228,6 +228,7 @@ function useAudioRingtone(
   active: boolean,
   src: string,
   volume = 0.35,
+  loop = true,
 ) {
   const audioRef = useRef<HTMLAudioElement | null>(null);
 
@@ -243,7 +244,7 @@ function useAudioRingtone(
 
     if (!audioRef.current) {
       const el = new Audio(src);
-      el.loop = true;
+      el.loop = loop;
       el.volume = volume;
       el.preload = 'auto';
       audioRef.current = el;
@@ -268,7 +269,7 @@ function useAudioRingtone(
       el.pause();
       el.currentTime = 0;
     };
-  }, [active, src, volume]);
+  }, [active, src, volume, loop]);
 
   useEffect(() => {
     return () => {
@@ -311,6 +312,7 @@ const INCOMING_SOFT_PATTERN: ToneStep[] = [
 ];
 
 // End tone — short descending two-note "blip" when a call ends.
+// NOTE: kept for reference; end call now uses a real MP3.
 const END_PATTERN: ToneStep[] = [
   { freq: 659.25, durationMs: 140, gapAfterMs: 50 },   // E5
   { freq: 493.88, durationMs: 260, gapAfterMs: 0 },    // B4
@@ -496,17 +498,12 @@ useAudioRingtone(isOutgoingRinging, '/sounds/outgoing.mp3', 0.25);
   // Incoming — looping MP3 ringtone from /public/sounds/ringtone.mp3
   useAudioRingtone(isIncomingRinging, '/sounds/ringtone.mp3', 0.35);
 
-  // End tone — short descending blip.
-  useRingtone(endToneActive, {
-    pattern: END_PATTERN,
-    silenceMs: 0,
-    volume: 0.1,
-    wave: 'sine',
-  });
+  // End tone — disconnect MP3, plays once.
+  useAudioRingtone(endToneActive, '/sounds/disconnect.mp3', 0.3, false);
 
   const playEndTone = useCallback(() => {
     setEndToneActive(true);
-    window.setTimeout(() => setEndToneActive(false), 500);
+    window.setTimeout(() => setEndToneActive(false), 1500);
   }, []);
 
   /* ── Duration ticker ─────────────────────────────────── */
