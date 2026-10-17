@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Film, Newspaper, ArrowLeft } from 'lucide-react';
 import { motion, AnimatePresence, Variants } from 'motion/react';
+import { useNavigate } from 'react-router-dom'; // <-- Added
 
 type ActiveSignal = 'movies' | 'news' | null;
 
@@ -24,6 +25,7 @@ const itemVariants: Variants = {
 };
 
 export default function SignalsPage() {
+  const navigate = useNavigate(); // <-- Added
   const [activeSignal, setActiveSignal] = useState<ActiveSignal>(null);
   const [isLoading, setIsLoading] = useState(false);
 
@@ -50,6 +52,15 @@ export default function SignalsPage() {
             exit="exit"
             className="absolute inset-0 flex flex-col items-center justify-center p-4 md:p-6 overflow-y-auto"
           >
+            {/* 🟢 Back Button (Top Left) */}
+            <button
+              onClick={() => navigate('/app/orbit')}
+              className="absolute top-6 left-6 flex items-center gap-2 text-[13px] font-medium text-[#A8A29E] hover:text-[#D97706] transition-colors group z-50"
+            >
+              <ArrowLeft className="w-4 h-4 group-hover:-translate-x-1 transition-transform" />
+              <span>Back to Home</span>
+            </button>
+
             {/* Static ambient glow (No animation, no heavy blur) */}
             <div 
               className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[350px] md:w-[800px] h-[350px] md:h-[800px] pointer-events-none opacity-40"
@@ -97,15 +108,11 @@ export default function SignalsPage() {
                   onClick={() => handleOpen('movies')}
                   className="group relative flex flex-col items-center text-center p-6 md:p-8 rounded-[2rem] bg-[#131110] border border-white/[0.08] hover:border-[#D97706]/50 transition-colors duration-200 w-full max-w-[320px] md:w-[280px] md:h-[280px] justify-center overflow-hidden shadow-2xl"
                 >
-                  {/* Static dashed ring */}
                   <div className="absolute inset-4 border border-dashed border-[#D97706]/20 rounded-full pointer-events-none" />
-                  
                   <div className="absolute inset-0 bg-gradient-to-t from-[#D97706]/10 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300" />
-                  
                   <div className="w-16 h-16 rounded-full bg-[#D97706]/10 flex items-center justify-center mb-5 group-hover:bg-[#D97706]/20 group-hover:scale-105 transition-all duration-200 relative z-10">
                     <Film className="w-7 h-7 text-[#D97706]" />
                   </div>
-                  
                   <h2 className="text-2xl font-medium text-[#EDE5D4] mb-2 tracking-wide relative z-10">Chalachitra</h2>
                   <p className="text-[#A8A29E] text-[13px] leading-relaxed px-2 relative z-10">
                     The cinema dimension. Discover films and build your watchlist.
@@ -120,15 +127,11 @@ export default function SignalsPage() {
                   onClick={() => handleOpen('news')}
                   className="group relative flex flex-col items-center text-center p-6 md:p-8 rounded-[2rem] bg-[#131110] border border-white/[0.08] hover:border-[#D97706]/50 transition-colors duration-200 w-full max-w-[320px] md:w-[280px] md:h-[280px] justify-center overflow-hidden shadow-2xl"
                 >
-                  {/* Static dashed ring */}
                   <div className="absolute inset-4 border border-dashed border-[#D97706]/20 rounded-full pointer-events-none" />
-
                   <div className="absolute inset-0 bg-gradient-to-t from-[#D97706]/10 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300" />
-                  
                   <div className="w-16 h-16 rounded-full bg-[#D97706]/10 flex items-center justify-center mb-5 group-hover:bg-[#D97706]/20 group-hover:scale-105 transition-all duration-200 relative z-10">
                     <Newspaper className="w-7 h-7 text-[#D97706]" />
                   </div>
-                  
                   <h2 className="text-2xl font-medium text-[#EDE5D4] mb-2 tracking-wide relative z-10">The Daily</h2>
                   <p className="text-[#A8A29E] text-[13px] leading-relaxed px-2 relative z-10">
                     The information stream. Catch up on today's top stories.
@@ -151,14 +154,14 @@ export default function SignalsPage() {
             transition={{ duration: 0.15 }}
             className="absolute inset-0 flex flex-col bg-[#0B0A08]"
           >
-            {/* Sleek Header Bar */}
+            {/* Sleek Header Bar (With Back Button) */}
             <div className="h-14 md:h-12 shrink-0 border-b border-white/[0.06] flex items-center px-4 bg-[#0F0D0A] z-20">
               <button
                 onClick={handleClose}
                 className="flex items-center gap-2 text-[13px] font-medium text-[#A8A29E] hover:text-[#D97706] active:text-[#D97706] transition-colors group py-2"
               >
                 <ArrowLeft className="w-4 h-4 group-hover:-translate-x-1 transition-transform" />
-                <span className="hidden sm:inline">Return to Orbit</span>
+                <span className="hidden sm:inline">Return to Signals</span>
                 <span className="sm:hidden">Back</span>
               </button>
               <div className="ml-auto flex items-center gap-2 text-[10px] md:text-[11px] uppercase tracking-[0.2em] text-[#6B6259]">
@@ -170,7 +173,6 @@ export default function SignalsPage() {
             {/* The embedded website */}
             <div className="flex-1 w-full bg-[#0B0A08] relative">
               
-              {/* Loading Spinner Overlay */}
               <AnimatePresence>
                 {isLoading && (
                   <motion.div 
