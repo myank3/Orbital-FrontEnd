@@ -225,19 +225,7 @@ export default function Register(): React.JSX.Element {
           <Link to="/confirm-email-pending" className="text-[#6B6259] hover:text-[#D97706]">Resend verification</Link>
         </div>
 
-        <div className="pt-3 flex flex-wrap items-center justify-center gap-x-4 gap-y-1 text-[11.5px] text-[#5A524A]">
-          <Link to="/terms" target="_blank" rel="noopener noreferrer" className="hover:text-[#D97706] transition-colors">
-            Terms
-          </Link>
-          <span aria-hidden>·</span>
-          <Link to="/privacy" target="_blank" rel="noopener noreferrer" className="hover:text-[#D97706] transition-colors">
-            Privacy
-          </Link>
-          <span aria-hidden>·</span>
-          <a href="mailto:prolium7@outlook.com" className="hover:text-[#D97706] transition-colors">
-            Support
-          </a>
-        </div>
+      
       </div>
     </AuthShell>
   );
