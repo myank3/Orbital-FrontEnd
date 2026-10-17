@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useEffect, useState, useRef } from 'react';
+import React, { useEffect, useState } from 'react';
 import { NavLink, Outlet, useNavigate, Link, useLocation } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { useCall } from '../context/CallContext';
@@ -28,7 +28,7 @@ import {
 interface NavItem {
   to: string;
   label: string;
-  icon: React.ComponentType<{ className?: string }>;
+  icon: React.ComponentType<{ className?: string; size?: number }>;
   badge?: number | string;
   accent?: boolean;
   highlight?: boolean;
@@ -60,13 +60,13 @@ const SHELL_CSS = `
     animation: drawer-in 200ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
   }
 
-  /* 🟢 Smooth loading bar animation */
-  @keyframes loading-bar {
-    0% { transform: translateX(-100%); }
-    100% { transform: translateX(100%); }
+  /* 🟢 Ultra-fast slide animation for the main content area */
+  @keyframes view-slide-in {
+    from { opacity: 0; transform: translate3d(30px, 0, 0); }
+    to   { opacity: 1; transform: translate3d(0, 0, 0); }
   }
-  .loading-bar {
-    animation: loading-bar 1s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+  .view-slide-in {
+    animation: view-slide-in 300ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
   }
 `;
 
@@ -84,10 +84,6 @@ function AppShell(): React.JSX.Element {
   const [railHovered, setRailHovered] = useState(false);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const [mobileUserMenuOpen, setMobileUserMenuOpen] = useState(false);
-  
-  // 🟢 Fake loading state
-  const [isNavigating, setIsNavigating] = useState(false);
-  const loadingTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const [callerName, setCallerName] = useState<string | null>(null);
 
@@ -111,27 +107,6 @@ function AppShell(): React.JSX.Element {
       cancelled = true;
     };
   }, [incomingCall?.initiatorId]);
-
-  // 🟢 Clear loading state on route change
-  useEffect(() => {
-    if (loadingTimer.current) clearTimeout(loadingTimer.current);
-    setIsNavigating(false);
-  }, [location.pathname]);
-
-  // 🟢 The 1-second fake delay logic
-  const handleNavigate = (to: string, e?: React.MouseEvent) => {
-    if (e) e.preventDefault();
-    if (location.pathname === to) return; // Don't delay if already on page
-    
-    setIsNavigating(true);
-    // 1000ms delay before actual navigation
-    loadingTimer.current = setTimeout(() => {
-      navigate(to);
-      setMobileMenuOpen(false);
-      setUserMenuOpen(false);
-      setMobileUserMenuOpen(false);
-    }, 1000);
-  };
 
   const handleSignOut = async () => {
     try {
@@ -181,13 +156,6 @@ function AppShell(): React.JSX.Element {
     <div className="flex h-screen bg-[#0B0A08] text-[#EDE5D4] overflow-hidden selection:bg-[#D97706]/30 selection:text-[#EDE5D4]">
       <style>{SHELL_CSS}</style>
 
-      {/* 🟢 FAKE LOADING BAR (Sits at the very top of the viewport) */}
-      {isNavigating && (
-        <div className="fixed top-0 left-0 right-0 h-[2px] bg-[#D97706]/20 z-[100] overflow-hidden pointer-events-none">
-          <div className="loading-bar w-full h-full bg-gradient-to-r from-transparent via-[#D97706] to-transparent shadow-[0_0_10px_rgba(217,119,6,0.8)]" />
-        </div>
-      )}
-
       {/* ─── MOBILE DRAWER ─────────────────────────────────── */}
       {mobileMenuOpen && (
         <>
@@ -199,7 +167,7 @@ function AppShell(): React.JSX.Element {
             <div className="h-16 px-4 border-b border-white/[0.06] flex items-center justify-between shrink-0">
               <Link
                 to="/app/orbit"
-                onClick={(e) => handleNavigate('/app/orbit', e)}
+                onClick={() => setMobileMenuOpen(false)}
                 className="flex items-baseline gap-2"
               >
                 <span
@@ -228,7 +196,7 @@ function AppShell(): React.JSX.Element {
                   <MobileItem
                     key={item.to}
                     item={item}
-                    onNavigate={() => handleNavigate(item.to)}
+                    onNavigate={() => setMobileMenuOpen(false)}
                   />
                 ))}
               </MobileSection>
@@ -238,7 +206,7 @@ function AppShell(): React.JSX.Element {
                   <MobileItem
                     key={item.to}
                     item={item}
-                    onNavigate={() => handleNavigate(item.to)}
+                    onNavigate={() => setMobileMenuOpen(false)}
                   />
                 ))}
               </MobileSection>
@@ -265,7 +233,6 @@ function AppShell(): React.JSX.Element {
             <div className="h-16 flex items-center px-4 shrink-0 border-b border-white/[0.06]">
               <Link
                 to="/app/orbit"
-                onClick={(e) => handleNavigate('/app/orbit', e)}
                 className="flex items-baseline gap-2 select-none whitespace-nowrap group"
               >
                 <span
@@ -289,7 +256,7 @@ function AppShell(): React.JSX.Element {
                     key={item.to}
                     item={item}
                     expanded={railHovered}
-                    onNavigate={(e) => handleNavigate(item.to, e)}
+                    onNavigate={() => setMobileMenuOpen(false)}
                   />
                 ))}
               </div>
@@ -302,7 +269,7 @@ function AppShell(): React.JSX.Element {
                     key={item.to}
                     item={item}
                     expanded={railHovered}
-                    onNavigate={(e) => handleNavigate(item.to, e)}
+                    onNavigate={() => setMobileMenuOpen(false)}
                   />
                 ))}
               </div>
@@ -368,7 +335,7 @@ function AppShell(): React.JSX.Element {
                     <div className="p-1.5">
                       <Link
                         to="/app/settings"
-                        onClick={(e) => handleNavigate('/app/settings', e)}
+                        onClick={() => setUserMenuOpen(false)}
                         className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-[13px] font-medium text-[#A8A29E] hover:text-[#EDE5D4] hover:bg-white/[0.06] transition-colors"
                       >
                         <Settings className="w-4 h-4" />
@@ -377,7 +344,7 @@ function AppShell(): React.JSX.Element {
                       
                       <Link
                         to="/app/orbit"
-                        onClick={(e) => handleNavigate('/app/orbit', e)}
+                        onClick={() => setUserMenuOpen(false)}
                         className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-[13px] font-medium text-[#A8A29E] hover:text-[#EDE5D4] hover:bg-white/[0.06] transition-colors"
                       >
                         <Orbit className="w-4 h-4" />
@@ -462,23 +429,28 @@ function AppShell(): React.JSX.Element {
 
         {/* Main Content Area */}
         <main className={`flex-1 overflow-y-auto bg-[#0B0A08] relative custom-scrollbar ${!isActiveChat ? 'pb-16 md:pb-0' : ''}`}>
-          <Outlet />
+          {/* 🟢 Add view-slide-in class here, keyed by pathname for re-triggering animation */}
+          <div key={location.pathname} className="view-slide-in w-full h-full">
+            <Outlet />
+          </div>
         </main>
 
         {/* ─── MOBILE BOTTOM BAR ─── */}
         {!isActiveChat && (
           <nav className="md:hidden fixed bottom-0 left-0 right-0 h-16 bg-[#0F0D0A]/90 backdrop-blur-3xl border-t border-white/[0.06] z-40 flex items-center justify-around px-2 pb-[env(safe-area-inset-bottom)]">
             {primaryNav.slice(0, 3).map((item) => (
-               <button
+               <NavLink
                  key={item.to}
-                 onClick={(e) => handleNavigate(item.to, e)}
-                 className={`flex flex-col items-center justify-center w-14 h-full gap-1 ${
-                   location.pathname.startsWith(item.to) ? 'text-[#D97706]' : 'text-[#A8A29E] hover:text-[#EDE5D4]'
-                 }`}
+                 to={item.to}
+                 className={({ isActive }) =>
+                   `flex flex-col items-center justify-center w-14 h-full gap-1 ${
+                     isActive ? 'text-[#D97706]' : 'text-[#A8A29E] hover:text-[#EDE5D4]'
+                   }`
+                 }
                >
                  <item.icon size={20} />
                  <span className="text-[9px] font-medium">{item.label}</span>
-               </button>
+               </NavLink>
             ))}
 
             {/* Mobile Avatar Button */}
@@ -525,21 +497,23 @@ function AppShell(): React.JSX.Element {
                   </div>
                   
                   <div className="p-1.5">
-                    <button
-                      onClick={(e) => handleNavigate('/app/settings', e)}
+                    <Link
+                      to="/app/settings"
+                      onClick={() => setMobileUserMenuOpen(false)}
                       className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-[13px] font-medium text-[#A8A29E] hover:text-[#EDE5D4] hover:bg-white/[0.06] transition-colors"
                     >
                       <Settings className="w-4 h-4" />
                       <span>Settings</span>
-                    </button>
+                    </Link>
                     
-                    <button
-                      onClick={(e) => handleNavigate('/app/orbit', e)}
+                    <Link
+                      to="/app/orbit"
+                      onClick={() => setMobileUserMenuOpen(false)}
                       className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-[13px] font-medium text-[#A8A29E] hover:text-[#EDE5D4] hover:bg-white/[0.06] transition-colors"
                     >
                       <Orbit className="w-4 h-4" />
                       <span>Your Orbit</span>
-                    </button>
+                    </Link>
                   </div>
 
                   <div className="p-1.5 border-t border-white/[0.06]">
@@ -574,7 +548,7 @@ function RailItem({
 }: {
   item: NavItem;
   expanded: boolean;
-  onNavigate: (e: React.MouseEvent) => void;
+  onNavigate: () => void;
 }) {
   const Icon = item.icon;
   const accent = item.accent;
@@ -635,7 +609,6 @@ function RailItem({
             {item.label}
           </span>
 
-          {/* Badge */}
           {typeof item.badge === 'number' && item.badge > 0 && (
             <span className="relative z-10 ml-auto mr-2 min-w-[20px] h-[20px] px-1.5 rounded-full bg-[#D97706] text-[#0F0D0A] text-[11px] font-bold flex items-center justify-center shadow-[0_0_10px_rgba(217,119,6,0.5)]">
               {item.badge > 99 ? '99+' : item.badge}
@@ -678,7 +651,6 @@ function MobileItem({
   onNavigate: () => void;
 }) {
   const Icon = item.icon;
-  const highlight = item.highlight;
   
   return (
     <NavLink
