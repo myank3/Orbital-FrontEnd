@@ -576,8 +576,6 @@ function SettingsPane(): React.JSX.Element {
             {/* Terms card */}
             <Link
               to="/terms"
-              target="_blank"
-              rel="noopener noreferrer"
               className="group relative overflow-hidden rounded-xl border border-white/[0.06] bg-white/[0.02] hover:bg-white/[0.04] hover:border-[#D97706]/30 p-4 transition-all duration-200"
             >
               <div
@@ -612,8 +610,6 @@ function SettingsPane(): React.JSX.Element {
             {/* Privacy card */}
             <Link
               to="/privacy"
-              target="_blank"
-              rel="noopener noreferrer"
               className="group relative overflow-hidden rounded-xl border border-white/[0.06] bg-white/[0.02] hover:bg-white/[0.04] hover:border-[#4ADE80]/30 p-4 transition-all duration-200"
             >
               <div
@@ -683,8 +679,6 @@ function SettingsPane(): React.JSX.Element {
           <p className="flex items-center justify-center gap-2 text-[10px] font-mono uppercase tracking-[0.18em]">
             <Link
               to="/terms"
-              target="_blank"
-              rel="noopener noreferrer"
               className="text-[#5A524A] hover:text-[#D97706] transition-colors"
             >
               Terms
@@ -692,8 +686,6 @@ function SettingsPane(): React.JSX.Element {
             <span aria-hidden className="text-[#3A342E]">·</span>
             <Link
               to="/privacy"
-              target="_blank"
-              rel="noopener noreferrer"
               className="text-[#5A524A] hover:text-[#D97706] transition-colors"
             >
               Privacy

@@ -9,7 +9,7 @@
  */
 
 import React, { useEffect, type ReactNode } from 'react';
-import { Link, useLocation } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { ArrowLeft, FileText } from 'lucide-react';
 
 const SERIF = '"Instrument Serif", "Iowan Old Style", Georgia, serif';
@@ -146,10 +146,19 @@ export function LegalLayout({
   children,
 }: LegalLayoutProps): React.JSX.Element {
   const { pathname } = useLocation();
+  const navigate = useNavigate();
 
   useEffect(() => {
     window.scrollTo(0, 0);
   }, [pathname]);
+
+  const handleBack = () => {
+    if (window.history.length > 1) {
+      navigate(-1);
+    } else {
+      navigate('/');
+    }
+  };
 
   return (
     <div className="min-h-screen bg-[#0F0D0A] text-[#EDE5D4]">
@@ -158,13 +167,14 @@ export function LegalLayout({
       {/* ─── Header ──────────────────────────────────────── */}
       <header className="sticky top-0 z-30 bg-[#0F0D0A]/85 backdrop-blur-md border-b border-white/[0.06]">
         <div className="max-w-6xl mx-auto px-4 sm:px-6 h-14 flex items-center justify-between">
-          <Link
-            to="/register"
+          <button
+            type="button"
+            onClick={handleBack}
             className="inline-flex items-center gap-1.5 text-[12.5px] text-[#A8A29E] hover:text-[#EDE5D4] transition-colors"
           >
             <ArrowLeft size={13} />
             Back
-          </Link>
+          </button>
 
           <Link to="/" className="inline-flex items-baseline gap-1.5 select-none">
             <span
@@ -259,12 +269,13 @@ export function LegalLayout({
                 Questions?{' '}
                 <a href="mailto:prolium7@outlook.com">Contact support</a>
               </p>
-              <Link
-                to="/register"
-                className="text-[12.5px] text-[#A8A29E] hover:text-[#EDE5D4] transition-colors"
+              <button
+                type="button"
+                onClick={handleBack}
+                className="text-[12.5px] text-[#A8A29E] hover:text-[#EDE5D4] transition-colors text-left sm:text-right"
               >
-                Back to sign up
-              </Link>
+                ← Back
+              </button>
             </div>
           </article>
         </div>
