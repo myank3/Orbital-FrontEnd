@@ -33,17 +33,18 @@ import {
   X,
   ShieldOff,
   Inbox,
-  Sparkles,
   ChevronRight,
   AtSign,
   Calendar,
   LifeBuoy,
+  FileText,
+  ScrollText,
 } from 'lucide-react';
 
 const SPRING = { type: 'spring' as const, stiffness: 240, damping: 26 };
 
 /* Support inbox — change here if it ever moves */
-const SUPPORT_EMAIL = 'proelium7@outlook.com';
+const SUPPORT_EMAIL = 'prolium7@outlook.com';
 
 function toAbsoluteAvatar(url: string | null | undefined): string | undefined {
   if (!url) return undefined;
@@ -190,7 +191,6 @@ function SettingsPane(): React.JSX.Element {
     setUploadError(null);
 
     try {
-      // Compress to a 256px JPEG, target under 200 KB.
       let toSend = pendingFile;
       try {
         toSend = await compressAvatar(pendingFile);
@@ -285,7 +285,6 @@ function SettingsPane(): React.JSX.Element {
         {/* ── Hero profile card ─────────────────────────── */}
         <motion.div {...stagger(0)}>
           <div className="relative overflow-hidden rounded-[24px] border border-white/[0.08] bg-gradient-to-b from-[#1C1A17] to-[#131110]">
-            {/* gradient banner */}
             <div className="h-24 bg-gradient-to-br from-[#D97706]/25 via-[#D97706]/[0.06] to-transparent" />
 
             <div className="px-5 sm:px-6 pb-6 -mt-12">
@@ -321,7 +320,6 @@ function SettingsPane(): React.JSX.Element {
                 </div>
               </div>
 
-              {/* quick stats row */}
               <div className="mt-4 flex items-center gap-4 flex-wrap">
                 {user?.createdAt && (
                   <div className="inline-flex items-center gap-1.5 text-[11.5px] text-[#7A6F65]">
@@ -557,14 +555,101 @@ function SettingsPane(): React.JSX.Element {
                 <ChevronRight className="w-3.5 h-3.5" />
               </a>
             </Row>
+          </div>
+        </motion.section>
 
-           
+        {/* ── Legal & Info section ──────────────────────── */}
+        <motion.section
+          {...stagger(0.24)}
+          className="rounded-2xl bg-[#14120F] border border-white/[0.06] overflow-hidden"
+        >
+          <div className="px-5 py-3.5 border-b border-white/[0.06] flex items-center justify-between">
+            <h2 className="text-[14px] font-semibold text-[#EDE5D4] tracking-tight">
+              Legal &amp; Info
+            </h2>
+            <span className="text-[9.5px] font-mono uppercase tracking-[0.18em] text-[#5A524A] px-2 py-0.5 rounded-md bg-white/[0.03] border border-white/[0.05]">
+              v1.0
+            </span>
+          </div>
+
+          <div className="p-4 grid grid-cols-1 sm:grid-cols-2 gap-3">
+            {/* Terms card */}
+            <Link
+              to="/terms"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="group relative overflow-hidden rounded-xl border border-white/[0.06] bg-white/[0.02] hover:bg-white/[0.04] hover:border-[#D97706]/30 p-4 transition-all duration-200"
+            >
+              <div
+                className="pointer-events-none absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-300"
+                style={{
+                  background:
+                    'radial-gradient(circle at top right, rgba(217,119,6,0.10) 0%, transparent 60%)',
+                }}
+              />
+
+              <div className="relative flex items-start gap-3">
+                <div className="w-10 h-10 rounded-lg bg-[#D97706]/10 border border-[#D97706]/20 flex items-center justify-center shrink-0">
+                  <FileText className="w-4 h-4 text-[#D97706]" />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center justify-between gap-2">
+                    <p className="text-[13.5px] font-semibold text-[#EDE5D4]">
+                      Terms of Service
+                    </p>
+                    <ChevronRight className="w-4 h-4 text-[#5A524A] group-hover:text-[#D97706] group-hover:translate-x-0.5 transition-all shrink-0" />
+                  </div>
+                  <p className="text-[11px] text-[#7A6F65] mt-1 leading-snug">
+                    The agreement between you and Orbital
+                  </p>
+                  <p className="text-[9.5px] font-mono uppercase tracking-[0.16em] text-[#5A524A] mt-2.5">
+                    2 min read · Oct 2026
+                  </p>
+                </div>
+              </div>
+            </Link>
+
+            {/* Privacy card */}
+            <Link
+              to="/privacy"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="group relative overflow-hidden rounded-xl border border-white/[0.06] bg-white/[0.02] hover:bg-white/[0.04] hover:border-[#4ADE80]/30 p-4 transition-all duration-200"
+            >
+              <div
+                className="pointer-events-none absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-300"
+                style={{
+                  background:
+                    'radial-gradient(circle at top right, rgba(74,222,128,0.08) 0%, transparent 60%)',
+                }}
+              />
+
+              <div className="relative flex items-start gap-3">
+                <div className="w-10 h-10 rounded-lg bg-[#4ADE80]/10 border border-[#4ADE80]/20 flex items-center justify-center shrink-0">
+                  <ScrollText className="w-4 h-4 text-[#4ADE80]" />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center justify-between gap-2">
+                    <p className="text-[13.5px] font-semibold text-[#EDE5D4]">
+                      Privacy Policy
+                    </p>
+                    <ChevronRight className="w-4 h-4 text-[#5A524A] group-hover:text-[#4ADE80] group-hover:translate-x-0.5 transition-all shrink-0" />
+                  </div>
+                  <p className="text-[11px] text-[#7A6F65] mt-1 leading-snug">
+                    What we do with your data — and don&apos;t
+                  </p>
+                  <p className="text-[9.5px] font-mono uppercase tracking-[0.16em] text-[#5A524A] mt-2.5">
+                    3 min read · Oct 2026
+                  </p>
+                </div>
+              </div>
+            </Link>
           </div>
         </motion.section>
 
         {/* ── Danger zone ───────────────────────────────── */}
         <motion.section
-          {...stagger(0.26)}
+          {...stagger(0.28)}
           className="rounded-2xl bg-[#B91C1C]/[0.05] border border-[#B91C1C]/20 overflow-hidden"
         >
           <div className="p-5 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
@@ -587,12 +672,40 @@ function SettingsPane(): React.JSX.Element {
           </div>
         </motion.section>
 
+        {/* ── Footer ────────────────────────────────────── */}
         <motion.div
-          {...stagger(0.30)}
-          className="text-center text-[11px] text-[#5A524A] pt-2 pb-4"
+          {...stagger(0.32)}
+          className="text-center pt-2 pb-4 space-y-2"
         >
-          © {new Date().getFullYear()} Orbital · Private &amp; Direct ·{' '}
-         
+          <p className="text-[11px] text-[#5A524A]">
+            © {new Date().getFullYear()} Orbital · Private &amp; Direct
+          </p>
+          <p className="flex items-center justify-center gap-2 text-[10px] font-mono uppercase tracking-[0.18em]">
+            <Link
+              to="/terms"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-[#5A524A] hover:text-[#D97706] transition-colors"
+            >
+              Terms
+            </Link>
+            <span aria-hidden className="text-[#3A342E]">·</span>
+            <Link
+              to="/privacy"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-[#5A524A] hover:text-[#D97706] transition-colors"
+            >
+              Privacy
+            </Link>
+            <span aria-hidden className="text-[#3A342E]">·</span>
+            <a
+              href={`mailto:${SUPPORT_EMAIL}`}
+              className="text-[#5A524A] hover:text-[#D97706] transition-colors"
+            >
+              Support
+            </a>
+          </p>
         </motion.div>
       </div>
 

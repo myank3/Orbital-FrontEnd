@@ -25,6 +25,8 @@ import ForgotPassword from './pages/ForgotPassword';
 import ResetPassword from './pages/ResetPassword';
 import ConfirmEmail from './pages/ConfirmEmail';
 import ConfirmEmailPending from './pages/ConfirmEmailPending';
+import Terms from './pages/Terms';
+import Privacy from './pages/Privacy';
 
 // Protected app shell
 import AppShell from './pages/AppShell';
@@ -37,14 +39,14 @@ import SettingsPane from './components/SettingsPane';
 import CallsPane from './components/CallsPane';
 import NotificationsPane from './components/NotificationsPane';
 import OrbitView from './pages/OrbitView';
-import SignalsPage from './pages/SignalsPage'; 
+import SignalsPage from './pages/SignalsPage';
 
 /**
  * Routes on which a `?token=` query param represents a *login* token
  * that should be exchanged for a session via hydrateFromToken().
  */
 const TOKEN_INTERCEPT_ROUTES = [
-  '/auth/google/success',                
+  '/auth/google/success',
   '/confirm-email',
   '/verify-email',
   '/auth/callback',
@@ -158,6 +160,8 @@ export default function App() {
             <Route path="/reset-password" element={<ResetPassword />} />
             <Route path="/confirm-email" element={<ConfirmEmail />} />
             <Route path="/confirm-email-pending" element={<ConfirmEmailPending />} />
+            <Route path="/terms" element={<Terms />} />
+            <Route path="/privacy" element={<Privacy />} />
 
             {/* ── Protected app shell ──────────────────── */}
             <Route

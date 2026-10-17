@@ -102,7 +102,7 @@ export default function Register(): React.JSX.Element {
 
     const errs = validate({ displayName, handle, email, password, confirm });
     if (Object.keys(errs).length) { setFieldErrors(errs); setError(null); return; }
-    if (!consent) { setError({ kind: 'validation', message: 'Please accept the Terms to continue.' }); return; }
+    if (!consent) { setError({ kind: 'validation', message: 'Please accept the Terms and Privacy Policy to continue.' }); return; }
 
     setLoading(true); setError(null); setFieldErrors({}); setRetryCountdown(null);
     try {
@@ -124,10 +124,10 @@ export default function Register(): React.JSX.Element {
   return (
     <AuthShell title="Create account" subtitle="A few details and you’re in.">
       <div className="space-y-5">
-        <button 
-          type="button" 
-          onClick={handleGoogleLogin} 
-          disabled={loading} 
+        <button
+          type="button"
+          onClick={handleGoogleLogin}
+          disabled={loading}
           className="w-full h-12 rounded-xl bg-white text-[#0F0D0A] hover:bg-[#F2EDE3] text-[14px] font-medium inline-flex items-center justify-center gap-2.5 transition-all duration-200 active:scale-[0.98] shadow-[0_6px_20px_-8px_rgba(0,0,0,0.5)] disabled:opacity-50"
         >
           <GoogleIcon />
@@ -141,19 +141,19 @@ export default function Register(): React.JSX.Element {
 
         <form onSubmit={handleSubmit} className="space-y-4" noValidate>
           <div className="grid sm:grid-cols-2 gap-4">
-            <AuthInput id="name" label="Display name" value={displayName} onChange={(e) => { setDisplayName(e.target.value); setFieldErrors({}); }} placeholder="John Doe" required icon={<UserIcon className="w-4 h-4" />} error={fieldErrors.displayName} />
-            <AuthInput id="handle" label="Handle" value={handle} onChange={(e) => { setHandle(e.target.value.toLowerCase().replace(/[^a-z0-9_]/g, '')); setFieldErrors({}); }} placeholder="elena" required icon={<AtSign className="w-4 h-4" />} trailingTag={handle ? '@orbit' : undefined} error={fieldErrors.handle} />
+            <AuthInput id="name" label="Display name" value={displayName} onChange={(e) => { setDisplayName(e.target.value); if (fieldErrors.displayName) setFieldErrors((f) => ({ ...f, displayName: undefined })); }} placeholder="John Doe" required icon={<UserIcon className="w-4 h-4" />} error={fieldErrors.displayName} />
+            <AuthInput id="handle" label="Handle" value={handle} onChange={(e) => { setHandle(e.target.value.toLowerCase().replace(/[^a-z0-9_]/g, '')); if (fieldErrors.handle) setFieldErrors((f) => ({ ...f, handle: undefined })); }} placeholder="elena" required icon={<AtSign className="w-4 h-4" />} trailingTag={handle ? '@orbit' : undefined} error={fieldErrors.handle} />
           </div>
 
-          <AuthInput id="email" label="Email" type="email" value={email} onChange={(e) => { setEmail(e.target.value); setFieldErrors({}); }} placeholder="you@example.com" required icon={<Mail className="w-4 h-4" />} error={fieldErrors.email} />
+          <AuthInput id="email" label="Email" type="email" value={email} onChange={(e) => { setEmail(e.target.value); if (fieldErrors.email) setFieldErrors((f) => ({ ...f, email: undefined })); }} placeholder="you@example.com" required icon={<Mail className="w-4 h-4" />} error={fieldErrors.email} />
 
           <div className="grid sm:grid-cols-2 gap-4">
             <div>
-              <AuthInput id="password" label="Password" type="password" value={password} onChange={(e) => { setPassword(e.target.value); setFieldErrors({}); }} placeholder="At least 8 chars" required icon={<KeyRound className="w-4 h-4" />} error={fieldErrors.password} />
+              <AuthInput id="password" label="Password" type="password" value={password} onChange={(e) => { setPassword(e.target.value); if (fieldErrors.password) setFieldErrors((f) => ({ ...f, password: undefined })); }} placeholder="At least 8 chars" required icon={<KeyRound className="w-4 h-4" />} error={fieldErrors.password} />
               <StrengthBar value={password} />
             </div>
             <div>
-              <AuthInput id="confirm" label="Confirm" type="password" value={confirm} onChange={(e) => { setConfirm(e.target.value); setFieldErrors({}); }} placeholder="Repeat password" required icon={<Lock className="w-4 h-4" />} error={fieldErrors.confirm} />
+              <AuthInput id="confirm" label="Confirm" type="password" value={confirm} onChange={(e) => { setConfirm(e.target.value); if (fieldErrors.confirm) setFieldErrors((f) => ({ ...f, confirm: undefined })); }} placeholder="Repeat password" required icon={<Lock className="w-4 h-4" />} error={fieldErrors.confirm} />
               {confirm && !fieldErrors.confirm && (
                 <div className="mt-1.5 flex items-center gap-1.5 text-[10.5px] font-mono">
                   {password === confirm ? <span className="text-[#4ADE80] flex items-center gap-1"><Check className="w-3 h-3" /> Match</span> : <span className="text-[#F87171] flex items-center gap-1"><X className="w-3 h-3" /> Mismatch</span>}
@@ -162,14 +162,48 @@ export default function Register(): React.JSX.Element {
             </div>
           </div>
 
-          <div className="flex items-start gap-2.5 pt-1">
-            <button type="button" role="checkbox" aria-checked={consent} onClick={() => setConsent(!consent)} className={`mt-0.5 w-4 h-4 rounded border-[1.5px] shrink-0 grid place-items-center transition-colors ${consent ? 'bg-[#B45309] border-[#B45309]' : 'bg-transparent border-[rgba(237,229,212,0.25)]'}`}>
+          {/* ── Consent — full row is clickable ── */}
+          <label className="flex items-start gap-2.5 pt-1 cursor-pointer select-none">
+            <input
+              type="checkbox"
+              checked={consent}
+              onChange={(e) => setConsent(e.target.checked)}
+              className="sr-only"
+            />
+            <span
+              aria-hidden
+              className={`mt-0.5 w-4 h-4 rounded border-[1.5px] shrink-0 grid place-items-center transition-colors ${
+                consent
+                  ? 'bg-[#B45309] border-[#B45309]'
+                  : 'bg-transparent border-[rgba(237,229,212,0.25)]'
+              }`}
+            >
               {consent && <Check className="w-3 h-3 text-white" strokeWidth={3} />}
-            </button>
-            <label className="text-[12px] text-[#A8A29E] leading-snug cursor-pointer select-none">
-              I agree to the <Link to="/terms" className="text-[#D97706] hover:text-[#B45309]">Terms</Link> and <Link to="/privacy" className="text-[#D97706] hover:text-[#B45309]">Privacy Policy</Link>.
-            </label>
-          </div>
+            </span>
+            <span className="text-[12px] text-[#A8A29E] leading-snug">
+              I agree to the{' '}
+              <Link
+                to="/terms"
+                target="_blank"
+                rel="noopener noreferrer"
+                onClick={(e) => e.stopPropagation()}
+                className="text-[#D97706] hover:text-[#B45309] underline underline-offset-2 decoration-[#D97706]/40"
+              >
+                Terms &amp; Conditions
+              </Link>{' '}
+              and{' '}
+              <Link
+                to="/privacy"
+                target="_blank"
+                rel="noopener noreferrer"
+                onClick={(e) => e.stopPropagation()}
+                className="text-[#D97706] hover:text-[#B45309] underline underline-offset-2 decoration-[#D97706]/40"
+              >
+                Privacy Policy
+              </Link>
+              .
+            </span>
+          </label>
 
           {error && (
             <div className="rounded-xl border border-[#B91C1C]/25 bg-[#B91C1C]/10 px-4 py-3 text-[13px] text-[#F87171] flex items-start gap-2.5">
@@ -185,9 +219,24 @@ export default function Register(): React.JSX.Element {
           </div>
         </form>
 
+        {/* ── Footer ── */}
         <div className="pt-5 border-t border-white/[0.06] flex flex-wrap items-center justify-between gap-x-4 gap-y-1.5 text-[12.5px] text-[#A8A29E]">
           <span>Already have an account? <Link to="/login" className="text-[#D97706] hover:text-[#B45309] font-medium">Sign in</Link></span>
           <Link to="/confirm-email-pending" className="text-[#6B6259] hover:text-[#D97706]">Resend verification</Link>
+        </div>
+
+        <div className="pt-3 flex flex-wrap items-center justify-center gap-x-4 gap-y-1 text-[11.5px] text-[#5A524A]">
+          <Link to="/terms" target="_blank" rel="noopener noreferrer" className="hover:text-[#D97706] transition-colors">
+            Terms
+          </Link>
+          <span aria-hidden>·</span>
+          <Link to="/privacy" target="_blank" rel="noopener noreferrer" className="hover:text-[#D97706] transition-colors">
+            Privacy
+          </Link>
+          <span aria-hidden>·</span>
+          <a href="mailto:prolium7@outlook.com" className="hover:text-[#D97706] transition-colors">
+            Support
+          </a>
         </div>
       </div>
     </AuthShell>
