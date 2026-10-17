@@ -1,31 +1,32 @@
 import React, { useState } from 'react';
 import { Film, Newspaper, ArrowLeft } from 'lucide-react';
 import { motion, AnimatePresence, Variants } from 'motion/react';
-import { useNavigate } from 'react-router-dom'; // <-- Added
+import { useNavigate } from 'react-router-dom';
 
 type ActiveSignal = 'movies' | 'news' | null;
 
-// 🟢 Fast, snappy entrance animations (no heavy blur/spring)
+// 🟢 Fast, snappy entrance animations
 const containerVariants: Variants = {
   hidden: { opacity: 0 },
   show: {
     opacity: 1,
-    transition: { staggerChildren: 0.08, delayChildren: 0.05 }
+    transition: { staggerChildren: 0.06, delayChildren: 0.05 }
   },
-  exit: { opacity: 0, transition: { duration: 0.15 } }
+  exit: { opacity: 0, transition: { duration: 0.1 } }
 };
 
 const itemVariants: Variants = {
-  hidden: { opacity: 0, y: 15 },
+  hidden: { opacity: 0, y: 15, scale: 0.98 },
   show: { 
     opacity: 1, 
     y: 0, 
-    transition: { type: 'spring' as const, stiffness: 400, damping: 28 }
+    scale: 1,
+    transition: { type: 'spring' as const, stiffness: 400, damping: 30 }
   }
 };
 
 export default function SignalsPage() {
-  const navigate = useNavigate(); // <-- Added
+  const navigate = useNavigate();
   const [activeSignal, setActiveSignal] = useState<ActiveSignal>(null);
   const [isLoading, setIsLoading] = useState(false);
 
@@ -52,34 +53,36 @@ export default function SignalsPage() {
             exit="exit"
             className="absolute inset-0 flex flex-col items-center justify-center p-4 md:p-6 overflow-y-auto"
           >
-            {/* 🟢 Back Button (Top Left) */}
+            {/* 🟢 Back Button */}
             <button
               onClick={() => navigate('/app/orbit')}
               className="absolute top-6 left-6 flex items-center gap-2 text-[13px] font-medium text-[#A8A29E] hover:text-[#D97706] transition-colors group z-50"
             >
               <ArrowLeft className="w-4 h-4 group-hover:-translate-x-1 transition-transform" />
-              <span>Back to Home</span>
+              <span>Back</span>
             </button>
 
-            {/* Static ambient glow (No animation, no heavy blur) */}
-            <div 
-              className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[350px] md:w-[800px] h-[350px] md:h-[800px] pointer-events-none opacity-40"
-              style={{
-                background: 'radial-gradient(circle, rgba(217,119,6,0.08) 0%, transparent 70%)'
-              }}
-            />
-            
-            {/* Static starfield */}
-            <div className="absolute inset-0 bg-[url('https://www.transparenttextures.com/patterns/stardust.png')] opacity-20 pointer-events-none mix-blend-screen" />
+            {/* 🟢 Static Background (No GPU heavy blurs) */}
+            <div className="absolute inset-0 pointer-events-none overflow-hidden">
+              {/* Core Glow */}
+              <div 
+                className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[400px] md:w-[800px] h-[400px] md:h-[800px] opacity-30"
+                style={{
+                  background: 'radial-gradient(circle at center, rgba(217,119,6,0.12) 0%, transparent 60%)'
+                }}
+              />
+              {/* Starfield */}
+              <div className="absolute inset-0 bg-[url('https://www.transparenttextures.com/patterns/stardust.png')] opacity-20 mix-blend-screen" />
+            </div>
 
             <div className="max-w-4xl w-full z-10 relative py-8 md:py-0">
               
-              <div className="mb-10 md:mb-16 text-center flex flex-col items-center">
+              <div className="mb-12 md:mb-16 text-center flex flex-col items-center">
                 <motion.span 
                   variants={itemVariants}
                   className="block text-[10px] md:text-[11px] font-bold tracking-[0.3em] text-[#D97706] uppercase mb-3 md:mb-4"
                 >
-                  Deep Space
+                  Entertainment
                 </motion.span>
                 
                 <motion.h1 
@@ -94,7 +97,7 @@ export default function SignalsPage() {
                   variants={itemVariants}
                   className="text-[#A8A29E] text-[13px] md:text-[16px] max-w-xs md:max-w-md mx-auto leading-relaxed px-4"
                 >
-                  Expand beyond your immediate orbit. Tune into the frequencies of entertainment and information.
+                  Check out what's worth watching, and catch up on the latest headlines.
                 </motion.p>
               </div>
 
@@ -103,38 +106,48 @@ export default function SignalsPage() {
                 {/* Chalachitra (Movies) */}
                 <motion.button
                   variants={itemVariants}
-                  whileHover={{ scale: 1.03, y: -4 }}
-                  whileTap={{ scale: 0.97 }}
+                  whileHover={{ scale: 1.02, y: -4 }}
+                  whileTap={{ scale: 0.98 }}
                   onClick={() => handleOpen('movies')}
-                  className="group relative flex flex-col items-center text-center p-6 md:p-8 rounded-[2rem] bg-[#131110] border border-white/[0.08] hover:border-[#D97706]/50 transition-colors duration-200 w-full max-w-[320px] md:w-[280px] md:h-[280px] justify-center overflow-hidden shadow-2xl"
+                  className="group relative flex flex-col items-center text-center p-6 md:p-8 rounded-[2rem] bg-[#131110] border border-white/[0.08] hover:border-[#D97706]/50 transition-colors duration-200 w-full max-w-[320px] md:w-[280px] md:h-[280px] justify-center overflow-hidden shadow-xl"
                 >
-                  <div className="absolute inset-4 border border-dashed border-[#D97706]/20 rounded-full pointer-events-none" />
-                  <div className="absolute inset-0 bg-gradient-to-t from-[#D97706]/10 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300" />
-                  <div className="w-16 h-16 rounded-full bg-[#D97706]/10 flex items-center justify-center mb-5 group-hover:bg-[#D97706]/20 group-hover:scale-105 transition-all duration-200 relative z-10">
+                  {/* Static orbital rings */}
+                  <div className="absolute inset-4 border border-dashed border-[#D97706]/15 rounded-full pointer-events-none" />
+                  <div className="absolute inset-10 border border-[#D97706]/5 rounded-full pointer-events-none" />
+                  
+                  {/* Hover Glow */}
+                  <div className="absolute inset-0 bg-gradient-to-t from-[#D97706]/10 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-200" />
+                  
+                  <div className="w-16 h-16 rounded-full bg-[#D97706]/10 flex items-center justify-center mb-5 group-hover:bg-[#D97706]/20 transition-colors duration-200 relative z-10">
                     <Film className="w-7 h-7 text-[#D97706]" />
                   </div>
                   <h2 className="text-2xl font-medium text-[#EDE5D4] mb-2 tracking-wide relative z-10">Chalachitra</h2>
                   <p className="text-[#A8A29E] text-[13px] leading-relaxed px-2 relative z-10">
-                    The cinema dimension. Discover films and build your watchlist.
+                    Movies, ratings, and your watchlist.
                   </p>
                 </motion.button>
 
                 {/* Headlines (News) */}
                 <motion.button
                   variants={itemVariants}
-                  whileHover={{ scale: 1.03, y: -4 }}
-                  whileTap={{ scale: 0.97 }}
+                  whileHover={{ scale: 1.02, y: -4 }}
+                  whileTap={{ scale: 0.98 }}
                   onClick={() => handleOpen('news')}
-                  className="group relative flex flex-col items-center text-center p-6 md:p-8 rounded-[2rem] bg-[#131110] border border-white/[0.08] hover:border-[#D97706]/50 transition-colors duration-200 w-full max-w-[320px] md:w-[280px] md:h-[280px] justify-center overflow-hidden shadow-2xl"
+                  className="group relative flex flex-col items-center text-center p-6 md:p-8 rounded-[2rem] bg-[#131110] border border-white/[0.08] hover:border-[#D97706]/50 transition-colors duration-200 w-full max-w-[320px] md:w-[280px] md:h-[280px] justify-center overflow-hidden shadow-xl"
                 >
-                  <div className="absolute inset-4 border border-dashed border-[#D97706]/20 rounded-full pointer-events-none" />
-                  <div className="absolute inset-0 bg-gradient-to-t from-[#D97706]/10 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300" />
-                  <div className="w-16 h-16 rounded-full bg-[#D97706]/10 flex items-center justify-center mb-5 group-hover:bg-[#D97706]/20 group-hover:scale-105 transition-all duration-200 relative z-10">
+                  {/* Static orbital rings */}
+                  <div className="absolute inset-4 border border-dashed border-[#D97706]/15 rounded-full pointer-events-none" />
+                  <div className="absolute inset-10 border border-[#D97706]/5 rounded-full pointer-events-none" />
+                  
+                  {/* Hover Glow */}
+                  <div className="absolute inset-0 bg-gradient-to-t from-[#D97706]/10 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-200" />
+                  
+                  <div className="w-16 h-16 rounded-full bg-[#D97706]/10 flex items-center justify-center mb-5 group-hover:bg-[#D97706]/20 transition-colors duration-200 relative z-10">
                     <Newspaper className="w-7 h-7 text-[#D97706]" />
                   </div>
                   <h2 className="text-2xl font-medium text-[#EDE5D4] mb-2 tracking-wide relative z-10">The Daily</h2>
                   <p className="text-[#A8A29E] text-[13px] leading-relaxed px-2 relative z-10">
-                    The information stream. Catch up on today's top stories.
+                    Today's top stories, all in one place.
                   </p>
                 </motion.button>
 
@@ -154,19 +167,19 @@ export default function SignalsPage() {
             transition={{ duration: 0.15 }}
             className="absolute inset-0 flex flex-col bg-[#0B0A08]"
           >
-            {/* Sleek Header Bar (With Back Button) */}
+            {/* Sleek Header Bar */}
             <div className="h-14 md:h-12 shrink-0 border-b border-white/[0.06] flex items-center px-4 bg-[#0F0D0A] z-20">
               <button
                 onClick={handleClose}
                 className="flex items-center gap-2 text-[13px] font-medium text-[#A8A29E] hover:text-[#D97706] active:text-[#D97706] transition-colors group py-2"
               >
                 <ArrowLeft className="w-4 h-4 group-hover:-translate-x-1 transition-transform" />
-                <span className="hidden sm:inline">Return to Signals</span>
+                <span className="hidden sm:inline">Back to Signals</span>
                 <span className="sm:hidden">Back</span>
               </button>
               <div className="ml-auto flex items-center gap-2 text-[10px] md:text-[11px] uppercase tracking-[0.2em] text-[#6B6259]">
                 <span className="w-1.5 h-1.5 rounded-full bg-[#D97706] animate-pulse" />
-                {activeSignal === 'movies' ? 'Chalachitra' : 'Headline'}
+                {activeSignal === 'movies' ? 'Chalachitra' : 'The Daily'}
               </div>
             </div>
 
@@ -183,7 +196,7 @@ export default function SignalsPage() {
                   >
                     <div className="w-10 h-10 rounded-full border-2 border-[#D97706]/20 border-t-[#D97706] animate-spin mb-4" />
                     <span className="text-[11px] text-[#D97706] uppercase tracking-[0.2em] font-medium animate-pulse">
-                      Establishing Connection
+                      Loading...
                     </span>
                   </motion.div>
                 )}

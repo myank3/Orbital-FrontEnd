@@ -3,9 +3,9 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { motion, AnimatePresence } from 'motion/react';
+import { motion, AnimatePresence, useReducedMotion } from 'motion/react';
 import { apiService } from '../services/api';
 import { presenceStore } from '../services/presenceStore';
 import { useAuth } from '../context/AuthContext';
@@ -32,6 +32,59 @@ function stableRandom(seed: string, salt: string): number {
 }
 
 /* ────────────────────────────────────────────────────────── */
+/* Environment / device capabilities                          */
+/* ────────────────────────────────────────────────────────── */
+
+/**
+ * Touch-first / low-power detection. Used to:
+ *  - pause animations when the tab is backgrounded (Android kills frames)
+ *  - cut the starfield density on low-end phones
+ *  - avoid continuous `will-change` promotion on rotating layers
+ */
+function usePageVisible(): boolean {
+  const [visible, setVisible] = useState(() =>
+    typeof document === 'undefined' ? true : !document.hidden,
+  );
+  useEffect(() => {
+    const onChange = () => setVisible(!document.hidden);
+    document.addEventListener('visibilitychange', onChange);
+    return () => document.removeEventListener('visibilitychange', onChange);
+  }, []);
+  return visible;
+}
+
+function useIsCoarsePointer(): boolean {
+  const [coarse, setCoarse] = useState(false);
+  useEffect(() => {
+    if (typeof window === 'undefined' || !window.matchMedia) return;
+    const mq = window.matchMedia('(pointer: coarse)');
+    const update = () => setCoarse(mq.matches);
+    update();
+    // Safari <14 uses addListener
+    if (mq.addEventListener) mq.addEventListener('change', update);
+    else mq.addListener(update);
+    return () => {
+      if (mq.removeEventListener) mq.removeEventListener('change', update);
+      else mq.removeListener(update);
+    };
+  }, []);
+  return coarse;
+}
+
+function useLowPowerDevice(): boolean {
+  const [low, setLow] = useState(false);
+  useEffect(() => {
+    if (typeof navigator === 'undefined') return;
+    const nav = navigator as Navigator & { deviceMemory?: number; hardwareConcurrency?: number };
+    const mem = nav.deviceMemory ?? 8;
+    const cores = nav.hardwareConcurrency ?? 8;
+    // Heuristic: <=4GB RAM or <=4 cores → treat as low power.
+    setLow(mem <= 4 || cores <= 4);
+  }, []);
+  return low;
+}
+
+/* ────────────────────────────────────────────────────────── */
 /* Tunables                                                   */
 /* ────────────────────────────────────────────────────────── */
 
@@ -40,6 +93,12 @@ const OFFLINE_RADIUS = '39vmin';
 const ONLINE_SPIN_SEC = 120;
 const OFFLINE_SPIN_SEC = 240;
 const MAX_ORBIT = 30;
+const ONLINE_SLOT_RATIO = 2 / 3;
+/** Minimum angular gap between two avatars on the same ring, in degrees. */
+const MIN_ANGLE_GAP_DEG = 26;
+
+const STAR_COUNT_DESKTOP = 70;
+const STAR_COUNT_MOBILE = 40;
 
 /* ────────────────────────────────────────────────────────── */
 /* Starfield                                                  */
@@ -54,9 +113,9 @@ interface Star {
   opacity: number;
 }
 
-const STARS: Star[] = (() => {
+function buildStars(count: number): Star[] {
   const out: Star[] = [];
-  for (let i = 0; i < 90; i++) {
+  for (let i = 0; i < count; i++) {
     const seed = `star-${i}`;
     out.push({
       top: stableRandom(seed, 'top') * 100,
@@ -68,12 +127,20 @@ const STARS: Star[] = (() => {
     });
   }
   return out;
-})();
+}
 
-function Starfield() {
+interface StarfieldProps {
+  reduced: boolean;
+  count: number;
+  /** When false, the CSS animation is disabled so we stop burning GPU. */
+  animate: boolean;
+}
+
+const Starfield = React.memo(function Starfield({ reduced, count, animate }: StarfieldProps) {
+  const stars = useMemo(() => buildStars(count), [count]);
   return (
     <div aria-hidden className="absolute inset-0 pointer-events-none overflow-hidden">
-      {STARS.map((s, i) => (
+      {stars.map((s, i) => (
         <span
           key={i}
           className="absolute rounded-full bg-white"
@@ -83,12 +150,51 @@ function Starfield() {
             width: s.size,
             height: s.size,
             opacity: s.opacity,
-            animation: `starTwinkle ${s.duration}s ease-in-out ${s.delay}s infinite`,
+            animation:
+              reduced || !animate
+                ? undefined
+                : `starTwinkle ${s.duration}s ease-in-out ${s.delay}s infinite`,
           }}
         />
       ))}
     </div>
   );
+});
+
+/* ────────────────────────────────────────────────────────── */
+/* Layout                                                     */
+/* ────────────────────────────────────────────────────────── */
+
+interface OrbitNode {
+  friend: FriendDto;
+  angle: number;
+  jitter: number;
+}
+
+/**
+ * Deterministically lay out friends around a ring with a guaranteed
+ * minimum angular gap, so no two avatars can collapse into each other.
+ */
+function layoutTier(friends: FriendDto[], minGapDeg: number): OrbitNode[] {
+  const n = friends.length;
+  if (n === 0) return [];
+
+  const sorted = [...friends].sort(
+    (a, b) => hashStr(a.userId + '|slot') - hashStr(b.userId + '|slot'),
+  );
+
+  const slotSize = 360 / n;
+  const maxJitter = Math.max(0, (slotSize - minGapDeg) / 2);
+
+  return sorted.map((friend, i) => {
+    const baseAngle = i * slotSize + slotSize / 2;
+    const angleJitter = (stableRandom(friend.userId, 'angle') - 0.5) * 2 * maxJitter;
+    return {
+      friend,
+      angle: (baseAngle + angleJitter + 360) % 360,
+      jitter: (stableRandom(friend.userId, 'rjit') - 0.5) * 5,
+    };
+  });
 }
 
 /* ────────────────────────────────────────────────────────── */
@@ -96,43 +202,63 @@ function Starfield() {
 /* ────────────────────────────────────────────────────────── */
 
 interface TierProps {
-  friends: FriendDto[];
+  nodes: OrbitNode[];
   radius: string;
   spinSeconds: number;
   reverse: boolean;
   paused: boolean;
   hoveredId: string | null;
   onHover: (id: string | null) => void;
+  onLeave: () => void;
   onClick: (id: string) => void;
   online: boolean;
+  reduced: boolean;
+  /** Stop all animation entirely (tab hidden / low-power idle). */
+  active: boolean;
+  /** Skip the constant glow pulse on online avatars on low-power devices. */
+  glowPulse: boolean;
 }
 
-function Tier({
-  friends,
+const Tier = React.memo(function Tier({
+  nodes,
   radius,
   spinSeconds,
   reverse,
   paused,
   hoveredId,
   onHover,
+  onLeave,
   onClick,
   online,
+  reduced,
+  active,
+  glowPulse,
 }: TierProps) {
-  if (friends.length === 0) return null;
+  if (nodes.length === 0) return null;
+
+  const spinning = !reduced && active;
+  const outerAnimation = spinning
+    ? `constellationSpin ${spinSeconds}s linear infinite${reverse ? ' reverse' : ''}`
+    : undefined;
+  const innerAnimation = spinning
+    ? `constellationSpin ${spinSeconds}s linear infinite${reverse ? '' : ' reverse'}`
+    : undefined;
 
   return (
     <div
       className="absolute inset-0 pointer-events-none"
       style={{
-        animation: `constellationSpin ${spinSeconds}s linear infinite${reverse ? ' reverse' : ''}`,
+        animation: outerAnimation,
         animationPlayState: paused ? 'paused' : 'running',
-        willChange: 'transform',
+        // Only promote while actually spinning — on Android, leaving
+        // will-change on too many layers eats GPU memory and causes jank.
+        willChange: spinning && !paused ? 'transform' : undefined,
+        backfaceVisibility: 'hidden',
+        transform: 'translateZ(0)',
       }}
     >
-      {friends.map((f, i) => {
-        const angle = stableRandom(f.userId, 'angle') * 360;
-        const radiusJitter = (stableRandom(f.userId, 'rjit') - 0.5) * 5;
-        const finalRadius = `calc(${radius} + ${radiusJitter}vmin)`;
+      {nodes.map(({ friend: f, angle, jitter }, i) => {
+        const finalRadius = `calc(${radius} + ${jitter}vmin)`;
         const isHovered = hoveredId === f.userId;
         const isDimmed = hoveredId !== null && !isHovered;
 
@@ -147,6 +273,7 @@ function Tier({
               style={{
                 transform: `rotate(${angle}deg) translateX(${finalRadius}) rotate(${-angle}deg)`,
                 transformOrigin: '0 0',
+                backfaceVisibility: 'hidden',
               }}
             >
               <div
@@ -155,18 +282,16 @@ function Tier({
               >
                 <div
                   style={{
-                    animation: `constellationSpin ${spinSeconds}s linear infinite${reverse ? '' : ' reverse'}`,
+                    animation: innerAnimation,
                     animationPlayState: paused ? 'paused' : 'running',
+                    backfaceVisibility: 'hidden',
                   }}
                 >
                   <motion.div
-                    initial={{ scale: 0, opacity: 0 }}
-                    animate={{
-                      scale: 1,
-                      opacity: isDimmed ? 0.35 : 1,
-                    }}
+                    initial={reduced ? false : { scale: 0, opacity: 0 }}
+                    animate={{ scale: 1, opacity: isDimmed ? 0.35 : 1 }}
                     transition={{
-                      delay: 0.05 + i * 0.025,
+                      delay: reduced ? 0 : 0.05 + i * 0.025,
                       type: 'spring',
                       stiffness: 280,
                       damping: 22,
@@ -176,14 +301,20 @@ function Tier({
                       type="button"
                       onClick={() => onClick(f.userId)}
                       onMouseEnter={() => onHover(f.userId)}
-                      onMouseLeave={() => onHover(null)}
-                      className="relative flex flex-col items-center focus:outline-none group"
+                      onMouseLeave={onLeave}
+                      onFocus={() => onHover(f.userId)}
+                      onBlur={onLeave}
+                      // Use pointer events for touch: treat tap as hover
+                      // briefly so the name reveals without a real hover.
+                      onPointerDown={() => onHover(f.userId)}
+                      className="relative flex flex-col items-center focus:outline-none group rounded-full touch-manipulation select-none"
+                      style={{ WebkitTapHighlightColor: 'transparent' }}
                       aria-label={`Open chat with ${f.displayName}`}
                       animate={{ scale: isHovered ? 1.18 : 1 }}
                       transition={{ type: 'spring', stiffness: 420, damping: 20 }}
                     >
                       {online && (
-                        <motion.span
+                        <span
                           aria-hidden
                           className="absolute rounded-full pointer-events-none"
                           style={{
@@ -191,12 +322,11 @@ function Tier({
                             background:
                               'radial-gradient(circle, rgba(74,222,128,0.28) 0%, rgba(74,222,128,0) 70%)',
                             filter: 'blur(6px)',
-                          }}
-                          animate={{ opacity: [0.7, 1, 0.7] }}
-                          transition={{
-                            duration: 2.6 + i * 0.13,
-                            repeat: Infinity,
-                            ease: 'easeInOut',
+                            ...(glowPulse && active && !reduced
+                              ? {
+                                  animation: `onlineGlow ${2.6 + i * 0.13}s ease-in-out infinite`,
+                                }
+                              : {}),
                           }}
                         />
                       )}
@@ -233,7 +363,7 @@ function Tier({
                         )}
                       </AnimatePresence>
 
-                      <div className="relative">
+                      <div className="relative rounded-full ring-0 focus-visible:ring-2 focus-visible:ring-[#D97706]/70 focus-visible:ring-offset-2 focus-visible:ring-offset-[#0B0A08] transition-shadow">
                         <Avatar
                           name={f.displayName}
                           src={f.avatarUrl}
@@ -249,7 +379,7 @@ function Tier({
                             animate={{ opacity: 1, y: 0 }}
                             exit={{ opacity: 0, y: -2 }}
                             transition={{ duration: 0.15 }}
-                            className="mt-1.5 text-[10.5px] whitespace-nowrap font-medium text-[#EDE5D4]"
+                            className="mt-1.5 text-[10.5px] whitespace-nowrap font-medium text-[#EDE5D4] pointer-events-none"
                           >
                             {f.displayName.split(' ')[0]}
                           </motion.span>
@@ -265,7 +395,7 @@ function Tier({
       })}
     </div>
   );
-}
+});
 
 /* ────────────────────────────────────────────────────────── */
 /* Main                                                       */
@@ -278,14 +408,22 @@ interface ConstellationViewProps {
 export default function ConstellationView({ friends: friendsProp }: ConstellationViewProps) {
   const navigate = useNavigate();
   const { user } = useAuth();
+  const reduced = useReducedMotion() ?? false;
+
+  const pageVisible = usePageVisible();
+  const coarse = useIsCoarsePointer();
+  const lowPower = useLowPowerDevice();
+  const [idle, setIdle] = useState(false);
+  const idleTimer = useRef<number | null>(null);
 
   const [internalFriends, setInternalFriends] = useState<FriendDto[]>([]);
   const [loading, setLoading] = useState(!friendsProp);
-  const [, setPresenceTick] = useState(0);
+  const [presenceTick, setPresenceTick] = useState(0);
   const [query, setQuery] = useState('');
   const [hoveredId, setHoveredId] = useState<string | null>(null);
   const [searchFocused, setSearchFocused] = useState(false);
 
+  // ── friend loading ────────────────────────────────────────
   useEffect(() => {
     if (friendsProp) {
       setLoading(false);
@@ -306,6 +444,7 @@ export default function ConstellationView({ friends: friendsProp }: Constellatio
     };
   }, [friendsProp]);
 
+  // ── presence subscription ─────────────────────────────────
   useEffect(() => {
     const unsub = presenceStore.subscribe(() => setPresenceTick((n) => n + 1));
     return () => {
@@ -313,7 +452,37 @@ export default function ConstellationView({ friends: friendsProp }: Constellatio
     };
   }, []);
 
+  // ── idle: stop spin on mobile after 15s of no interaction
+  useEffect(() => {
+    if (!coarse) return; // only bother on touch devices
+    const reset = () => {
+      setIdle(false);
+      if (idleTimer.current) window.clearTimeout(idleTimer.current);
+      idleTimer.current = window.setTimeout(() => setIdle(true), 15_000);
+    };
+    reset();
+    window.addEventListener('touchstart', reset, { passive: true });
+    window.addEventListener('pointerdown', reset, { passive: true });
+    return () => {
+      window.removeEventListener('touchstart', reset);
+      window.removeEventListener('pointerdown', reset);
+      if (idleTimer.current) window.clearTimeout(idleTimer.current);
+    };
+  }, [coarse]);
+
+  // Clear transient tap-hover after a moment so touch labels hide again.
+  useEffect(() => {
+    if (!hoveredId || !coarse) return;
+    const t = window.setTimeout(() => setHoveredId(null), 2200);
+    return () => window.clearTimeout(t);
+  }, [hoveredId, coarse]);
+
   const friends = friendsProp ?? internalFriends;
+
+  const onlineIds = useMemo(
+    () => new Set(friends.filter((f) => presenceStore.isOnline(f.userId)).map((f) => f.userId)),
+    [friends, presenceTick],
+  );
 
   const filtered = useMemo(() => {
     if (!query.trim()) return friends;
@@ -325,27 +494,47 @@ export default function ConstellationView({ friends: friendsProp }: Constellatio
     );
   }, [friends, query]);
 
-  const { visibleOnline, visibleOffline, hiddenCount, onlineTotal } = useMemo(() => {
-    const online = filtered.filter((f) => presenceStore.isOnline(f.userId));
-    const offline = filtered.filter((f) => !presenceStore.isOnline(f.userId));
+  const layout = useMemo(() => {
+    const online = filtered.filter((f) => onlineIds.has(f.userId));
+    const offline = filtered.filter((f) => !onlineIds.has(f.userId));
 
-    const visOnline = online.slice(0, MAX_ORBIT);
-    const remaining = MAX_ORBIT - visOnline.length;
-    const visOffline = offline.slice(0, Math.max(0, remaining));
+    const onlineSlots = Math.min(online.length, Math.ceil(MAX_ORBIT * ONLINE_SLOT_RATIO));
+    const offlineSlots = Math.min(offline.length, Math.max(0, MAX_ORBIT - onlineSlots));
+
+    const visibleOnline = layoutTier(online.slice(0, onlineSlots), MIN_ANGLE_GAP_DEG);
+    const visibleOffline = layoutTier(offline.slice(0, offlineSlots), MIN_ANGLE_GAP_DEG);
 
     return {
-      visibleOnline: visOnline,
-      visibleOffline: visOffline,
-      hiddenCount: online.length + offline.length - visOnline.length - visOffline.length,
+      visibleOnline,
+      visibleOffline,
+      hiddenCount: online.length + offline.length - onlineSlots - offlineSlots,
       onlineTotal: online.length,
     };
-  }, [filtered]);
+  }, [filtered, onlineIds]);
+
+  const { visibleOnline, visibleOffline, hiddenCount, onlineTotal } = layout;
 
   const paused = hoveredId !== null;
   const inOrbit = visibleOnline.length + visibleOffline.length;
 
+  // Animation gates — these are what make it usable on Android.
+  const animationsEnabled = pageVisible;
+  const spinEnabled = !reduced && animationsEnabled && !(coarse && idle);
+  const starfieldAnimate = animationsEnabled && !reduced;
+  const starCount = lowPower || coarse ? STAR_COUNT_MOBILE : STAR_COUNT_DESKTOP;
+  const onlineSpin = spinEnabled ? ONLINE_SPIN_SEC : 0;
+  const offlineSpin = spinEnabled ? OFFLINE_SPIN_SEC : 0;
+
+  const handleHover = useMemo(() => (id: string | null) => setHoveredId(id), []);
+  const handleLeave = useMemo(() => () => setHoveredId(null), []);
+  const handleClick = useMemo(
+    () => (id: string) => navigate(`/app/dm/${id}`),
+    [navigate],
+  );
+
+  // Detect when the page is actually visible to gate expensive motion.
   return (
-    <div className="relative w-full h-full bg-[#0B0A08] text-[#EDE5D4] overflow-hidden">
+    <div className="relative w-full h-full bg-[#0B0A08] text-[#EDE5D4] overflow-hidden isolate">
       <style>{`
         @keyframes constellationSpin {
           from { transform: rotate(0deg); }
@@ -363,16 +552,24 @@ export default function ConstellationView({ friends: friendsProp }: Constellatio
           0%, 100% { transform: scale(1); opacity: 0.5; }
           50%      { transform: scale(1.15); opacity: 0.85; }
         }
+        @keyframes onlineGlow {
+          0%, 100% { opacity: 0.7; }
+          50%      { opacity: 1; }
+        }
       `}</style>
 
-      <Starfield />
+      <Starfield
+        reduced={reduced}
+        count={starCount}
+        animate={starfieldAnimate}
+      />
 
-      {/* Floating header top-left */}
+      {/* Header */}
       <motion.div
         initial={{ opacity: 0, y: -12 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.5, ease: [0.22, 1, 0.36, 1] }}
-        className="absolute top-4 left-4 md:top-5 md:left-5 z-20 pointer-events-none"
+        className="absolute top-[env(safe-area-inset-top,0px)] left-4 md:top-5 md:left-5 z-20 pointer-events-none pt-4 md:pt-0"
       >
         <div className="flex items-center gap-3 px-4 py-2.5 rounded-2xl bg-[#0F0D0A]/60 backdrop-blur-xl border border-white/[0.06] shadow-[0_8px_32px_-8px_rgba(0,0,0,0.7)] pointer-events-auto">
           <div>
@@ -398,16 +595,21 @@ export default function ConstellationView({ friends: friendsProp }: Constellatio
         </div>
       </motion.div>
 
-      {/* Floating search top-right */}
+      {/* Search */}
       <motion.div
         initial={{ opacity: 0, y: -12 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ delay: 0.05, duration: 0.5, ease: [0.22, 1, 0.36, 1] }}
-        className="absolute top-4 right-4 md:top-5 md:right-5 z-20"
+        className="absolute top-[env(safe-area-inset-top,0px)] right-4 md:top-5 md:right-5 z-20 pt-4 md:pt-0"
       >
         <motion.div
+          layout
           animate={{ width: searchFocused || query ? 240 : 160 }}
-          transition={{ type: 'spring', stiffness: 340, damping: 30 }}
+          transition={
+            reduced
+              ? { duration: 0 }
+              : { type: 'spring', stiffness: 340, damping: 30 }
+          }
           className="relative"
         >
           <div className="absolute inset-0 rounded-2xl bg-[#0F0D0A]/60 backdrop-blur-xl border border-white/[0.06] shadow-[0_8px_32px_-8px_rgba(0,0,0,0.7)] pointer-events-none" />
@@ -419,7 +621,14 @@ export default function ConstellationView({ friends: friendsProp }: Constellatio
             onFocus={() => setSearchFocused(true)}
             onBlur={() => setSearchFocused(false)}
             placeholder="Find someone"
-            className="relative z-10 h-10 w-full pl-9 pr-8 rounded-2xl bg-transparent text-[12.5px] text-[#EDE5D4] placeholder:text-[#6B6259] focus:outline-none"
+            aria-label="Find a friend"
+            inputMode="search"
+            enterKeyHint="search"
+            autoComplete="off"
+            autoCorrect="off"
+            autoCapitalize="none"
+            spellCheck={false}
+            className="relative z-10 h-10 w-full pl-9 pr-8 rounded-2xl bg-transparent text-[16px] md:text-[12.5px] text-[#EDE5D4] placeholder:text-[#6B6259] focus:outline-none"
           />
           <AnimatePresence>
             {query && (
@@ -428,10 +637,10 @@ export default function ConstellationView({ friends: friendsProp }: Constellatio
                 animate={{ opacity: 1, scale: 1 }}
                 exit={{ opacity: 0, scale: 0.7 }}
                 onClick={() => setQuery('')}
-                className="absolute right-3 top-1/2 -translate-y-1/2 text-[#6B6259] hover:text-[#EDE5D4] transition-colors z-10"
+                className="absolute right-2 top-1/2 -translate-y-1/2 p-2 text-[#6B6259] hover:text-[#EDE5D4] active:text-[#EDE5D4] transition-colors z-10 touch-manipulation"
                 aria-label="Clear search"
               >
-                <X className="w-3.5 h-3.5" />
+                <X className="w-4 h-4" />
               </motion.button>
             )}
           </AnimatePresence>
@@ -439,15 +648,20 @@ export default function ConstellationView({ friends: friendsProp }: Constellatio
       </motion.div>
 
       {/* Stage */}
-      <div className="absolute inset-0 flex items-center justify-center">
+      <div
+        className="absolute inset-0 flex items-center justify-center"
+        role="region"
+        aria-label="Friends orbit"
+      >
         {loading ? (
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             className="text-[12.5px] text-[#6B6259] flex items-center gap-2"
+            role="status"
           >
             <motion.span
-              animate={{ rotate: 360 }}
+              animate={reduced || !animationsEnabled ? undefined : { rotate: 360 }}
               transition={{ duration: 1.4, repeat: Infinity, ease: 'linear' }}
               className="inline-block w-3.5 h-3.5 rounded-full border-2 border-[#D97706]/30 border-t-[#D97706]"
             />
@@ -461,7 +675,9 @@ export default function ConstellationView({ friends: friendsProp }: Constellatio
             className="flex flex-col items-center gap-3 text-center px-6"
           >
             <motion.div
-              animate={{ scale: [1, 1.06, 1] }}
+              animate={
+                reduced || !animationsEnabled ? undefined : { scale: [1, 1.06, 1] }
+              }
               transition={{ duration: 3, repeat: Infinity, ease: 'easeInOut' }}
               className="w-14 h-14 rounded-2xl bg-white/[0.03] border border-white/[0.06] flex items-center justify-center"
             >
@@ -491,7 +707,8 @@ export default function ConstellationView({ friends: friendsProp }: Constellatio
               maxWidth: '760px',
               maxHeight: '760px',
             }}
-            onMouseLeave={() => setHoveredId(null)}
+            onMouseLeave={handleLeave}
+            onTouchEnd={handleLeave}
           >
             <div
               aria-hidden
@@ -508,7 +725,10 @@ export default function ConstellationView({ friends: friendsProp }: Constellatio
                 style={{
                   width: `calc(${ONLINE_RADIUS} * 2)`,
                   height: `calc(${ONLINE_RADIUS} * 2)`,
-                  animation: 'ringPulse 6s ease-in-out infinite',
+                  animation:
+                    reduced || !animationsEnabled
+                      ? undefined
+                      : 'ringPulse 6s ease-in-out infinite',
                 }}
               />
               <div
@@ -516,33 +736,44 @@ export default function ConstellationView({ friends: friendsProp }: Constellatio
                 style={{
                   width: `calc(${OFFLINE_RADIUS} * 2)`,
                   height: `calc(${OFFLINE_RADIUS} * 2)`,
-                  animation: 'ringPulse 9s ease-in-out infinite',
+                  animation:
+                    reduced || !animationsEnabled
+                      ? undefined
+                      : 'ringPulse 9s ease-in-out infinite',
                 }}
               />
             </div>
 
             <Tier
-              friends={visibleOffline}
+              nodes={visibleOffline}
               radius={OFFLINE_RADIUS}
-              spinSeconds={OFFLINE_SPIN_SEC}
+              spinSeconds={offlineSpin}
               reverse
               paused={paused}
               hoveredId={hoveredId}
-              onHover={setHoveredId}
-              onClick={(id) => navigate(`/app/dm/${id}`)}
+              onHover={handleHover}
+              onLeave={handleLeave}
+              onClick={handleClick}
               online={false}
+              reduced={reduced}
+              active={spinEnabled}
+              glowPulse={!lowPower}
             />
 
             <Tier
-              friends={visibleOnline}
+              nodes={visibleOnline}
               radius={ONLINE_RADIUS}
-              spinSeconds={ONLINE_SPIN_SEC}
+              spinSeconds={onlineSpin}
               reverse={false}
               paused={paused}
               hoveredId={hoveredId}
-              onHover={setHoveredId}
-              onClick={(id) => navigate(`/app/dm/${id}`)}
+              onHover={handleHover}
+              onLeave={handleLeave}
+              onClick={handleClick}
               online
+              reduced={reduced}
+              active={spinEnabled}
+              glowPulse={!lowPower}
             />
 
             <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 z-10 pointer-events-none">
@@ -555,7 +786,10 @@ export default function ConstellationView({ friends: friendsProp }: Constellatio
                       'radial-gradient(circle, rgba(217,119,6,0.55) 0%, rgba(217,119,6,0) 70%)',
                     transform: 'scale(3.2)',
                     filter: 'blur(14px)',
-                    animation: 'corePulse 5s ease-in-out infinite',
+                    animation:
+                      reduced || !animationsEnabled
+                        ? undefined
+                        : 'corePulse 5s ease-in-out infinite',
                   }}
                 />
                 <span
@@ -563,7 +797,10 @@ export default function ConstellationView({ friends: friendsProp }: Constellatio
                   className="absolute rounded-full border border-[#D97706]/30"
                   style={{
                     inset: '-18px',
-                    animation: 'ringPulse 3.5s ease-in-out infinite',
+                    animation:
+                      reduced || !animationsEnabled
+                        ? undefined
+                        : 'ringPulse 3.5s ease-in-out infinite',
                   }}
                 />
                 <span
@@ -571,12 +808,19 @@ export default function ConstellationView({ friends: friendsProp }: Constellatio
                   className="absolute rounded-full border border-[#D97706]/20"
                   style={{
                     inset: '-30px',
-                    animation: 'ringPulse 5s ease-in-out infinite 0.5s',
+                    animation:
+                      reduced || !animationsEnabled
+                        ? undefined
+                        : 'ringPulse 5s ease-in-out infinite 0.5s',
                   }}
                 />
 
                 <motion.div
-                  animate={{ scale: [1, 1.05, 1] }}
+                  animate={
+                    reduced || !animationsEnabled
+                      ? undefined
+                      : { scale: [1, 1.05, 1] }
+                  }
                   transition={{ duration: 4.5, repeat: Infinity, ease: 'easeInOut' }}
                   className="relative"
                 >
@@ -599,7 +843,7 @@ export default function ConstellationView({ friends: friendsProp }: Constellatio
                   whileHover={{ scale: 1.04, y: -2 }}
                   whileTap={{ scale: 0.97 }}
                   onClick={() => navigate('/app/friends')}
-                  className="absolute bottom-2 left-1/2 -translate-x-1/2 z-20 px-3.5 py-1.5 rounded-full bg-[#1A1816]/90 backdrop-blur border border-white/[0.08] hover:border-[#D97706]/40 text-[11.5px] text-[#A8A29E] hover:text-[#EDE5D4] transition-colors shadow-[0_8px_24px_-8px_rgba(0,0,0,0.7)]"
+                  className="absolute bottom-2 left-1/2 -translate-x-1/2 z-20 px-3.5 py-1.5 rounded-full bg-[#1A1816]/90 backdrop-blur border border-white/[0.08] hover:border-[#D97706]/40 text-[11.5px] text-[#A8A29E] hover:text-[#EDE5D4] transition-colors shadow-[0_8px_24px_-8px_rgba(0,0,0,0.7)] touch-manipulation"
                 >
                   +{hiddenCount} more in your list
                 </motion.button>
@@ -609,12 +853,12 @@ export default function ConstellationView({ friends: friendsProp }: Constellatio
         )}
       </div>
 
-      {/* Floating status pill bottom-center */}
+      {/* Status pill */}
       <motion.div
         initial={{ opacity: 0, y: 12 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ delay: 0.2, duration: 0.5, ease: [0.22, 1, 0.36, 1] }}
-        className="absolute bottom-4 left-1/2 -translate-x-1/2 z-20 pointer-events-none"
+        className="absolute left-1/2 -translate-x-1/2 z-20 pointer-events-none pb-[env(safe-area-inset-bottom,0px)] bottom-4"
       >
         <div className="flex items-center gap-2.5 px-4 py-2 rounded-full bg-[#0F0D0A]/60 backdrop-blur-xl border border-white/[0.06] shadow-[0_8px_32px_-8px_rgba(0,0,0,0.7)] pointer-events-auto">
           <motion.span
