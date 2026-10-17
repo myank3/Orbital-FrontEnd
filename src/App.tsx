@@ -37,14 +37,14 @@ import SettingsPane from './components/SettingsPane';
 import CallsPane from './components/CallsPane';
 import NotificationsPane from './components/NotificationsPane';
 import OrbitView from './pages/OrbitView';
-import SignalsPage from './pages/SignalsPage'; // <-- Added import
+import SignalsPage from './pages/SignalsPage'; 
 
 /**
  * Routes on which a `?token=` query param represents a *login* token
  * that should be exchanged for a session via hydrateFromToken().
  */
 const TOKEN_INTERCEPT_ROUTES = [
-'/auth/google/success',                
+  '/auth/google/success',                
   '/confirm-email',
   '/verify-email',
   '/auth/callback',
@@ -177,12 +177,15 @@ export default function App() {
               <Route path="friends" element={<FriendsPane />} />
               <Route path="calls" element={<CallsPane />} />
               <Route path="notifications" element={<NotificationsPane />} />
-              
-              {/* Added Signals Route */}
               <Route path="signals" element={<SignalsPage />} />
-              
               <Route path="settings" element={<SettingsPane />} />
             </Route>
+
+            {/* ── Auth Callbacks (intercepted by TokenInterceptor above) ── */}
+            {/* These dummy routes prevent the wildcard from redirecting to "/" 
+                before the interceptor finishes hydrating the token. */}
+            <Route path="/auth/google/success" element={<div className="h-screen w-screen bg-[#0B0A08]" />} />
+            <Route path="/auth/callback" element={<div className="h-screen w-screen bg-[#0B0A08]" />} />
 
             {/* ── Catch-all ────────────────────────────── */}
             <Route path="*" element={<Navigate to="/" replace />} />
