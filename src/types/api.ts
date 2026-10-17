@@ -33,6 +33,7 @@ export interface UserProfileDto {
   displayName: string;
   avatarUrl?: string;
   createdAt: string;
+  email? : string;
 }
 
 export interface FriendDto {
