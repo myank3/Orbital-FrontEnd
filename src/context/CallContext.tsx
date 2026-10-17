@@ -490,13 +490,8 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
   const isOutgoingRinging = callState === 'outgoing' && !isMinimized;
   const isIncomingRinging = callState === 'incoming';
 
-  // Ringback — caller waits, hears a soft two-note figure.
-  useRingtone(isOutgoingRinging, {
-    pattern: RINGBACK_PATTERN,
-    silenceMs: 2000,
-    volume: 0.09,
-    wave: 'sine',
-  });
+  // Ringback — caller waits, hears the outgoing MP3.
+useAudioRingtone(isOutgoingRinging, '/sounds/outgoing.mp3', 0.25);
 
   // Incoming — looping MP3 ringtone from /public/sounds/ringtone.mp3
   useAudioRingtone(isIncomingRinging, '/sounds/ringtone.mp3', 0.35);
