@@ -129,6 +129,17 @@ function VideoCallOverlay(): React.JSX.Element | null {
     moved: boolean;
   } | null>(null);
 
+  // ⚡ Draggable minimized pill (Zoom-style snapping).
+  const minimizedRef = useRef<HTMLDivElement | null>(null);
+  const [minimizedPos, setMinimizedPos] = useState<{ x: number; y: number } | null>(null);
+  const minimizedDragRef = useRef<{
+    startX: number;
+    startY: number;
+    baseX: number;
+    baseY: number;
+    moved: boolean;
+  } | null>(null);
+
   /* ── Peer ID ─────────────────────────────────────────── */
 
   const peerId = useMemo(() => {
@@ -378,28 +389,119 @@ function VideoCallOverlay(): React.JSX.Element | null {
     };
   }, [pipPos]);
 
+  /* ── Draggable Minimized Pill ────────────────────────── */
+
+  const onMinimizedPointerDown = useCallback(
+    (e: React.PointerEvent<HTMLDivElement>) => {
+      const el = minimizedRef.current;
+      if (!el) return;
+      (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+      const rect = el.getBoundingClientRect();
+      minimizedDragRef.current = {
+        startX: e.clientX,
+        startY: e.clientY,
+        baseX: rect.left,
+        baseY: rect.top,
+        moved: false,
+      };
+      if (!minimizedPos) {
+        setMinimizedPos({ x: rect.left, y: rect.top });
+      }
+    },
+    [minimizedPos],
+  );
+
+  const onMinimizedPointerMove = useCallback(
+    (e: React.PointerEvent<HTMLDivElement>) => {
+      const d = minimizedDragRef.current;
+      const el = minimizedRef.current;
+      if (!d || !el) return;
+      const dx = e.clientX - d.startX;
+      const dy = e.clientY - d.startY;
+      if (!d.moved && Math.abs(dx) + Math.abs(dy) < 4) return;
+      d.moved = true;
+      const maxX = window.innerWidth - el.offsetWidth - 8;
+      const maxY = window.innerHeight - el.offsetHeight - 8;
+      const nx = Math.max(8, Math.min(maxX, d.baseX + dx));
+      const ny = Math.max(8, Math.min(maxY, d.baseY + dy));
+      setMinimizedPos({ x: nx, y: ny });
+    },
+    [],
+  );
+
+  const onMinimizedPointerUp = useCallback(
+    (e: React.PointerEvent<HTMLDivElement>) => {
+      const el = minimizedRef.current;
+      if (el && el.hasPointerCapture(e.pointerId)) {
+        el.releasePointerCapture(e.pointerId);
+      }
+      const d = minimizedDragRef.current;
+      if (d && d.moved && el) {
+        // Zoom-style edge snapping (snap left or right)
+        const maxX = window.innerWidth - el.offsetWidth - 8;
+        const currentX = minimizedPos?.x ?? 0;
+        const snapX = currentX < window.innerWidth / 2 ? 8 : maxX;
+        setMinimizedPos((prev) => (prev ? { ...prev, x: snapX } : null));
+      }
+      // Clear after click event fires
+      setTimeout(() => {
+        minimizedDragRef.current = null;
+      }, 0);
+    },
+    [minimizedPos],
+  );
+
+  // First paint — bottom right by default
+  useEffect(() => {
+    if (minimizedPos !== null) return;
+    if (typeof window === 'undefined') return;
+    setMinimizedPos({
+      x: Math.max(16, window.innerWidth - 220 - 16),
+      y: Math.max(16, window.innerHeight - 80 - 16),
+    });
+  }, [minimizedPos]);
+
   if (!session) return null;
 
-  /* ── Minimized (WhatsApp-style floating pill) ────────── */
+  /* ── Minimized (Zoom-style floating pill) ────────────── */
 
   if (isMinimized) {
     return (
-      <button
-        onClick={expand}
-        className="fixed bottom-4 right-4 z-[100] h-14 pl-3 pr-4 rounded-full bg-[#131A20]/95 backdrop-blur-md border border-white/10 shadow-2xl flex items-center gap-3 hover:bg-[#1A2228] transition-colors"
+      <div
+        ref={minimizedRef}
+        onPointerDown={onMinimizedPointerDown}
+        onPointerMove={onMinimizedPointerMove}
+        onPointerUp={onMinimizedPointerUp}
+        onPointerCancel={onMinimizedPointerUp}
+        onClick={() => {
+          // Only expand if it wasn't a drag
+          if (!minimizedDragRef.current?.moved) {
+            expand();
+          }
+        }}
+        style={{
+          position: 'fixed',
+          left: minimizedPos?.x ?? (typeof window !== 'undefined' ? window.innerWidth - 220 : 0),
+          top: minimizedPos?.y ?? (typeof window !== 'undefined' ? window.innerHeight - 80 : 0),
+          touchAction: 'none',
+        }}
+        className="z-[100] h-14 pl-3 pr-4 rounded-full bg-[#131A20]/95 backdrop-blur-md border border-white/10 shadow-2xl flex items-center gap-3 hover:bg-[#1A2228] transition-colors cursor-grab active:cursor-grabbing select-none"
         title="Return to call"
       >
-        <Avatar name={peerName} src={peerAvatar} size="sm" isOnline />
-        <div className="text-left">
-          <div className="text-[12px] font-medium text-white truncate max-w-[120px]">
-            {peerName}
+        {/* pointer-events-none on children prevents native img drag issues on PC */}
+        <div className="pointer-events-none flex items-center gap-3">
+          <Avatar name={peerName} src={peerAvatar} size="sm" isOnline />
+          <div className="text-left">
+            <div className="text-[12px] font-medium text-white truncate max-w-[120px]">
+              {peerName}
+            </div>
+            <div className="text-[10px] text-white/60 font-mono tracking-wider">
+              {callState === 'active' ? formattedTimer : 'Connecting…'}
+            </div>
           </div>
-          <div className="text-[10px] text-white/60 font-mono tracking-wider">
-            {callState === 'active' ? formattedTimer : 'Connecting…'}
-          </div>
+          <Volume2 className="w-4 h-4 text-white/60" />
         </div>
-        <Volume2 className="w-4 h-4 text-white/60" />
-      </button>
+      </div>
     );
   }
 

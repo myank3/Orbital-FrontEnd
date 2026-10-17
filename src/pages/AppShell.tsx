@@ -3,15 +3,10 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, {
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-} from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { NavLink, Outlet, useNavigate, Link, useLocation } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
-import { useCall, type CallState } from '../context/CallContext';
+import { useCall } from '../context/CallContext';
 import { apiService } from '../services/api';
 import { Avatar } from '../components/Avatar';
 import VideoCallOverlay from '../components/VideoCallOverlay';
@@ -94,259 +89,13 @@ function isFullScreenRoute(pathname: string): boolean {
   return isDmDetail || isGroupDetail || isSignals;
 }
 
-/* ────────────────────────────────────────────────────────── */
-/* Draggable mini call widget — 144Hz-smooth drag             */
-/* ────────────────────────────────────────────────────────── */
-/*
-  Why this is smooth:
-
-  1. Position is NEVER stored in React state — dragging never triggers a
-     re-render. Only `peerName` and `peerAvatar` use state, and those
-     change once.
-  2. Position updates go through requestAnimationFrame, so at most one
-     DOM write per frame, no matter how many pointermove events fire
-     (144Hz displays can fire >144 events/sec).
-  3. Transform (translate3d) is used instead of left/top — GPU-composited,
-     doesn't trigger layout.
-  4. `will-change: transform` is set during drag so the compositor keeps
-     the layer ready, and cleared on release to free memory.
-  5. The initial CSS position (`right-6 bottom-...`) is used for the first
-     paint — no flash, no useLayoutEffect needed. On first pointerdown we
-     switch to `left:0;top:0` + transform, keeping the visual position
-     identical.
-*/
-
-function MiniCallWidget({
-  peerId,
-  duration,
-  onEndCall,
-}: {
-  peerId: string;
-  duration: number;
-  onEndCall: () => void;
-}) {
-  const widgetRef = useRef<HTMLDivElement | null>(null);
-  const [peerName, setPeerName] = useState<string>('Calling…');
-  const [peerAvatar, setPeerAvatar] = useState<string | null>(null);
-
-  // Drag state — all refs, no React state to avoid re-renders at 144Hz.
-  const dragStateRef = useRef<{
-    pointerId: number;
-    startX: number;
-    startY: number;
-    origX: number;
-    origY: number;
-    width: number;
-    height: number;
-    moved: boolean;
-  } | null>(null);
-  const pendingRef = useRef<{ x: number; y: number } | null>(null);
-  const rafRef = useRef<number | null>(null);
-  const hasPositionedRef = useRef(false);
-
-  // Resolve the peer's display name / avatar.
-  useEffect(() => {
-    let cancelled = false;
-    apiService
-      .getUserProfile(peerId)
-      .then((profile) => {
-        if (cancelled) return;
-        setPeerName(profile?.displayName || profile?.userHandle || 'Calling…');
-        setPeerAvatar(profile?.avatarUrl ?? null);
-      })
-      .catch(() => {
-        if (!cancelled) setPeerName('Calling…');
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [peerId]);
-
-  const flush = () => {
-    const el = widgetRef.current;
-    const p = pendingRef.current;
-    if (!el || !p) return;
-    el.style.transform = `translate3d(${p.x}px, ${p.y}px, 0)`;
-    pendingRef.current = null;
-  };
-
-  const onPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
-    // Let the hangup button handle its own clicks.
-    if ((e.target as HTMLElement).closest('button')) return;
-    const el = widgetRef.current;
-    if (!el) return;
-
-    const rect = el.getBoundingClientRect();
-
-    // First drag: switch from CSS right/bottom positioning to explicit
-    // left/top + transform so drag math is stable regardless of the
-    // container's layout. The element's visual position is preserved.
-    if (!hasPositionedRef.current) {
-      hasPositionedRef.current = true;
-      el.style.right = 'auto';
-      el.style.bottom = 'auto';
-      el.style.left = '0';
-      el.style.top = '0';
-    }
-    el.style.transform = `translate3d(${rect.left}px, ${rect.top}px, 0)`;
-    el.style.transition = 'none';
-    el.style.willChange = 'transform';
-    el.style.cursor = 'grabbing';
-
-    dragStateRef.current = {
-      pointerId: e.pointerId,
-      startX: e.clientX,
-      startY: e.clientY,
-      origX: rect.left,
-      origY: rect.top,
-      width: rect.width,
-      height: rect.height,
-      moved: false,
-    };
-
-    try {
-      el.setPointerCapture(e.pointerId);
-    } catch {
-      /* pointer capture unsupported — ignore */
-    }
-    e.preventDefault();
-  };
-
-  const onPointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
-    const ds = dragStateRef.current;
-    if (!ds || ds.pointerId !== e.pointerId) return;
-
-    const dx = e.clientX - ds.startX;
-    const dy = e.clientY - ds.startY;
-    if (!ds.moved && dx * dx + dy * dy > 16) ds.moved = true;
-
-    let x = ds.origX + dx;
-    let y = ds.origY + dy;
-    x = Math.max(8, Math.min(window.innerWidth - ds.width - 8, x));
-    y = Math.max(8, Math.min(window.innerHeight - ds.height - 8, y));
-
-    // Coalesce to one DOM write per animation frame. At 144Hz the browser
-    // fires ~144 pointermove events per second; we only touch the DOM once
-    // per rAF tick (~144 writes/sec, but the writes land on the compositor
-    // thread so they don't block layout/paint).
-    pendingRef.current = { x, y };
-    if (rafRef.current == null) {
-      rafRef.current = requestAnimationFrame(() => {
-        rafRef.current = null;
-        flush();
-      });
-    }
-  };
-
-  const finishDrag = (e: React.PointerEvent<HTMLDivElement>) => {
-    const ds = dragStateRef.current;
-    if (!ds || ds.pointerId !== e.pointerId) return;
-    dragStateRef.current = null;
-
-    // Flush any pending frame so the final position is exact.
-    if (rafRef.current != null) {
-      cancelAnimationFrame(rafRef.current);
-      rafRef.current = null;
-    }
-    flush();
-
-    const el = widgetRef.current;
-    if (!el) return;
-
-    try {
-      el.releasePointerCapture(ds.pointerId);
-    } catch {
-      /* ignore */
-    }
-    el.style.cursor = 'grab';
-    el.style.willChange = 'auto';
-
-    // If this was a tap (no meaningful movement), leave the pill where it is.
-    if (!ds.moved) return;
-
-    // Snap to the nearest corner with a smooth transition.
-    const rect = el.getBoundingClientRect();
-    const cx = rect.left + rect.width / 2;
-    const cy = rect.top + rect.height / 2;
-    const isMobile = window.innerWidth < 768;
-    const sideMargin = 24;
-    const bottomMargin = isMobile ? 96 : 24;
-    const snapX = cx > window.innerWidth / 2
-      ? window.innerWidth - rect.width - sideMargin
-      : sideMargin;
-    const snapY = cy > window.innerHeight / 2
-      ? window.innerHeight - rect.height - bottomMargin
-      : sideMargin;
-
-    el.style.transition = 'transform 260ms cubic-bezier(0.22, 1, 0.36, 1)';
-    el.style.transform = `translate3d(${snapX}px, ${snapY}px, 0)`;
-  };
-
-  const mm = Math.floor(duration / 60).toString().padStart(2, '0');
-  const ss = Math.floor(duration % 60).toString().padStart(2, '0');
-
-  return (
-    <div
-      ref={widgetRef}
-      onPointerDown={onPointerDown}
-      onPointerMove={onPointerMove}
-      onPointerUp={finishDrag}
-      onPointerCancel={finishDrag}
-      onLostPointerCapture={finishDrag}
-      className="fixed z-[60] touch-none select-none cursor-grab right-6 bottom-[calc(5rem+env(safe-area-inset-bottom,0px))] md:bottom-6"
-      aria-label="Ongoing call"
-    >
-      <div className="flex items-center gap-3 pl-2 pr-2 py-2 rounded-2xl bg-[#0F0D0A]/95 backdrop-blur-2xl border border-[#22C55E]/40 shadow-[0_20px_60px_-12px_rgba(0,0,0,0.95)] min-w-[240px] max-w-[280px]">
-        <Avatar name={peerName} src={peerAvatar} size="sm" />
-        <div className="min-w-0 flex-1">
-          <p className="text-[12.5px] font-semibold text-[#EDE5D4] truncate">
-            {peerName}
-          </p>
-          <p className="text-[11px] tabular-nums text-[#22C55E] font-medium">
-            {mm}:{ss}
-          </p>
-        </div>
-        <button
-          onClick={(e) => {
-            e.stopPropagation();
-            onEndCall();
-          }}
-          onPointerDown={(e) => e.stopPropagation()}
-          className="shrink-0 w-9 h-9 rounded-full bg-[#B91C1C] hover:bg-[#991B1B] text-white flex items-center justify-center touch-manipulation"
-          aria-label="End call"
-        >
-          <PhoneOff className="w-4 h-4" />
-        </button>
-      </div>
-    </div>
-  );
-}
-
 /** Main shell ---------------------------------------------------- */
 
 function AppShell(): React.JSX.Element {
   const navigate = useNavigate();
   const location = useLocation();
   const { user, logout } = useAuth();
-
-  // useCall() exposes the current call. We defensively read the extra
-  // fields (callState / duration / peerId / endCall) so the mini widget
-  // works even if the context's exact shape drifts.
-  const callApi = useCall();
-  const { incomingCall, acceptCall, rejectCall } = callApi;
-  const callMeta = callApi as unknown as {
-    callState?: CallState;
-    duration?: number;
-    peerId?: string | null;
-    endCall?: () => void | Promise<void>;
-    hangup?: () => void | Promise<void>;
-    cancel?: () => void | Promise<void>;
-  };
-  const callState: CallState = callMeta.callState ?? 'idle';
-  const callDuration: number = callMeta.duration ?? 0;
-  const callPeerId: string | null = callMeta.peerId ?? null;
-  const endCall =
-    callMeta.endCall ?? callMeta.hangup ?? callMeta.cancel ?? rejectCall;
+  const { incomingCall, acceptCall, rejectCall } = useCall();
 
   const fullScreen = isFullScreenRoute(location.pathname);
   // The shell chrome (mobile header, bottom bar, drawer) is hidden on full-
@@ -435,12 +184,6 @@ function AppShell(): React.JSX.Element {
   const incomingDisplayName = callerName ?? 'Someone';
 
   const closeMobileMenu = () => setMobileMenuOpen(false);
-
-  // The mini widget is shown whenever a call is live (callState === 'connecting'
-  // is the "media connected" state in CallContext). It sits below
-  // VideoCallOverlay's z-index so the full-screen overlay takes precedence when
-  // it's visible; when the overlay hides (minimized), the mini pill appears.
-  const showMiniCall = callState === 'connecting' && !!callPeerId;
 
   return (
     <div className="app-shell flex h-screen bg-[#0B0A08] text-[#EDE5D4] overflow-hidden selection:bg-[#D97706]/30 selection:text-[#EDE5D4]">
@@ -853,21 +596,6 @@ function AppShell(): React.JSX.Element {
           </nav>
         )}
       </div>
-
-      {/* Draggable mini call widget — appears while a call is live.
-          Sits below VideoCallOverlay (z-[60]) so the full-screen overlay
-          takes precedence when visible; when the overlay hides, this pill
-          becomes the persistent call indicator that can be dragged around
-          and snaps to the nearest corner on release. Position is mutated
-          imperatively via rAF so dragging never triggers a React re-render
-          (144Hz-smooth). */}
-      {showMiniCall && callPeerId && (
-        <MiniCallWidget
-          peerId={callPeerId}
-          duration={callDuration}
-          onEndCall={() => void endCall()}
-        />
-      )}
 
       <VideoCallOverlay />
     </div>
