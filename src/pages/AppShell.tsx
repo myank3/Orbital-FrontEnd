@@ -68,7 +68,10 @@ function AppShell(): React.JSX.Element {
 
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [railHovered, setRailHovered] = useState(false);
+  
+  // Two separate states so desktop and mobile dropdowns don't conflict
   const [userMenuOpen, setUserMenuOpen] = useState(false);
+  const [mobileUserMenuOpen, setMobileUserMenuOpen] = useState(false);
 
   const [callerName, setCallerName] = useState<string | null>(null);
 
@@ -113,11 +116,14 @@ function AppShell(): React.JSX.Element {
   }, [mobileMenuOpen]);
 
   useEffect(() => {
-    if (!userMenuOpen) return;
-    const onDocClick = () => setUserMenuOpen(false);
+    if (!userMenuOpen && !mobileUserMenuOpen) return;
+    const onDocClick = () => {
+      setUserMenuOpen(false);
+      setMobileUserMenuOpen(false);
+    };
     window.addEventListener('click', onDocClick);
     return () => window.removeEventListener('click', onDocClick);
-  }, [userMenuOpen]);
+  }, [userMenuOpen, mobileUserMenuOpen]);
 
   const primaryNav: NavItem[] = [
     { to: '/app/dm', label: 'Messages', icon: MessageSquare },
@@ -129,12 +135,6 @@ function AppShell(): React.JSX.Element {
     { to: '/app/calls', label: 'Calls', icon: Phone },
     { to: '/app/notifications', label: 'Media', icon: ImageIcon },
     { to: '/app/signals', label: 'Signals', icon: Compass, highlight: true },
-  ];
-
-  // Added for the mobile drawer
-  const accountNav: NavItem[] = [
-    { to: '/app/settings', label: 'Settings', icon: Settings },
-    { to: '/app/orbit', label: 'Your Orbit', icon: Orbit, accent: true },
   ];
 
   const railWidth = railHovered ? 224 : 68;
@@ -198,28 +198,7 @@ function AppShell(): React.JSX.Element {
                   />
                 ))}
               </MobileSection>
-
-              {/* Added Account section for Settings and Your Orbit */}
-              <MobileSection label="Account" className="mt-6">
-                {accountNav.map((item) => (
-                  <MobileItem
-                    key={item.to}
-                    item={item}
-                    onNavigate={() => setMobileMenuOpen(false)}
-                  />
-                ))}
-              </MobileSection>
             </nav>
-
-            <div className="p-3 border-t border-white/[0.06]">
-              <button
-                onClick={() => void handleSignOut()}
-                className="w-full flex items-center gap-3 px-3 h-11 rounded-xl text-[13.5px] font-medium text-[#A8A29E] hover:text-[#F87171] hover:bg-[#B91C1C]/[0.1] transition-colors"
-              >
-                <LogOut className="w-4 h-4" />
-                <span>Sign out</span>
-              </button>
-            </div>
           </aside>
         </>
       )}
@@ -316,7 +295,7 @@ function AppShell(): React.JSX.Element {
                 )}
               </button>
 
-              {/* Dropdown Menu */}
+              {/* Desktop Dropdown Menu */}
               {userMenuOpen && (
                 <div
                   className="absolute bottom-full mb-3 left-0 right-0 min-w-[220px] rounded-2xl bg-[#131110]/95 backdrop-blur-3xl border border-white/[0.1] shadow-[0_20px_60px_-12px_rgba(0,0,0,0.95),inset_0_1px_0_rgba(255,255,255,0.05)] overflow-hidden z-50 origin-bottom-left transition-all duration-200 opacity-100 translate-y-0 scale-100"
@@ -377,7 +356,7 @@ function AppShell(): React.JSX.Element {
       </div>
 
       {/* ─── MAIN COLUMN ───────────────────────────────────── */}
-      <div className="flex-1 flex flex-col h-screen overflow-hidden min-w-0">
+      <div className="flex-1 flex flex-col h-screen overflow-hidden min-w-0 relative">
         <header className="md:hidden h-14 bg-[#0F0D0A]/80 backdrop-blur-3xl border-b border-white/[0.06] px-4 flex items-center justify-between shrink-0">
           <button
             onClick={() => setMobileMenuOpen(true)}
@@ -431,9 +410,104 @@ function AppShell(): React.JSX.Element {
           </div>
         )}
 
-        <main className="flex-1 overflow-y-auto bg-[#0B0A08] relative custom-scrollbar">
+        {/* Main Content Area */}
+        <main className="flex-1 overflow-y-auto bg-[#0B0A08] relative custom-scrollbar pb-16 md:pb-0">
           <Outlet />
         </main>
+
+        {/* ─── MOBILE BOTTOM BAR (Matches PC Avatar Menu) ─── */}
+        <nav className="md:hidden fixed bottom-0 left-0 right-0 h-16 bg-[#0F0D0A]/90 backdrop-blur-3xl border-t border-white/[0.06] z-40 flex items-center justify-around px-2 pb-[env(safe-area-inset-bottom)]">
+          {primaryNav.slice(0, 3).map((item) => (
+             <NavLink
+               key={item.to}
+               to={item.to}
+               className={({ isActive }) =>
+                 `flex flex-col items-center justify-center w-14 h-full gap-1 ${
+                   isActive ? 'text-[#D97706]' : 'text-[#A8A29E] hover:text-[#EDE5D4]'
+                 }`
+               }
+             >
+               <item.icon size={20} />
+               <span className="text-[9px] font-medium">{item.label}</span>
+             </NavLink>
+          ))}
+
+          {/* Mobile Avatar Button */}
+          <div className="relative flex items-center justify-center w-14 h-full">
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                setMobileUserMenuOpen((v) => !v);
+              }}
+              className={`flex items-center justify-center p-1 rounded-full transition-all ${
+                mobileUserMenuOpen ? 'bg-white/[0.1] ring-1 ring-white/[0.2]' : ''
+              }`}
+            >
+              <Avatar
+                name={user?.displayName || 'User'}
+                src={user?.avatarUrl}
+                size="sm"
+                isOnline={true}
+              />
+            </button>
+
+            {/* Mobile Dropdown Menu (Same exact design as PC) */}
+            {mobileUserMenuOpen && (
+              <div
+                className="absolute bottom-[calc(100%+10px)] right-0 w-[220px] rounded-2xl bg-[#131110]/95 backdrop-blur-3xl border border-white/[0.1] shadow-[0_20px_60px_-12px_rgba(0,0,0,0.95),inset_0_1px_0_rgba(255,255,255,0.05)] overflow-hidden z-50 origin-bottom-right"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <div className="px-4 py-4 border-b border-white/[0.06] bg-gradient-to-b from-white/[0.02] to-transparent">
+                  <div className="flex items-center gap-3">
+                    <Avatar
+                      name={user?.displayName || 'User'}
+                      src={user?.avatarUrl}
+                      size="sm"
+                    />
+                    <div className="min-w-0">
+                      <p className="text-[13px] font-medium text-[#EDE5D4] truncate">
+                        {user?.displayName || 'Active User'}
+                      </p>
+                      <p className="text-[11px] text-[#6B6259] truncate mt-0.5">
+                        @{user?.userHandle || 'guest'}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+                
+                <div className="p-1.5">
+                  <Link
+                    to="/app/settings"
+                    onClick={() => setMobileUserMenuOpen(false)}
+                    className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-[13px] font-medium text-[#A8A29E] hover:text-[#EDE5D4] hover:bg-white/[0.06] transition-colors"
+                  >
+                    <Settings className="w-4 h-4" />
+                    <span>Settings</span>
+                  </Link>
+                  
+                  <Link
+                    to="/app/orbit"
+                    onClick={() => setMobileUserMenuOpen(false)}
+                    className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-[13px] font-medium text-[#A8A29E] hover:text-[#EDE5D4] hover:bg-white/[0.06] transition-colors"
+                  >
+                    <Orbit className="w-4 h-4" />
+                    <span>Your Orbit</span>
+                  </Link>
+                </div>
+
+                <div className="p-1.5 border-t border-white/[0.06]">
+                  <button
+                    onClick={() => void handleSignOut()}
+                    className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-[13px] font-medium text-[#A8A29E] hover:text-[#F87171] hover:bg-[#B91C1C]/[0.1] transition-colors"
+                  >
+                    <LogOut className="w-4 h-4" />
+                    <span>Sign out</span>
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        </nav>
       </div>
 
       <VideoCallOverlay />
@@ -513,7 +587,6 @@ function RailItem({
             {item.label}
           </span>
 
-          {/* Badge */}
           {typeof item.badge === 'number' && item.badge > 0 && (
             <span className="relative z-10 ml-auto mr-2 min-w-[20px] h-[20px] px-1.5 rounded-full bg-[#D97706] text-[#0F0D0A] text-[11px] font-bold flex items-center justify-center shadow-[0_0_10px_rgba(217,119,6,0.5)]">
               {item.badge > 99 ? '99+' : item.badge}
