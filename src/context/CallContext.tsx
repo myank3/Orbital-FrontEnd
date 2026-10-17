@@ -960,12 +960,6 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
         throw new Error('Peer ID is required to initiate a call.');
       }
 
-      // Refuse to ring someone who isn't connected. Throws before any
-      // state change, so callers can show a toast and move on.
-      if (!presenceStore.isOnline(targetPeerId)) {
-        throw new Error('User is offline. Try again when they come back online.');
-      }
-
       if (audioSinkRef.current) {
         audioSinkRef.current.play().catch(() => {});
       }
