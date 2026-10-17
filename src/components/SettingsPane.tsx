@@ -37,9 +37,13 @@ import {
   ChevronRight,
   AtSign,
   Calendar,
+  LifeBuoy,
 } from 'lucide-react';
 
 const SPRING = { type: 'spring' as const, stiffness: 240, damping: 26 };
+
+/* Support inbox — change here if it ever moves */
+const SUPPORT_EMAIL = 'proelium7@outlook.com';
 
 function toAbsoluteAvatar(url: string | null | undefined): string | undefined {
   if (!url) return undefined;
@@ -340,7 +344,6 @@ function SettingsPane(): React.JSX.Element {
           className="rounded-2xl bg-[#14120F] border border-white/[0.06] overflow-hidden"
         >
           <div className="px-5 py-3.5 border-b border-white/[0.06] flex items-center gap-2">
-           
             <h2 className="text-[14px] font-semibold text-[#EDE5D4] tracking-tight">
               Edit profile
             </h2>
@@ -529,9 +532,39 @@ function SettingsPane(): React.JSX.Element {
           </div>
         </motion.section>
 
+        {/* ── Support section ───────────────────────────── */}
+        <motion.section
+          {...stagger(0.22)}
+          className="rounded-2xl bg-[#14120F] border border-white/[0.06] overflow-hidden"
+        >
+          <div className="px-5 py-3.5 border-b border-white/[0.06]">
+            <h2 className="text-[14px] font-semibold text-[#EDE5D4] tracking-tight">
+              Support
+            </h2>
+          </div>
+
+          <div className="divide-y divide-white/[0.04]">
+            <Row
+              icon={<LifeBuoy className="w-4 h-4 text-[#D97706]" />}
+              label="Contact support"
+              hint="We usually reply within 24 hours"
+            >
+              <a
+                href={`mailto:${SUPPORT_EMAIL}?subject=Orbital%20Support%20Request`}
+                className="text-[13px] text-[#D97706] hover:text-[#B45309] font-medium inline-flex items-center gap-1 transition-colors"
+              >
+                Email us
+                <ChevronRight className="w-3.5 h-3.5" />
+              </a>
+            </Row>
+
+           
+          </div>
+        </motion.section>
+
         {/* ── Danger zone ───────────────────────────────── */}
         <motion.section
-          {...stagger(0.24)}
+          {...stagger(0.26)}
           className="rounded-2xl bg-[#B91C1C]/[0.05] border border-[#B91C1C]/20 overflow-hidden"
         >
           <div className="p-5 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
@@ -555,10 +588,11 @@ function SettingsPane(): React.JSX.Element {
         </motion.section>
 
         <motion.div
-          {...stagger(0.3)}
+          {...stagger(0.30)}
           className="text-center text-[11px] text-[#5A524A] pt-2 pb-4"
         >
-          © {new Date().getFullYear()} Orbital · Private &amp; Direct
+          © {new Date().getFullYear()} Orbital · Private &amp; Direct ·{' '}
+         
         </motion.div>
       </div>
 

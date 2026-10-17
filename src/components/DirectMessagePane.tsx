@@ -17,8 +17,10 @@ import { toast } from 'sonner';
 import { apiService, extractErrorMessage } from '../services/api';
 import { signalRService } from '../services/signalr';
 import { presenceStore } from '../services/presenceStore';
-import { useAuth } from '../context/AuthContext';
-import { useCall } from '../context/CallContext';
+import { useAuth } from '../context/AuthContext'; 
+import { useCall, type CallState } from '../context/CallContext';
+
+
 import {
   decryptBatch,
   decryptOne,
@@ -92,7 +94,21 @@ import {
   VoiceRecorder,
   type VoiceRecording,
 } from './dm/ComposerToolkit';
+/* ────────────────────────────────────────────────────────── */
+/* WhatsApp-style call timer pill                             */
+/* ────────────────────────────────────────────────────────── */
 
+function CallTimerPill({ callState, duration }: { callState: CallState; duration: number }) {
+  if (callState !== 'active') return null;
+  const m = Math.floor(duration / 60).toString().padStart(2, '0');
+  const s = Math.floor(duration % 60).toString().padStart(2, '0');
+  return (
+    <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-[#22C55E] text-white shadow-[0_8px_24px_-6px_rgba(34,197,94,0.6)]">
+      <Phone className="w-3.5 h-3.5" />
+      <span className="text-[12.5px] font-semibold tabular-nums">{m}:{s}</span>
+    </div>
+  );
+}
 /* ────────────────────────────────────────────────────────── */
 /* Custom toast: offline call warning                         */
 /* ────────────────────────────────────────────────────────── */
@@ -2504,14 +2520,22 @@ export function DirectMessagePane(): React.JSX.Element {
   // CallContext implementations, so we cast defensively and read
   // whichever one exists. If your context uses a different name,
   // add it to the union below.
-  const callCtx = useCall() as unknown as {
-    initiateCall: (peerId: string, type: CallType) => Promise<void>;
-    activeCall?: { peerId?: string; peerUserId?: string } | null;
-    currentCall?: { peerId?: string; peerUserId?: string } | null;
-    call?: { peerId?: string; peerUserId?: string } | null;
-  };
-  const initiateCall = callCtx.initiateCall;
-  const activeCall = callCtx.activeCall ?? callCtx.currentCall ?? callCtx.call ?? null;
+ const callCtx = useCall() as unknown as {
+  initiateCall: (peerId: string, type: CallType) => Promise<void>;
+  callState: CallState;
+  duration: number;
+  peerId: string | null;
+  activeCall?: { peerId?: string; peerUserId?: string } | null;
+  currentCall?: { peerId?: string; peerUserId?: string } | null;
+  call?: { peerId?: string; peerUserId?: string } | null;
+};
+const initiateCall = callCtx.initiateCall;
+const activeCall = callCtx.activeCall ?? callCtx.currentCall ?? callCtx.call ?? null;
+const {
+  callState: activeCallState,
+  duration: activeCallDuration,
+  peerId: activeCallPeerId,
+} = callCtx;
 
   const isPeerTyping = useDmTypingReceiver(userId);
 
@@ -3561,6 +3585,11 @@ export function DirectMessagePane(): React.JSX.Element {
                 </button>
               </div>
             </div>
+            {activeCallState === 'active' && activeCallPeerId === userId && (
+  <div className="pointer-events-none absolute top-20 left-1/2 -translate-x-1/2 z-30">
+    <CallTimerPill callState={activeCallState} duration={activeCallDuration} />
+  </div>
+)}
 
             {!isConfirmedFriend && (
               <div className="shrink-0 px-4 sm:px-5 py-2.5 bg-[#D97706]/[0.08] border-b border-[#D97706]/20 flex flex-wrap items-center justify-between gap-3 text-[12.5px] relative z-10">
