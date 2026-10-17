@@ -219,6 +219,68 @@ function useRingtone(
   }, []);
 }
 
+/* ─────────────────────────────────────────────────────────
+   Audio-file ringtone — loops an actual MP3/audio file.
+   Same interface as useRingtone but plays a real asset.
+   ───────────────────────────────────────────────────────── */
+
+function useAudioRingtone(
+  active: boolean,
+  src: string,
+  volume = 0.35,
+) {
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+
+  useEffect(() => {
+    if (!active) {
+      const el = audioRef.current;
+      if (el) {
+        el.pause();
+        el.currentTime = 0;
+      }
+      return;
+    }
+
+    if (!audioRef.current) {
+      const el = new Audio(src);
+      el.loop = true;
+      el.volume = volume;
+      el.preload = 'auto';
+      audioRef.current = el;
+    }
+
+    const el = audioRef.current;
+    el.volume = volume;
+
+    el.play().catch(() => {
+      // Autoplay may be blocked until user gesture — installAudioUnlock()
+      // usually covers this, but retry on the next interaction just in case.
+      const resume = () => {
+        el.play().catch(() => {});
+        document.removeEventListener('click', resume);
+        document.removeEventListener('touchstart', resume);
+      };
+      document.addEventListener('click', resume, { once: true });
+      document.addEventListener('touchstart', resume, { once: true });
+    });
+
+    return () => {
+      el.pause();
+      el.currentTime = 0;
+    };
+  }, [active, src, volume]);
+
+  useEffect(() => {
+    return () => {
+      if (audioRef.current) {
+        audioRef.current.pause();
+        audioRef.current.src = '';
+        audioRef.current = null;
+      }
+    };
+  }, []);
+}
+
 /* ── Ringtone presets ────────────────────────────────────── */
 /*
  * Modern Instagram-inspired tonal palette.
@@ -239,6 +301,7 @@ const RINGBACK_PATTERN: ToneStep[] = [
 
 // Incoming — the main ringtone. Bright, melodic, modern.
 // Five notes rising then resolving down, played as a chime.
+// NOTE: kept for reference; incoming call now uses a real MP3.
 const INCOMING_SOFT_PATTERN: ToneStep[] = [
   { freq: 880.00, durationMs: 180, gapAfterMs: 50 },   // A5
   { freq: 1108.73, durationMs: 180, gapAfterMs: 50 },  // C#6
@@ -435,13 +498,8 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
     wave: 'sine',
   });
 
-  // Incoming — the modern chime. Instagram-style melodic arpeggio.
-  useRingtone(isIncomingRinging, {
-    pattern: INCOMING_SOFT_PATTERN,
-    silenceMs: 1600,
-    volume: 0.14,
-    wave: 'sine',
-  });
+  // Incoming — looping MP3 ringtone from /public/sounds/ringtone.mp3
+  useAudioRingtone(isIncomingRinging, '/sounds/ringtone.mp3', 0.35);
 
   // End tone — short descending blip.
   useRingtone(endToneActive, {
