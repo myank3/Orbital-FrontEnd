@@ -99,7 +99,7 @@ import {
 /* ────────────────────────────────────────────────────────── */
 
 function CallTimerPill({ callState, duration }: { callState: CallState; duration: number }) {
-  if (callState !== 'active') return null;
+  if (callState !== 'connecting') return null;
   const m = Math.floor(duration / 60).toString().padStart(2, '0');
   const s = Math.floor(duration % 60).toString().padStart(2, '0');
   return (
@@ -692,16 +692,9 @@ function previewText(msg: DirectMessageDto, myId: string): LastMessagePreview {
   const body = msg.plaintext ?? msg.content ?? '';
   const d = decodeIncoming(body);
 
-  // Call events: only surface real answered calls in the sidebar.
-  // Placeholders (duration 0) fall through with empty text so the
-  // FriendRow falls back to the @handle.
+  // Call logs are not surfaced in the sidebar; the row falls back to @handle.
   if (!d.isReaction && d.call) {
-    const duration = d.call.duration;
-    if (!duration || duration <= 0) {
-      return { text: '', sentAt: msg.sentAt, isMe };
-    }
-    const icon = d.call.kind === 'video' ? '📹' : '📞';
-    return { text: `${icon} Call · ${formatDuration(duration)}`, sentAt: msg.sentAt, isMe };
+    return { text: '', sentAt: msg.sentAt, isMe };
   }
 
   const viewOnce = Boolean((msg as LocalMessage).viewOnce) || (!d.isReaction && d.viewOnce);
@@ -1539,29 +1532,8 @@ const MessageRow = React.memo(
       return count > 0 && count * 1.5 >= chars.length;
     }, [displayText, hasText]);
 
-    // ── Call events: only render when the call actually happened. ──
-    // Rows with duration === 0 are dial-only placeholders (missed,
-    // declined, cancelled, never-answered) — suppressed entirely.
-    if (message.call) {
-      const duration = message.call.duration;
-      if (!duration || duration <= 0) return null;
-
-      const CallIcon = message.call.kind === 'video' ? Video : Phone;
-
-      return (
-        <div className="flex justify-center my-3 select-none">
-          <div
-            className={`inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full ${theme.subtleBg} border ${theme.subtleBorder} ${theme.textSecondary}`}
-          >
-            <CallIcon className="w-3.5 h-3.5 shrink-0" />
-            <span className="text-[12px] font-medium">Call ended ·</span>
-            <span className="text-[12px] tabular-nums opacity-80">
-              {formatDuration(duration)}
-            </span>
-          </div>
-        </div>
-      );
-    }
+    // Call logs are not rendered in the chat list.
+    if (message.call) return null;
 
     const isVoice = message.mediaType === MediaType.Audio;
     const tailClass = isLastOfGroup ? (isMe ? 'rounded-br-[4px]' : 'rounded-bl-[4px]') : '';
@@ -2516,26 +2488,21 @@ export function DirectMessagePane(): React.JSX.Element {
   const navigate = useNavigate();
   const { user } = useAuth();
 
-  // useCall() exposes the live call state. Field names vary between
-  // CallContext implementations, so we cast defensively and read
-  // whichever one exists. If your context uses a different name,
-  // add it to the union below.
- const callCtx = useCall() as unknown as {
-  initiateCall: (peerId: string, type: CallType) => Promise<void>;
-  callState: CallState;
-  duration: number;
-  peerId: string | null;
-  activeCall?: { peerId?: string; peerUserId?: string } | null;
-  currentCall?: { peerId?: string; peerUserId?: string } | null;
-  call?: { peerId?: string; peerUserId?: string } | null;
-};
-const initiateCall = callCtx.initiateCall;
-const activeCall = callCtx.activeCall ?? callCtx.currentCall ?? callCtx.call ?? null;
-const {
-  callState: activeCallState,
-  duration: activeCallDuration,
-  peerId: activeCallPeerId,
-} = callCtx;
+  // useCall() exposes the live call state used to render the floating
+  // timer pill during a connected call. No call logs are written or
+  // rendered in chat — only the pill.
+  const callCtx = useCall() as unknown as {
+    initiateCall: (peerId: string, type: CallType) => Promise<void>;
+    callState: CallState;
+    duration: number;
+    peerId: string | null;
+  };
+  const initiateCall = callCtx.initiateCall;
+  const {
+    callState: activeCallState,
+    duration: activeCallDuration,
+    peerId: activeCallPeerId,
+  } = callCtx;
 
   const isPeerTyping = useDmTypingReceiver(userId);
 
@@ -2607,15 +2574,6 @@ const {
   const processedIdsRef = useRef<Set<DirectMessageDto['id']>>(new Set());
   const stickRef = useRef(true);
   const anchorRef = useRef<number | null>(null);
-  // Tracks the call the local user just initiated, so we can write a
-  // real "Call ended · m:ss" log when the call terminates. Set to null
-  // once the log has been written (or if the call never connected).
-  const callPendingRef = useRef<{
-    peerId: string;
-    kind: 'audio' | 'video';
-    startedAt: number;
-    sawActive: boolean;
-  } | null>(null);
 
   reactionsRef.current = reactions;
   replyToRef.current = replyTo;
@@ -2643,50 +2601,6 @@ const {
       document.removeEventListener('touchstart', unlock);
     };
   }, []);
-
-  // Watch the live call state. When a call we started transitions from
-  // active back to idle, write a real `[call:kind:answered:duration]`
-  // row through the normal encrypted DM pipeline. Duration is computed
-  // from wall-clock time between "sawActive" and "call ended".
-  useEffect(() => {
-    const pending = callPendingRef.current;
-    if (!pending) return;
-
-    if (activeCall) {
-      // The call became active (connected) — mark it as real.
-      pending.sawActive = true;
-      return;
-    }
-
-    // Call state is now empty.
-    if (!pending.sawActive) {
-      // Never became active — dial-only. Drop the tracker silently.
-      callPendingRef.current = null;
-      return;
-    }
-
-    const durationSec = Math.max(1, Math.round((Date.now() - pending.startedAt) / 1000));
-    callPendingRef.current = null;
-
-    const { peerId, kind } = pending;
-    const payload = encodeCallLog(kind, 'answered', durationSec);
-
-    void (async () => {
-      try {
-        const pub = await getPublicKeyFor(peerId);
-        const enc = await encryptFor(pub, payload);
-        await signalRService.sendDirectMessage({
-          recipientId: peerId,
-          ciphertext: enc.ciphertext,
-          nonce: enc.nonce,
-          mediaUrl: undefined,
-          mediaType: undefined,
-        });
-      } catch (err) {
-        console.warn('call-ended log write failed:', err);
-      }
-    })();
-  }, [activeCall]);
 
   const scrollToBottom = useCallback(() => {
     const el = messagesContainerRef.current;
@@ -2867,7 +2781,6 @@ const {
     processedIdsRef.current = new Set();
     stickRef.current = true;
     anchorRef.current = null;
-    callPendingRef.current = null;
   }, [userId]);
 
   const decodeMessages = useCallback(
@@ -3290,12 +3203,6 @@ const {
       );
       return;
     }
-    callPendingRef.current = {
-      peerId: userId,
-      kind: 'audio',
-      startedAt: Date.now(),
-      sawActive: false,
-    };
     try { await initiateCall(userId, CallType.Audio); }
     catch (err) { alert(`Call failed: ${extractErrorMessage(err)}`); }
   };
@@ -3316,12 +3223,6 @@ const {
       );
       return;
     }
-    callPendingRef.current = {
-      peerId: userId,
-      kind: 'video',
-      startedAt: Date.now(),
-      sawActive: false,
-    };
     try { await initiateCall(userId, CallType.Video); }
     catch (err) { alert(`Call failed: ${extractErrorMessage(err)}`); }
   };
@@ -3412,9 +3313,8 @@ const {
     let lastTs = 0;
 
     for (const m of messages) {
-      // Call events with no duration are silent placeholders — skip
-      // them entirely so they don't affect grouping or spacing.
-      if (m.call && (!m.call.duration || m.call.duration <= 0)) continue;
+      // Call log events are never shown in the chat list.
+      if (m.call) continue;
 
       const day = parseUtc(m.sentAt).toDateString();
       if (day !== lastDate) {
@@ -3424,19 +3324,10 @@ const {
         lastTs = 0;
       }
       const ts = getMessageTime(m);
-      // Call events break the sender group — they're rendered as their
-      // own centered row and the next real message shouldn't be "grouped".
-      const isCallEvent = Boolean(m.call);
-      const isGrouped =
-        !isCallEvent && m.senderId === lastSenderId && ts - lastTs < 7 * 60 * 1000;
+      const isGrouped = m.senderId === lastSenderId && ts - lastTs < 7 * 60 * 1000;
       out.push({ type: 'msg', key: String(m.id), message: m, grouped: isGrouped, last: true });
-      if (isCallEvent) {
-        lastSenderId = '';
-        lastTs = 0;
-      } else {
-        lastSenderId = m.senderId ?? '';
-        lastTs = ts;
-      }
+      lastSenderId = m.senderId ?? '';
+      lastTs = ts;
     }
     // Mark "last of group" — next item must be a real message from the same sender.
     for (let i = 0; i < out.length; i++) {
@@ -3446,7 +3337,6 @@ const {
       it.last = !(
         next &&
         next.type === 'msg' &&
-        !next.message.call &&
         next.message.senderId === it.message.senderId
       );
     }
@@ -3585,11 +3475,12 @@ const {
                 </button>
               </div>
             </div>
-            {activeCallState === 'active' && activeCallPeerId === userId && (
-  <div className="pointer-events-none absolute top-20 left-1/2 -translate-x-1/2 z-30">
-    <CallTimerPill callState={activeCallState} duration={activeCallDuration} />
-  </div>
-)}
+
+            {activeCallState === 'connecting' && activeCallPeerId === userId && (
+              <div className="pointer-events-none absolute top-20 left-1/2 -translate-x-1/2 z-30">
+                <CallTimerPill callState={activeCallState} duration={activeCallDuration} />
+              </div>
+            )}
 
             {!isConfirmedFriend && (
               <div className="shrink-0 px-4 sm:px-5 py-2.5 bg-[#D97706]/[0.08] border-b border-[#D97706]/20 flex flex-wrap items-center justify-between gap-3 text-[12.5px] relative z-10">
