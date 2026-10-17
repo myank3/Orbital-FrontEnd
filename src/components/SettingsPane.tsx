@@ -329,7 +329,7 @@ function SettingsPane(): React.JSX.Element {
                 )}
                 <div className="inline-flex items-center gap-1.5 text-[11.5px] text-[#4ADE80]">
                   <Lock className="w-3.5 h-3.5" />
-                  End-to-end encrypted
+                  
                 </div>
               </div>
             </div>
