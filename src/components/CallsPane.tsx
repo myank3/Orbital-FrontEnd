@@ -22,8 +22,24 @@ import { Avatar } from './Avatar';
 import { apiService, extractErrorMessage } from '../services/api';
 import { FriendDto } from '../types/api';
 import { presenceStore } from '../services/presenceStore';
-import { useCall } from '../context/CallContext';
+import { useCall, type CallState } from '../context/CallContext';
 import { useAuth } from '../context/AuthContext';
+
+/* ────────────────────────────────────────────────────────── */
+/* WhatsApp-style call timer pill                             */
+/* ────────────────────────────────────────────────────────── */
+
+function CallTimerPill({ callState, duration }: { callState: CallState; duration: number }) {
+  if (callState !== 'active') return null;
+  const m = Math.floor(duration / 60).toString().padStart(2, '0');
+  const s = Math.floor(duration % 60).toString().padStart(2, '0');
+  return (
+    <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-[#22C55E] text-white shadow-[0_8px_24px_-6px_rgba(34,197,94,0.6)]">
+      <PhoneCall className="w-3.5 h-3.5" />
+      <span className="text-[12.5px] font-semibold tabular-nums">{m}:{s}</span>
+    </div>
+  );
+}
 
 /* ────────────────────────────────────────────────────────── */
 /* Custom toast: offline call warning                         */
@@ -117,7 +133,7 @@ function saveLocalHistory(userId: string | undefined, logs: LocalCallLog[]) {
 function CallsPane(): React.JSX.Element {
   const navigate = useNavigate();
   const { user } = useAuth();
-  const { initiateCall, session: activeSession, incomingCall, callState } = useCall();
+  const { initiateCall, session: activeSession, incomingCall, callState, duration } = useCall();
 
   const [friends, setFriends] = useState<FriendDto[]>([]);
   const [loading, setLoading] = useState(true);
@@ -287,7 +303,13 @@ function CallsPane(): React.JSX.Element {
   };
 
   return (
-    <div className="h-full flex flex-col bg-[#0B0A08] text-[#EDE5D4] overflow-hidden">
+    <div className="h-full flex flex-col bg-[#0B0A08] text-[#EDE5D4] overflow-hidden relative">
+      {callState === 'active' && (
+        <div className="pointer-events-none absolute top-20 left-1/2 -translate-x-1/2 z-30">
+          <CallTimerPill callState={callState} duration={duration} />
+        </div>
+      )}
+
       {/* Header */}
       <div className="h-16 px-4 sm:px-6 border-b border-white/[0.05] flex items-center gap-3 shrink-0">
         <div className="w-9 h-9 rounded-xl bg-white/[0.04] border border-white/[0.06] flex items-center justify-center text-[#D97706] shrink-0">
