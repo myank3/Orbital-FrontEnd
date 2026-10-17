@@ -1,9 +1,6 @@
 /**
  * @license
  * SPDX-License-Identifier: Apache-2.0
- *
- * AuthButton — 144 Hz pass.
- * Motion is color + a 90ms scale3d press; both are compositor-friendly.
  */
 
 import React, { memo } from 'react';
@@ -21,27 +18,24 @@ export interface AuthButtonProps {
 
 const BUTTON_VARIANTS = {
   primary:
-    'bg-[#B45309] hover:bg-[#92400E] text-white active:bg-[#78350F] ' +
-    'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#B45309]',
+    'bg-gradient-to-b from-amber-300 to-amber-500 text-[#150E03] ' +
+    'shadow-[0_10px_36px_-14px_rgba(200,136,58,0.85),inset_0_1px_0_rgba(255,255,255,0.30)] ' +
+    'hover:-translate-y-0.5 hover:shadow-[0_18px_50px_-14px_rgba(200,136,58,1),inset_0_1px_0_rgba(255,255,255,0.40)] ' +
+    'active:translate-y-0 ' +
+    'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-300/70',
   secondary:
-    'bg-white hover:bg-[#F6F4EF] text-[#0F0D0A] ' +
-    'border-[1.5px] border-[rgba(15,13,10,0.15)] ' +
-    'active:bg-[#EDEAE3] ' +
-    'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#0F0D0A]',
+    'bg-white/[0.04] hover:bg-white/[0.08] text-[#EDE5D4] ' +
+    'border border-white/[0.10] hover:border-white/[0.18] ' +
+    'active:bg-white/[0.12] ' +
+    'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/30',
   ghost:
-    'bg-transparent hover:bg-[rgba(15,13,10,0.06)] text-[#57534E] ' +
-    'active:bg-[rgba(15,13,10,0.10)] ' +
-    'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#57534E]',
+    'bg-transparent hover:bg-white/[0.04] text-[#A8A29E] hover:text-[#EDE5D4] ' +
+    'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/20',
 } as const;
 
 const BUTTON_CSS = `
   .orbital-btn {
-    transition:
-      transform 90ms cubic-bezier(0.2, 0, 0, 1),
-      background-color 120ms linear,
-      border-color 120ms linear,
-      color 120ms linear,
-      opacity 110ms linear;
+    transition: all 300ms cubic-bezier(0.16, 1, 0.3, 1);
     will-change: transform;
   }
   .orbital-btn:active:not(:disabled) {
@@ -51,14 +45,12 @@ const BUTTON_CSS = `
     transform: none;
     will-change: auto;
   }
-
   @keyframes orbital-btn-spin {
     to { transform: rotate(360deg); }
   }
   .orbital-btn-spinner {
     animation: orbital-btn-spin 700ms linear infinite;
   }
-
   @media (prefers-reduced-motion: reduce) {
     .orbital-btn { transition: none !important; }
     .orbital-btn:active:not(:disabled) { transform: none !important; }
@@ -83,16 +75,14 @@ function AuthButton({
       disabled={isDisabled}
       onClick={onClick}
       className={
-        'orbital-btn h-11 w-full rounded-lg px-4 text-sm font-medium ' +
+        'orbital-btn h-11 w-full rounded-xl px-6 py-3.5 text-[13.5px] font-semibold tracking-[-0.01em] ' +
         'inline-flex items-center justify-center gap-2 cursor-pointer ' +
         'disabled:cursor-not-allowed disabled:opacity-50 select-none ' +
         BUTTON_VARIANTS[variant] + ' ' + className
       }
     >
       <style>{BUTTON_CSS}</style>
-      {loading && (
-        <Loader2 className="orbital-btn-spinner h-4 w-4 text-current shrink-0" />
-      )}
+      {loading && <Loader2 className="orbital-btn-spinner h-4 w-4 text-current shrink-0" />}
       <span>{children}</span>
     </button>
   );

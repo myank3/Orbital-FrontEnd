@@ -37,16 +37,11 @@ import SettingsPane from './components/SettingsPane';
 import CallsPane from './components/CallsPane';
 import NotificationsPane from './components/NotificationsPane';
 import OrbitView from './pages/OrbitView';
+import SignalsPage from './pages/SignalsPage'; // <-- Added import
 
 /**
  * Routes on which a `?token=` query param represents a *login* token
  * that should be exchanged for a session via hydrateFromToken().
- *
- * Deliberately excludes:
- *   /reset-password   — owns its own token; the page passes it to
- *                       POST /api/Auth/reset-password.
- *   /forgot-password  — no token involved.
- *   /login, /register — no auto-login from query params.
  */
 const TOKEN_INTERCEPT_ROUTES = [
   '/confirm-email',
@@ -61,15 +56,6 @@ function isTokenInterceptRoute(pathname: string): boolean {
   );
 }
 
-/**
- * Blocks public pages (landing, login, register) when the user is
- * already authenticated. Sends them to the app instead of showing
- * a marketing page or an empty login form.
- *
- * Note: does NOT block /forgot-password, /reset-password, or the
- * email confirmation routes — those need to remain reachable even
- * while logged in (for secondary accounts, resets, etc.).
- */
 function PublicOnlyRoute({ children }: { children: ReactElement }) {
   const { isAuthenticated, loading } = useAuth();
 
@@ -107,24 +93,12 @@ function ProtectedRoute({ children }: { children: ReactElement }) {
   );
 }
 
-/**
- * Catches a `?token=` param on auth-callback routes before routing
- * can strip it. Runs above <Routes> so no <Navigate> or catch-all
- * can drop the token.
- *
- * IMPORTANT: Only runs on TOKEN_INTERCEPT_ROUTES. /reset-password
- * and /forgot-password must NOT hit this — a reset token is not a
- * JWT and would 401 when fed to /api/User/profile, sending the
- * user to /login?error=hydrate_failed.
- */
 function TokenInterceptor() {
   const { hydrateFromToken } = useAuth();
   const navigate = useNavigate();
 
   useEffect(() => {
     const path = window.location.pathname;
-
-    // Only intercept on routes that treat ?token= as a login token.
     if (!isTokenInterceptRoute(path)) return;
 
     const params = new URLSearchParams(window.location.search);
@@ -202,6 +176,10 @@ export default function App() {
               <Route path="friends" element={<FriendsPane />} />
               <Route path="calls" element={<CallsPane />} />
               <Route path="notifications" element={<NotificationsPane />} />
+              
+              {/* Added Signals Route */}
+              <Route path="signals" element={<SignalsPage />} />
+              
               <Route path="settings" element={<SettingsPane />} />
             </Route>
 

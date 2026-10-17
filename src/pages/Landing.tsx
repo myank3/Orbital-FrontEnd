@@ -79,40 +79,57 @@ import {
 /* ═══════════════════════════════════════════════════════════
    IMAGE MANIFEST — HD pass
    ═══════════════════════════════════════════════════════════ */
+// Upgraded resolver: Now accepts direct "http" URLs from ANY website, plus verified IDs.
+const u = (id: string, w: number, q = 90) => {
+  if (id.startsWith("http")) return id;
 
-const u = (id: string, w: number, q = 95) =>
-  `https://images.unsplash.com/photo-${id}?w=${w}&q=${q}&auto=format&fit=crop&fm=jpg`;
+  if (id.startsWith("px:")) {
+    const photoId = id.slice(3);
+    return `https://images.pexels.com/photos/${photoId}/pexels-photo-${photoId}.jpeg?auto=compress&cs=tinysrgb&fit=crop&w=${w}&dpr=2`;
+  }
 
+  return `https://images.unsplash.com/photo-${id}?auto=format&fit=crop&crop=faces,entropy&w=${w}&q=${q}`;
+};
+
+// Portraits — faces only, smiling and attractive.
 const FACE_IDS = {
-  ava:    "1534528741775-53994a69daeb",
-  sienna: "1544005313-94ddf0286df2",
-  lyra:   "1580489944761-15a19d654956",
-  nova:   "1573496359142-b8d87734a5a2",
-  iris:   "1531746020798-e6953c6e8e04",
-  anita:  "1517841905240-472988babdf9",
-  taylor: "1567532939604-b6b5b0db2604",
-  emery:  "1489424731084-a5d8b219a5bb",
-  john:   "1506794778202-cad84cf45f1d",
-  sam:    "1560250097-0b93528c311a",
-  finn:   "1463453091185-61582044d556",
-  rowan:  "1539571696357-5a69c17a67c6",
+  // Women
+  ava:    "1489278353717-f64c6ee8a4d2", // long black hair, smiling close-up
+  sienna: "1494790108377-be9c29b29330", // close-up, smiling
+  lyra:   "1542596594-649edbc13630",    // jolly, peace sign
+  nova:   "1599566219227-2efe0c9b7f5f", // black strap top, smiling
+
+  // Diverse women
+  iris:   "1611695434369-a8f5d76ceb7b", // blue top, smiling
+  anita:  "1580489944761-15a19d654956", // white top, smiling
+  taylor: "1562337404-3044c84ac061",    // smiling woman
+
+  // Men
+  emery:  "px:28847328",  // stylish man in hat
+  john:   "px:36698416",  // smiling, golden-hour light
+  sam:    "px:17368040",  // stylish portrait, cinematic light
+  finn:   "px:8036465",   // young man on a call, balcony
+  rowan:  "px:17767277",  // beanie, smiling, on a call
 } as const;
 
+// Scenes — texting, calling, selfies, friends.
 const SCENE_IDS = {
-  runway:    "1514565131-fce0801e5785",
-  milan:     "1477959858617-67f85cf4f1df",
-  nyfw:      "1449824913935-59a10b8d2000",
-  group1:    "1523580494863-6f3031224c94",
-  manChat:   "1552374196-c4e7ffc6e126",
-  manCall:   "1519085360753-af0119f7cbe7",
-  tokyo:     "1503899036084-c55cdd92da26",
-  paris:     "1499856871958-5b9627545d1a",
-  aurora:    "1483347756197-71ef80e95f73",
-  milkyway:  "1519681393784-d120267933ba",
-  mountains: "1506905925346-21bda4d32df4",
-  ocean:     "1518837695005-2083093ee35b",
-} as const;
+  runway:    "px:12955814",                // young woman texting at a cafe
+  milan:     "px:8323444",                 // smiling young woman on her phone
+  nyfw:      "px:37987727",                // woman with phone, bokeh lights
+  group1:    "1758270704625-cf6f1898853d", // two young women taking a selfie (Sep 2025)
 
+  manChat:   "1702221422565-60f734cd90b1", // man in blue hoodie on a call
+  manCall:   "px:36764755",                // happy man with glasses on a call
+
+  tokyo:     "px:13637962",                // young woman on phone, train station
+  paris:     "px:8743456",                 // woman with phone by cafe window
+  aurora:    "px:17588245",                // woman in fedora texting
+
+  milkyway:  "px:5902271",                 // woman texting on an orange sofa
+  mountains: "px:39219838",                // man texting in a modern room
+  ocean:     "1511988617509-a57c8a288659", // friends laughing together
+} as const;
 function toUrls<T extends Record<string, string>>(
   ids: T,
   w: number,
@@ -1850,7 +1867,6 @@ function OrbitalWorld({
 /* ═══════════════════════════════════════════════════════════
    PHONE MOCKUP
    ═══════════════════════════════════════════════════════════ */
-
 function PhoneMockup({
   children,
   mobile,
@@ -1864,10 +1880,13 @@ function PhoneMockup({
       style={{
         width: "clamp(258px, 24vw, 356px)",
         aspectRatio: "0.4779",
-        transform: "translateZ(0)",
-        contain: "layout paint style",
+        transform: "translate3d(0,0,0)",
+        backfaceVisibility: "hidden",
+        contain: "layout paint",
+        overflowAnchor: "none",
       }}
     >
+      {/* ── SHELL ── */}
       <div
         className="absolute inset-0"
         style={{
@@ -1899,34 +1918,57 @@ function PhoneMockup({
           boxShadow: "inset 0 0 0 1px rgba(255,255,255,0.06)",
         }}
       />
+
+      {/* ── SCREEN ── */}
       <div
         className="absolute overflow-hidden"
         style={{
           inset: "clamp(6px, 0.9vw, 12px)",
           borderRadius: "clamp(34px, 3.4vw, 48px)",
           background: "#08080B",
+          transform: "translate3d(0,0,0)",
+          backfaceVisibility: "hidden",
+          contain: "layout paint",
+          overflowAnchor: "none",
         }}
       >
         {children}
       </div>
+
+      {/* ── ISLAND ── */}
       <div
-        className="absolute left-1/2 z-30 -translate-x-1/2"
+        aria-hidden
+        className="pointer-events-none absolute left-1/2 z-40"
         style={{
           top: "clamp(15px, 1.8vw, 26px)",
           width: "clamp(84px, 8.2vw, 114px)",
           height: "clamp(23px, 2.4vw, 35px)",
           borderRadius: "999px",
           background: "#000",
+          transform: "translate3d(-50%,0,0)",
+          backfaceVisibility: "hidden",
+          isolation: "isolate",
+          contain: "layout paint",
+          boxShadow:
+            "inset 0 1px 1px rgba(255,255,255,0.06), 0 1px 2px rgba(0,0,0,0.5)",
         }}
-      />
-      <div
-        className="absolute left-[calc(50%+24px)] z-40 -translate-x-1/2 rounded-full bg-[#0A0A0E]"
-        style={{
-          top: "clamp(24px, 2.8vw, 40px)",
-          width: "clamp(4px, 0.5vw, 7px)",
-          height: "clamp(4px, 0.5vw, 7px)",
-        }}
-      />
+      >
+        <span
+          className="absolute rounded-full bg-[#0e0e0e]"
+          style={{
+            right: "10px",
+            top: "50%",
+            width: "clamp(4px, 0.5vw, 7px)",
+            height: "clamp(4px, 0.5vw, 7px)",
+            transform: "translateY(-50%)",
+            boxShadow: "inset 0 0 0 0.5px rgba(255,255,255,0.06)",
+            backgroundImage:
+              "linear-gradient(135deg, #1a1a1a 0%, #050505 100%)",
+          }}
+        />
+      </div>
+
+      {/* ── BUTTONS ── */}
       <div
         className="absolute -right-[3px]"
         style={{
@@ -1957,6 +1999,8 @@ function PhoneMockup({
           background: "linear-gradient(180deg, #45454D, #26262C)",
         }}
       />
+
+      {/* ── GLASS HIGHLIGHT ── */}
       <div
         className="pointer-events-none absolute z-20"
         style={{
@@ -1969,6 +2013,8 @@ function PhoneMockup({
             transparent 66%,
             rgba(255,255,255,0.02) 84%,
             rgba(255,255,255,0.05) 100%)`,
+          transform: "translate3d(0,0,0)",
+          backfaceVisibility: "hidden",
         }}
       />
     </div>
@@ -1976,20 +2022,58 @@ function PhoneMockup({
 }
 
 /* ═══════════════════════════════════════════════════════════
-   PHONE UI — one screen, one conversation
+   DYNAMIC ISLAND — standalone (only render if NOT using the one
+   built into PhoneMockup above; otherwise it will double up)
+   ═══════════════════════════════════════════════════════════ */
+
+function DynamicIsland() {
+  return (
+    <div
+      aria-hidden
+      className="pointer-events-none absolute left-1/2 top-2 z-40"
+      style={{
+        transform: "translate3d(-50%,0,0)",
+        backfaceVisibility: "hidden",
+        isolation: "isolate",
+        contain: "layout paint",
+      }}
+    >
+      <div
+        className="relative flex items-center justify-end
+                   h-[26px] w-[92px] rounded-full
+                   bg-black
+                   shadow-[inset_0_1px_1px_rgba(255,255,255,0.06),0_1px_2px_rgba(0,0,0,0.5)]"
+      >
+        <span className="mr-2.5 h-[7px] w-[7px] rounded-full bg-[#0e0e0e] ring-[0.5px] ring-white/[0.06]">
+          <span className="block h-full w-full rounded-full bg-gradient-to-br from-[#1a1a1a] to-[#050505]" />
+        </span>
+      </div>
+    </div>
+  );
+}
+
+/* ═══════════════════════════════════════════════════════════
+   STATUS BAR — isolated layer, no collapse flicker.
    ═══════════════════════════════════════════════════════════ */
 
 function StatusBar() {
+  const now = useNow();
+  const clock = useMemo(() => formatClock(now), [now]);
+
   return (
-    <div className="absolute inset-x-0 top-0 z-30 flex items-center justify-between px-6 pt-2.5 text-[10px] font-semibold tabular-nums tracking-tight text-[#F0E4CC]">
-      <span className="ml-1">9:41</span>
+    <div
+      className="absolute inset-x-0 top-0 z-30 flex items-center justify-between px-6 pt-2.5 text-[10px] font-semibold tabular-nums tracking-tight text-[#F0E4CC]"
+      style={{
+        isolation: "isolate",
+        transform: "translate3d(0,0,0)",
+        backfaceVisibility: "hidden",
+        contain: "layout paint",
+        pointerEvents: "none",
+        overflowAnchor: "none",
+      }}
+    >
+      <span className="ml-1 min-w-[32px]">{clock}</span>
       <div className="flex items-center gap-1.5">
-        <div className="flex items-end gap-[2px]">
-          <span className="block h-1 w-[2px] rounded-sm bg-[#F0E4CC]" />
-          <span className="block h-1.5 w-[2px] rounded-sm bg-[#F0E4CC]" />
-          <span className="block h-2 w-[2px] rounded-sm bg-[#F0E4CC]" />
-          <span className="block h-2.5 w-[2px] rounded-sm bg-[#F0E4CC]/55" />
-        </div>
         <Wifi size={9} className="text-[#F0E4CC]" />
         <span className="text-[8px]">5G</span>
         <div className="flex h-2.5 w-5 items-center rounded-[3px] border border-[#F0E4CC]/60 px-[1px] py-[1px]">
@@ -1999,9 +2083,46 @@ function StatusBar() {
     </div>
   );
 }
+/* ═══════════════════════════════════════════════════════════
+   LIVE CLOCK HELPERS — pinned to Indian Standard Time
+   ═══════════════════════════════════════════════════════════ */
+
+function useNow(intervalMs = 30_000): Date {
+  const [now, setNow] = useState<Date>(() => new Date());
+
+  useEffect(() => {
+    let timer: ReturnType<typeof setTimeout>;
+
+    const schedule = () => {
+      const d = new Date();
+      const msToNextMinute = (60 - d.getSeconds()) * 1000 - d.getMilliseconds();
+      timer = setTimeout(() => {
+        setNow(new Date());
+        schedule();
+      }, Math.min(intervalMs, msToNextMinute));
+    };
+
+    schedule();
+    return () => clearTimeout(timer);
+  }, [intervalMs]);
+
+  return now;
+}
+
+const IST_FORMATTER = new Intl.DateTimeFormat("en-IN", {
+  timeZone: "Asia/Kolkata",
+  hour: "numeric",
+  minute: "2-digit",
+  hour12: true,
+});
+
+function formatClock(d?: Date | null): string {
+  const date = d instanceof Date && !isNaN(d.getTime()) ? d : new Date();
+  return IST_FORMATTER.format(date).replace(/\s?(am|pm)$/i, "").trim();
+}
 
 /* ═══════════════════════════════════════════════════════════
-   CHAT SCRIPT — living, never-ending conversation.
+   CHAT SCRIPT
    ═══════════════════════════════════════════════════════════ */
 
 type ChatFrom = "ava" | "me";
@@ -2009,13 +2130,16 @@ type ChatFrom = "ava" | "me";
 type ChatLine = {
   from: ChatFrom;
   text: string;
-  /** ms the message sits alone before the next one lands */
   hold: number;
-  /** ms "typing…" is shown before this message lands */
   typing: number;
 };
 
-const CHAT_SCRIPT: ChatLine[] = [
+type LiveChatLine = ChatLine & { at?: Date };
+
+/** 🐢 +0.89s per hold: slower pace. */
+const HOLD_DELTA_MS = 890;
+
+const RAW_CHAT_SCRIPT: ChatLine[] = [
   { from: "ava", text: "hey, you land okay?",                                        hold: 1100, typing: 700 },
   { from: "me",  text: "yeah, just got to the hotel",                                hold: 900,  typing: 550 },
   { from: "ava", text: "how was the flight?",                                        hold: 1100, typing: 600 },
@@ -2037,21 +2161,24 @@ const CHAT_SCRIPT: ChatLine[] = [
   { from: "ava", text: "what time should i get in?",                                 hold: 1100, typing: 700 },
   { from: "me",  text: "late. i'll wait up",                                         hold: 1200, typing: 650 },
   { from: "ava", text: "okay 🫶",                                                    hold: 1300, typing: 550 },
-  { from: "me",  text: "any questions?",                               hold: 1100, typing: 700 },
-  { from: "ava", text: "Designed and created by?",                                           hold: 1100, typing: 600 },
-  { from: "me",  text: "by MAYANK ",                             hold: 1800, typing: 650 },
+  { from: "me",  text: "any questions?",                                             hold: 1100, typing: 700 },
+  { from: "ava", text: "Designed and created by?",                                   hold: 1100, typing: 600 },
+  { from: "me",  text: "Designed and created by MAYANK",                             hold: 1800, typing: 650 },
 ];
 
-/** ⚡ how many bubbles stay mounted — older ones scroll off naturally */
+const CHAT_SCRIPT: ChatLine[] = RAW_CHAT_SCRIPT.map((l) => ({
+  ...l,
+  hold: l.hold + HOLD_DELTA_MS,
+}));
+
 const CHAT_VISIBLE = 11;
 
 /* ═══════════════════════════════════════════════════════════
-   CHAT BUBBLE — pure CSS entrance, no JS spring per bubble.
-   Memoized so only new bubbles mount while the loop runs.
+   CHAT BUBBLE
    ═══════════════════════════════════════════════════════════ */
-
-const ChatBubble = memo(function ChatBubble({ line }: { line: ChatLine }) {
+const ChatBubble = memo(function ChatBubble({ line }: { line: LiveChatLine }) {
   const mine = line.from === "me";
+  const stamp = formatClock(line.at);
 
   if (mine) {
     return (
@@ -2061,7 +2188,7 @@ const ChatBubble = memo(function ChatBubble({ line }: { line: ChatLine }) {
             {line.text}
           </div>
           <div className="mt-0.5 flex items-center gap-1 pr-1.5">
-            <span className="text-[8px] tabular-nums text-[#F0E4CC]/45">9:41</span>
+            <span className="text-[8px] tabular-nums text-[#F0E4CC]/45">{stamp}</span>
             <CheckCheck size={10} className="text-amber-300" />
           </div>
         </div>
@@ -2083,13 +2210,12 @@ const ChatBubble = memo(function ChatBubble({ line }: { line: ChatLine }) {
           {line.text}
         </div>
         <div className="mt-0.5 pl-1.5">
-          <span className="text-[8px] tabular-nums text-[#F0E4CC]/45">9:41</span>
+          <span className="text-[8px] tabular-nums text-[#F0E4CC]/45">{stamp}</span>
         </div>
       </div>
     </div>
   );
 });
-
 /* ═══════════════════════════════════════════════════════════
    TYPING INDICATOR — CSS keyframes, sits on the sender's side.
    ═══════════════════════════════════════════════════════════ */
@@ -2245,9 +2371,9 @@ function PhoneChat() {
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-1">
             <p className="truncate text-[12.5px] font-semibold text-[#F0E4CC]">
-              Ava Chen
+           Élise Laurent
             </p>
-            <Crown size={10} className="text-amber-300" />
+            {/* <Crown size={10} className="text-amber-300" /> */}
           </div>
           <div className="mt-[1px] flex items-center gap-1.5">
             <span className="text-[9px] text-emerald-300">
@@ -2268,12 +2394,12 @@ function PhoneChat() {
         >
           <Phone size={12} className="text-[#F0E4CC]/85" />
         </button>
-        <button
+        {/* <button
           aria-label="More"
           className="flex h-8 w-8 items-center justify-center rounded-full bg-white/[0.08]"
         >
           <MoreVertical size={13} className="text-[#F0E4CC]/85" />
-        </button>
+        </button> */}
       </div>
 
       <div className="mx-4 h-px bg-white/[0.06]" />
@@ -2704,7 +2830,7 @@ function Filmstrip() {
           <img
             src={src}
             alt=""
-            className="h-full w-full object-cover object-center"
+            className="h-full w-full object-cover object-center brightness-80"
             loading="lazy"
             decoding="async"
           />
@@ -2722,7 +2848,7 @@ function BeatSignal() {
   return (
     <Section id="beat-1" align="right">
       <Reveal>
-        <Eyebrow>Beat 01 · Signal</Eyebrow>
+        <Eyebrow> Signal</Eyebrow>
       </Reveal>
       <Reveal delay={0.06}>
         <h2 className={H2}>
@@ -2732,14 +2858,14 @@ function BeatSignal() {
             already sealed.
           </span>
         </h2>
-      </Reveal>
       <Reveal delay={0.12}>
-        <p className={BODY}>
-          Encrypted on your device before it touches the network — a cipher
-          only your circle can open.
-        </p>
-      </Reveal>
-      <Reveal delay={0.18}>
+  <p
+    className={`${BODY} !text-white !opacity-100 mx-auto max-w-xl rounded-2xl bg-black/60 px-6 py-4 backdrop-blur-md ring-1 ring-white/25 shadow-[0_0_40px_rgba(255,255,255,0.18)] [text-shadow:0_2px_12px_rgba(0,0,0,0.8)]`}
+  >
+    Encrypted on your device before it touches the network — a cipher
+    only your circle can open.
+  </p>
+</Reveal>
         <div className="mt-9 grid grid-cols-3 gap-3">
           {[
             { label: "On device", value: "AES-256" },
@@ -2834,7 +2960,7 @@ function BeatVault() {
                   <img
                     src={SCENE.nyfw}
                     alt=""
-                    className="h-[150px] w-full object-cover object-center"
+                    className="h-[150px] w-full object-cover object-center brightness-80"
                     loading="lazy"
                     decoding="async"
                   />
@@ -2857,7 +2983,7 @@ function BeatVault() {
 
         <div>
           <Reveal>
-            <Eyebrow>Beat 02 · Vault</Eyebrow>
+            <Eyebrow> Vault</Eyebrow>
           </Reveal>
           <Reveal delay={0.06}>
             <h2 className={H2}>
@@ -2905,7 +3031,7 @@ function BeatOrbit() {
   return (
     <Section id="beat-3" align="right">
       <Reveal>
-        <Eyebrow>Beat 03 · Circle</Eyebrow>
+        <Eyebrow> Circle</Eyebrow>
       </Reveal>
       <Reveal delay={0.06}>
         <h2 className={H2}>
@@ -2964,7 +3090,7 @@ function BeatResonance() {
       <div className="relative z-10 grid w-full max-w-[1440px] items-center gap-14 lg:grid-cols-2 lg:gap-20">
         <div>
           <Reveal>
-            <Eyebrow>Beat 04 · Resonance</Eyebrow>
+            <Eyebrow> Resonance</Eyebrow>
           </Reveal>
           <Reveal delay={0.06}>
             <h2 className={H2}>
@@ -3009,7 +3135,7 @@ function BeatResonance() {
               <img
                 src={SCENE.manCall}
                 alt=""
-                className="h-full w-full object-cover object-center opacity-70"
+                className="h-full w-full object-cover object-center opacity-70 brightness-80"
                 loading="lazy"
                 decoding="async"
               />
@@ -3085,7 +3211,7 @@ function BeatArrival() {
 
       <Reveal delay={0.06}>
         <div className="mt-8">
-          <Eyebrow>Beat 05 · Arrival</Eyebrow>
+          <Eyebrow> Arrival</Eyebrow>
         </div>
       </Reveal>
 
@@ -3397,14 +3523,14 @@ export function Landing() {
             dpr={maxDpr}
             camera={{ position: [0, 0.05, 7.2], fov: FOV, near: 0.1, far: 260 }}
             gl={{
-              antialias: tier === "low",
-              alpha: false,
-              powerPreference: mobile ? "default" : "high-performance",
-              stencil: false,
-              depth: true,
-              desynchronized: !mobile,
-              preserveDrawingBuffer: false,
-            }}
+  antialias: tier === "low",
+  alpha: false,
+  powerPreference: mobile ? "default" : "high-performance",
+  stencil: false,
+  depth: true,
+  desynchronized: !mobile,
+  preserveDrawingBuffer: false,
+} as any}
             onCreated={({ gl }) => {
               gl.setClearColor(DEEP, 1);
               gl.toneMapping = THREE.ACESFilmicToneMapping;
