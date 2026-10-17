@@ -59,15 +59,6 @@ const SHELL_CSS = `
   .drawer-in {
     animation: drawer-in 200ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
   }
-
-  /* 🟢 Ultra-fast left-to-right slide animation */
-  @keyframes view-slide-in {
-    from { opacity: 0; transform: translate3d(-30px, 0, 0); }
-    to   { opacity: 1; transform: translate3d(0, 0, 0); }
-  }
-  .view-slide-in {
-    animation: view-slide-in 200ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
-  }
 `;
 
 function AppShell(): React.JSX.Element {
@@ -83,7 +74,7 @@ function AppShell(): React.JSX.Element {
   // 🟢 Added Signal Page check
   const isSignalsPage = location.pathname.startsWith('/app/signals');
 
-  // 🟢 Combined check to hide the shell
+  // 🟢 Combined check to hide the shell (Mobile only)
   const hideShell = isActiveChat || isSignalsPage;
 
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
@@ -222,158 +213,157 @@ function AppShell(): React.JSX.Element {
       )}
 
       {/* ─── DESKTOP RAIL ─── */}
-      {!hideShell && (
-        <div
-          className="hidden md:block relative shrink-0 w-[68px]"
-          onMouseEnter={() => setRailHovered(true)}
-          onMouseLeave={() => setRailHovered(false)}
+      {/* 🟢 FIX: Use md:flex to force display on desktop, even if hideShell is true */}
+      <div
+        className={`${hideShell ? 'hidden' : 'hidden md:block'} md:flex relative shrink-0 w-[68px]`}
+        onMouseEnter={() => setRailHovered(true)}
+        onMouseLeave={() => setRailHovered(false)}
+      >
+        <aside
+          style={{ width: railWidth, transition: 'width 250ms cubic-bezier(0.16, 1, 0.3, 1)' }}
+          className="absolute inset-y-0 left-0 flex flex-col overflow-hidden z-30
+                     bg-[#0F0D0A]/60 backdrop-blur-[40px]
+                     border-r border-white/[0.08]
+                     shadow-[10px_0_50px_-15px_rgba(0,0,0,0.9),inset_-1px_0_0_rgba(255,255,255,0.02)]"
         >
-          <aside
-            style={{ width: railWidth, transition: 'width 250ms cubic-bezier(0.16, 1, 0.3, 1)' }}
-            className="absolute inset-y-0 left-0 flex flex-col overflow-hidden z-30
-                       bg-[#0F0D0A]/60 backdrop-blur-[40px]
-                       border-r border-white/[0.08]
-                       shadow-[10px_0_50px_-15px_rgba(0,0,0,0.9),inset_-1px_0_0_rgba(255,255,255,0.02)]"
-          >
-            {/* Logo */}
-            <div className="h-16 flex items-center px-4 shrink-0 border-b border-white/[0.06]">
-              <Link
-                to="/app/orbit"
-                className="flex items-baseline gap-2 select-none whitespace-nowrap group"
+          {/* Logo */}
+          <div className="h-16 flex items-center px-4 shrink-0 border-b border-white/[0.06]">
+            <Link
+              to="/app/orbit"
+              className="flex items-baseline gap-2 select-none whitespace-nowrap group"
+            >
+              <span
+                className="text-[22px] leading-none text-[#EDE5D4] tracking-tight drop-shadow-[0_0_15px_rgba(237,229,212,0.15)] group-hover:drop-shadow-[0_0_20px_rgba(237,229,212,0.3)] transition-all duration-500"
+                style={{ fontFamily: '"Instrument Serif", Georgia, serif' }}
               >
-                <span
-                  className="text-[22px] leading-none text-[#EDE5D4] tracking-tight drop-shadow-[0_0_15px_rgba(237,229,212,0.15)] group-hover:drop-shadow-[0_0_20px_rgba(237,229,212,0.3)] transition-all duration-500"
-                  style={{ fontFamily: '"Instrument Serif", Georgia, serif' }}
-                >
-                  Orbital
-                </span>
-                <span
-                  aria-hidden
-                  className="w-1.5 h-1.5 rounded-full bg-[#D97706] inline-block translate-y-[-2px] shadow-[0_0_12px_rgba(217,119,6,0.8)] group-hover:scale-125 transition-transform duration-500"
+                Orbital
+              </span>
+              <span
+                aria-hidden
+                className="w-1.5 h-1.5 rounded-full bg-[#D97706] inline-block translate-y-[-2px] shadow-[0_0_12px_rgba(217,119,6,0.8)] group-hover:scale-125 transition-transform duration-500"
+              />
+            </Link>
+          </div>
+
+          {/* Primary + activity nav (Compact) */}
+          <nav className="flex-1 py-4 px-2 overflow-y-auto overflow-x-hidden custom-scrollbar">
+            <div className="space-y-0.5"> 
+              {primaryNav.map((item) => (
+                <RailItem
+                  key={item.to}
+                  item={item}
+                  expanded={railHovered}
+                  onNavigate={() => setMobileMenuOpen(false)}
                 />
-              </Link>
+              ))}
             </div>
 
-            {/* Primary + activity nav (Compact) */}
-            <nav className="flex-1 py-4 px-2 overflow-y-auto overflow-x-hidden custom-scrollbar">
-              <div className="space-y-0.5"> 
-                {primaryNav.map((item) => (
-                  <RailItem
-                    key={item.to}
-                    item={item}
-                    expanded={railHovered}
-                    onNavigate={() => setMobileMenuOpen(false)}
+            <div className="my-3 mx-2 h-px bg-gradient-to-r from-transparent via-white/[0.08] to-transparent" />
+
+            <div className="space-y-0.5">
+              {activityNav.map((item) => (
+                <RailItem
+                  key={item.to}
+                  item={item}
+                  expanded={railHovered}
+                  onNavigate={() => setMobileMenuOpen(false)}
+                />
+              ))}
+            </div>
+          </nav>
+
+          {/* Bottom: User Profile & Menu */}
+          <div className="py-3 px-2 border-t border-white/[0.06]">
+            <div className="relative mt-1">
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setUserMenuOpen((v) => !v);
+                }}
+                className={`w-full flex items-center gap-3 rounded-xl transition-all duration-300 px-2 py-2 ${
+                  userMenuOpen ? 'bg-white/[0.08] ring-1 ring-white/[0.1]' : 'hover:bg-white/[0.04]'
+                }`}
+                title={user?.displayName || 'Profile'}
+              >
+                <span className="w-[52px] shrink-0 flex items-center justify-center">
+                  <Avatar
+                    name={user?.displayName || 'User'}
+                    src={user?.avatarUrl}
+                    size="sm"
+                    isOnline={true}
                   />
-                ))}
-              </div>
-
-              <div className="my-3 mx-2 h-px bg-gradient-to-r from-transparent via-white/[0.08] to-transparent" />
-
-              <div className="space-y-0.5">
-                {activityNav.map((item) => (
-                  <RailItem
-                    key={item.to}
-                    item={item}
-                    expanded={railHovered}
-                    onNavigate={() => setMobileMenuOpen(false)}
-                  />
-                ))}
-              </div>
-            </nav>
-
-            {/* Bottom: User Profile & Menu */}
-            <div className="py-3 px-2 border-t border-white/[0.06]">
-              <div className="relative mt-1">
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setUserMenuOpen((v) => !v);
-                  }}
-                  className={`w-full flex items-center gap-3 rounded-xl transition-all duration-300 px-2 py-2 ${
-                    userMenuOpen ? 'bg-white/[0.08] ring-1 ring-white/[0.1]' : 'hover:bg-white/[0.04]'
-                  }`}
-                  title={user?.displayName || 'Profile'}
-                >
-                  <span className="w-[52px] shrink-0 flex items-center justify-center">
-                    <Avatar
-                      name={user?.displayName || 'User'}
-                      src={user?.avatarUrl}
-                      size="sm"
-                      isOnline={true}
-                    />
-                  </span>
-                  {railHovered && (
-                    <div className="min-w-0 flex-1 text-left whitespace-nowrap">
-                      <p className="text-[13px] font-medium text-[#EDE5D4] truncate leading-tight">
-                        {user?.displayName || 'Active User'}
-                      </p>
-                      <p className="text-[11px] text-[#6B6259] truncate mt-0.5">
-                        @{user?.userHandle || 'guest'}
-                      </p>
-                    </div>
-                  )}
-                </button>
-
-                {/* Desktop Dropdown Menu */}
-                {userMenuOpen && (
-                  <div
-                    className="absolute bottom-full mb-3 left-0 right-0 min-w-[220px] rounded-2xl bg-[#131110]/95 backdrop-blur-3xl border border-white/[0.1] shadow-[0_20px_60px_-12px_rgba(0,0,0,0.95),inset_0_1px_0_rgba(255,255,255,0.05)] overflow-hidden z-50 origin-bottom-left transition-all duration-200 opacity-100 translate-y-0 scale-100"
-                    onClick={(e) => e.stopPropagation()}
-                  >
-                    <div className="px-4 py-4 border-b border-white/[0.06] bg-gradient-to-b from-white/[0.02] to-transparent">
-                      <div className="flex items-center gap-3">
-                        <Avatar
-                          name={user?.displayName || 'User'}
-                          src={user?.avatarUrl}
-                          size="sm"
-                        />
-                        <div className="min-w-0">
-                          <p className="text-[13px] font-medium text-[#EDE5D4] truncate">
-                            {user?.displayName || 'Active User'}
-                          </p>
-                          <p className="text-[11px] text-[#6B6259] truncate mt-0.5">
-                            @{user?.userHandle || 'guest'}
-                          </p>
-                        </div>
-                      </div>
-                    </div>
-                    
-                    <div className="p-1.5">
-                      <Link
-                        to="/app/settings"
-                        onClick={() => setUserMenuOpen(false)}
-                        className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-[13px] font-medium text-[#A8A29E] hover:text-[#EDE5D4] hover:bg-white/[0.06] transition-colors"
-                      >
-                        <Settings className="w-4 h-4" />
-                        <span>Settings</span>
-                      </Link>
-                      
-                      <Link
-                        to="/app/orbit"
-                        onClick={() => setUserMenuOpen(false)}
-                        className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-[13px] font-medium text-[#A8A29E] hover:text-[#EDE5D4] hover:bg-white/[0.06] transition-colors"
-                      >
-                        <Orbit className="w-4 h-4" />
-                        <span>Your Orbit</span>
-                      </Link>
-                    </div>
-
-                    <div className="p-1.5 border-t border-white/[0.06]">
-                      <button
-                        onClick={() => void handleSignOut()}
-                        className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-[13px] font-medium text-[#A8A29E] hover:text-[#F87171] hover:bg-[#B91C1C]/[0.1] transition-colors"
-                      >
-                        <LogOut className="w-4 h-4" />
-                        <span>Sign out</span>
-                      </button>
-                    </div>
+                </span>
+                {railHovered && (
+                  <div className="min-w-0 flex-1 text-left whitespace-nowrap">
+                    <p className="text-[13px] font-medium text-[#EDE5D4] truncate leading-tight">
+                      {user?.displayName || 'Active User'}
+                    </p>
+                    <p className="text-[11px] text-[#6B6259] truncate mt-0.5">
+                      @{user?.userHandle || 'guest'}
+                    </p>
                   </div>
                 )}
-              </div>
+              </button>
+
+              {/* Desktop Dropdown Menu */}
+              {userMenuOpen && (
+                <div
+                  className="absolute bottom-full mb-3 left-0 right-0 min-w-[220px] rounded-2xl bg-[#131110]/95 backdrop-blur-3xl border border-white/[0.1] shadow-[0_20px_60px_-12px_rgba(0,0,0,0.95),inset_0_1px_0_rgba(255,255,255,0.05)] overflow-hidden z-50 origin-bottom-left transition-all duration-200 opacity-100 translate-y-0 scale-100"
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <div className="px-4 py-4 border-b border-white/[0.06] bg-gradient-to-b from-white/[0.02] to-transparent">
+                    <div className="flex items-center gap-3">
+                      <Avatar
+                        name={user?.displayName || 'User'}
+                        src={user?.avatarUrl}
+                        size="sm"
+                      />
+                      <div className="min-w-0">
+                        <p className="text-[13px] font-medium text-[#EDE5D4] truncate">
+                          {user?.displayName || 'Active User'}
+                        </p>
+                        <p className="text-[11px] text-[#6B6259] truncate mt-0.5">
+                          @{user?.userHandle || 'guest'}
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                  
+                  <div className="p-1.5">
+                    <Link
+                      to="/app/settings"
+                      onClick={() => setUserMenuOpen(false)}
+                      className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-[13px] font-medium text-[#A8A29E] hover:text-[#EDE5D4] hover:bg-white/[0.06] transition-colors"
+                    >
+                      <Settings className="w-4 h-4" />
+                      <span>Settings</span>
+                    </Link>
+                    
+                    <Link
+                      to="/app/orbit"
+                      onClick={() => setUserMenuOpen(false)}
+                      className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-[13px] font-medium text-[#A8A29E] hover:text-[#EDE5D4] hover:bg-white/[0.06] transition-colors"
+                    >
+                      <Orbit className="w-4 h-4" />
+                      <span>Your Orbit</span>
+                    </Link>
+                  </div>
+
+                  <div className="p-1.5 border-t border-white/[0.06]">
+                    <button
+                      onClick={() => void handleSignOut()}
+                      className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-[13px] font-medium text-[#A8A29E] hover:text-[#F87171] hover:bg-[#B91C1C]/[0.1] transition-colors"
+                    >
+                      <LogOut className="w-4 h-4" />
+                      <span>Sign out</span>
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
-          </aside>
-        </div>
-      )}
+          </div>
+        </aside>
+      </div>
 
       {/* ─── MAIN COLUMN ───────────────────────────────────── */}
       <div className="flex-1 flex flex-col h-screen overflow-hidden min-w-0 relative">
@@ -433,11 +423,9 @@ function AppShell(): React.JSX.Element {
           </div>
         )}
 
-        {/* Main Content Area */}
+        {/* Main Content Area (🟢 No artificial slide animation here anymore) */}
         <main className={`flex-1 overflow-y-auto bg-[#0B0A08] relative custom-scrollbar ${!hideShell ? 'pb-16 md:pb-0' : ''}`}>
-          <div key={location.pathname} className="view-slide-in w-full h-full">
-            <Outlet />
-          </div>
+          <Outlet />
         </main>
 
         {/* ─── MOBILE BOTTOM BAR ─── */}
