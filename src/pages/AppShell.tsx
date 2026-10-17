@@ -80,6 +80,12 @@ function AppShell(): React.JSX.Element {
     (location.pathname.startsWith('/app/dm/') && location.pathname !== '/app/dm') ||
     (location.pathname.startsWith('/app/groups/') && location.pathname !== '/app/groups');
 
+  // 🟢 Added Signal Page check
+  const isSignalsPage = location.pathname.startsWith('/app/signals');
+
+  // 🟢 Combined check to hide the shell
+  const hideShell = isActiveChat || isSignalsPage;
+
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [railHovered, setRailHovered] = useState(false);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
@@ -216,7 +222,7 @@ function AppShell(): React.JSX.Element {
       )}
 
       {/* ─── DESKTOP RAIL ─── */}
-      {!isActiveChat && (
+      {!hideShell && (
         <div
           className="hidden md:block relative shrink-0 w-[68px]"
           onMouseEnter={() => setRailHovered(true)}
@@ -372,7 +378,7 @@ function AppShell(): React.JSX.Element {
       {/* ─── MAIN COLUMN ───────────────────────────────────── */}
       <div className="flex-1 flex flex-col h-screen overflow-hidden min-w-0 relative">
         {/* Mobile Header */}
-        {!isActiveChat && (
+        {!hideShell && (
           <header className="md:hidden h-14 bg-[#0F0D0A]/80 backdrop-blur-3xl border-b border-white/[0.06] px-4 flex items-center justify-between shrink-0">
             <button
               onClick={() => setMobileMenuOpen(true)}
@@ -428,14 +434,14 @@ function AppShell(): React.JSX.Element {
         )}
 
         {/* Main Content Area */}
-        <main className={`flex-1 overflow-y-auto bg-[#0B0A08] relative custom-scrollbar ${!isActiveChat ? 'pb-16 md:pb-0' : ''}`}>
+        <main className={`flex-1 overflow-y-auto bg-[#0B0A08] relative custom-scrollbar ${!hideShell ? 'pb-16 md:pb-0' : ''}`}>
           <div key={location.pathname} className="view-slide-in w-full h-full">
             <Outlet />
           </div>
         </main>
 
         {/* ─── MOBILE BOTTOM BAR ─── */}
-        {!isActiveChat && (
+        {!hideShell && (
           <nav className="md:hidden fixed bottom-0 left-0 right-0 h-16 bg-[#0F0D0A]/90 backdrop-blur-3xl border-t border-white/[0.06] z-40 flex items-center justify-around px-2 pb-[env(safe-area-inset-bottom)]">
             {primaryNav.slice(0, 3).map((item) => (
                <NavLink
