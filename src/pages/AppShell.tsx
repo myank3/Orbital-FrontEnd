@@ -60,13 +60,13 @@ const SHELL_CSS = `
     animation: drawer-in 200ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
   }
 
-  /* 🟢 Ultra-fast slide animation for the main content area */
+  /* 🟢 Ultra-fast left-to-right slide animation */
   @keyframes view-slide-in {
-    from { opacity: 0; transform: translate3d(30px, 0, 0); }
+    from { opacity: 0; transform: translate3d(-30px, 0, 0); }
     to   { opacity: 1; transform: translate3d(0, 0, 0); }
   }
   .view-slide-in {
-    animation: view-slide-in 300ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
+    animation: view-slide-in 200ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
   }
 `;
 
@@ -429,7 +429,6 @@ function AppShell(): React.JSX.Element {
 
         {/* Main Content Area */}
         <main className={`flex-1 overflow-y-auto bg-[#0B0A08] relative custom-scrollbar ${!isActiveChat ? 'pb-16 md:pb-0' : ''}`}>
-          {/* 🟢 Add view-slide-in class here, keyed by pathname for re-triggering animation */}
           <div key={location.pathname} className="view-slide-in w-full h-full">
             <Outlet />
           </div>

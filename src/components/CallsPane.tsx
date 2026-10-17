@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Phone,
@@ -12,6 +12,9 @@ import {
   Loader2,
   PhoneCall,
   UserPlus,
+  Clock,
+  ArrowDownLeft,
+  ArrowUpRight,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Avatar } from './Avatar';
@@ -19,6 +22,46 @@ import { apiService, extractErrorMessage } from '../services/api';
 import { FriendDto } from '../types/api';
 import { presenceStore } from '../services/presenceStore';
 import { useCall } from '../context/CallContext';
+import { useAuth } from '../context/AuthContext';
+
+/* ────────────────────────────────────────────────────────── */
+/* Local Call History Storage (Cookie/LS based)               */
+/* ────────────────────────────────────────────────────────── */
+
+type LocalCallLog = {
+  id: string;
+  peerId: string;
+  peerName: string;
+  peerAvatar?: string | null;
+  type: 'audio' | 'video';
+  direction: 'outgoing' | 'incoming';
+  status: 'answered' | 'missed';
+  durationSec: number;
+  timestamp: number;
+};
+
+function getHistoryKey(userId?: string) {
+  return `orbital.localCallHistory.${userId ?? 'anon'}`;
+}
+
+function loadLocalHistory(userId?: string): LocalCallLog[] {
+  if (typeof window === 'undefined') return [];
+  try {
+    const raw = localStorage.getItem(getHistoryKey(userId));
+    return raw ? JSON.parse(raw) : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveLocalHistory(userId: string | undefined, logs: LocalCallLog[]) {
+  if (typeof window === 'undefined') return;
+  try {
+    localStorage.setItem(getHistoryKey(userId), JSON.stringify(logs.slice(0, 50))); // keep last 50
+  } catch {
+    /* quota */
+  }
+}
 
 /* ────────────────────────────────────────────────────────── */
 /* Calls pane                                                 */
@@ -26,12 +69,26 @@ import { useCall } from '../context/CallContext';
 
 function CallsPane(): React.JSX.Element {
   const navigate = useNavigate();
-  const { initiateCall, session: activeSession, incomingCall } = useCall();
+  const { user } = useAuth();
+  const { initiateCall, session: activeSession, incomingCall, callState } = useCall();
 
   const [friends, setFriends] = useState<FriendDto[]>([]);
   const [loading, setLoading] = useState(true);
   const [query, setQuery] = useState('');
   const [busyPeerId, setBusyPeerId] = useState<string | null>(null);
+  
+  // Local call history state
+  const [history, setHistory] = useState<LocalCallLog[]>(() => loadLocalHistory(user?.id));
+
+  // Track the active call to log it when it ends
+  const pendingCallRef = useRef<{
+    peerId: string;
+    peerName: string;
+    peerAvatar?: string | null;
+    type: 'audio' | 'video';
+    direction: 'outgoing' | 'incoming';
+    startedAt: number;
+  } | null>(null);
 
   // Live presence
   const [, setPresenceTick] = useState(0);
@@ -39,6 +96,11 @@ function CallsPane(): React.JSX.Element {
     const unsub = presenceStore.subscribe(() => setPresenceTick((v) => v + 1));
     return () => unsub();
   }, []);
+
+  // Sync history when user changes
+  useEffect(() => {
+    setHistory(loadLocalHistory(user?.id));
+  }, [user?.id]);
 
   // Load friends
   useEffect(() => {
@@ -62,6 +124,56 @@ function CallsPane(): React.JSX.Element {
     };
   }, []);
 
+  // Watch call state to start/end logging
+  useEffect(() => {
+    const isInCall = Boolean(activeSession || incomingCall || callState !== 'idle');
+
+    if (isInCall && !pendingCallRef.current) {
+      // Call started
+      const peerId = activeSession?.peerId || incomingCall?.initiatorId;
+      const isOutgoing = Boolean(activeSession) || callState === 'outgoing';
+      
+      if (peerId) {
+        const friend = friends.find((f) => f.userId === peerId);
+        pendingCallRef.current = {
+          peerId,
+          peerName: friend?.displayName || 'Unknown',
+          peerAvatar: friend?.avatarUrl,
+          type: activeSession?.callType === 1 ? 'video' : 'audio',
+          direction: isOutgoing ? 'outgoing' : 'incoming',
+          startedAt: Date.now(),
+        };
+      }
+    } else if (!isInCall && pendingCallRef.current) {
+      // Call ended
+      const pending = pendingCallRef.current;
+      pendingCallRef.current = null;
+
+      // Only log if we actually connected (assume > 1 second is a real answer)
+      const durationSec = Math.max(0, Math.round((Date.now() - pending.startedAt) / 1000));
+      
+      if (durationSec > 1) {
+        const newLog: LocalCallLog = {
+          id: `${Date.now()}-${Math.random()}`,
+          peerId: pending.peerId,
+          peerName: pending.peerName,
+          peerAvatar: pending.peerAvatar,
+          type: pending.type,
+          direction: pending.direction,
+          status: 'answered',
+          durationSec,
+          timestamp: Date.now(),
+        };
+
+        setHistory((prev) => {
+          const updated = [newLog, ...prev];
+          saveLocalHistory(user?.id, updated);
+          return updated;
+        });
+      }
+    }
+  }, [activeSession, incomingCall, callState, friends, user?.id]);
+
   const callBusy = Boolean(activeSession) || Boolean(incomingCall);
 
   const filteredFriends = useMemo(() => {
@@ -84,9 +196,28 @@ function CallsPane(): React.JSX.Element {
       await initiateCall(peerId, callType);
     } catch (err) {
       toast.error(extractErrorMessage(err, 'Could not start call.'));
+      // Clear the pending ref if initiation fails immediately
+      pendingCallRef.current = null;
     } finally {
       setBusyPeerId(null);
     }
+  };
+
+  // Format duration (e.g. 1:24)
+  const formatDur = (sec: number) => {
+    const m = Math.floor(sec / 60);
+    const s = sec % 60;
+    return `${m}:${s.toString().padStart(2, '0')}`;
+  };
+
+  // Format time for history list
+  const formatWhen = (ts: number) => {
+    const d = new Date(ts);
+    const today = new Date();
+    if (d.toDateString() === today.toDateString()) {
+      return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    }
+    return d.toLocaleDateString([], { month: 'short', day: 'numeric' });
   };
 
   return (
@@ -106,132 +237,174 @@ function CallsPane(): React.JSX.Element {
         </div>
       </div>
 
-      {/* Search */}
-      {friends.length > 0 && (
-        <div className="px-4 sm:px-6 py-3 border-b border-white/[0.05] shrink-0">
-          <div className="max-w-md flex items-center gap-2 px-2.5 py-1.5 rounded-lg bg-[#0F0D0A] border border-white/[0.08] focus-within:border-[#D97706]/50 transition-colors">
-            <Search className="w-3.5 h-3.5 text-[#6B6259] shrink-0" />
-            <input
-              type="text"
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder="Search friends by @handle or name..."
-              className="flex-1 bg-transparent text-[12.5px] text-[#EDE5D4] placeholder-[#6B6259] outline-none"
-            />
-          </div>
-        </div>
-      )}
-
       {/* Body */}
-      <div className="flex-1 overflow-y-auto px-4 sm:px-6 py-4">
-        {loading ? (
-          <div className="h-40 flex items-center justify-center text-[12.5px] text-[#6B6259]">
-            <Loader2 className="w-4 h-4 animate-spin mr-2 text-[#D97706]" />
-            Loading friends…
-          </div>
-        ) : friends.length === 0 ? (
-          <div className="max-w-md mx-auto mt-12 text-center">
-            <div className="w-16 h-16 rounded-2xl bg-white/[0.03] border border-white/[0.06] flex items-center justify-center mx-auto">
-              <UserPlus className="w-7 h-7 text-[#6B6259]" />
-            </div>
-            <p className="text-[14.5px] text-[#EDE5D4] font-semibold tracking-tight mt-4">
-              No friends to call
-            </p>
-            <p className="text-[12.5px] text-[#6B6259] mt-1 leading-relaxed max-w-sm mx-auto">
-              Add friends first, then come back here to call them.
-            </p>
-            <button
-              onClick={() => navigate('/app/friends')}
-              className="mt-5 h-9 px-4 rounded-xl bg-[#D97706] hover:bg-[#B45309] text-[#0F0D0A] text-[12.5px] font-semibold inline-flex items-center gap-1.5 transition-colors"
-            >
-              <UserPlus className="w-4 h-4" />
-              <span>Add friends</span>
-            </button>
-          </div>
-        ) : filteredFriends.length === 0 ? (
-          <div className="max-w-md mx-auto mt-12 text-center">
-            <div className="w-16 h-16 rounded-2xl bg-white/[0.03] border border-white/[0.06] flex items-center justify-center mx-auto">
-              <Search className="w-7 h-7 text-[#6B6259]" />
-            </div>
-            <p className="text-[14.5px] text-[#EDE5D4] font-semibold tracking-tight mt-4">
-              No matches
-            </p>
-            <p className="text-[12.5px] text-[#6B6259] mt-1">
-              No friends matched &ldquo;{query}&rdquo;.
-            </p>
-          </div>
-        ) : (
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
-            {filteredFriends.map((friend) => {
-              const isOnline = presenceStore.isOnline(friend.userId);
-              const isBusy = busyPeerId === friend.userId;
-
-              return (
-                <div
-                  key={friend.friendshipId}
-                  className="bg-[#1A1816] border border-white/[0.06] rounded-2xl p-4 flex items-center gap-3 hover:border-white/[0.12] transition-colors"
-                >
-                  <Avatar
-                    name={friend.displayName}
-                    src={friend.avatarUrl}
-                    size="md"
-                    isOnline={isOnline}
-                  />
-
+      <div className="flex-1 overflow-y-auto">
+        
+        {/* Call History Section */}
+        {history.length > 0 && (
+          <div className="px-4 sm:px-6 py-4 border-b border-white/[0.05]">
+            <h3 className="text-[11px] uppercase tracking-wider font-semibold text-[#6B6259] mb-3 flex items-center gap-1.5">
+              <Clock className="w-3 h-3" /> Recent Calls
+            </h3>
+            <div className="space-y-1">
+              {history.slice(0, 10).map((log) => (
+                <div key={log.id} className="flex items-center gap-3 py-2 px-2 -mx-2 rounded-xl hover:bg-white/[0.04] transition-colors">
+                  <Avatar name={log.peerName} src={log.peerAvatar} size="sm" />
                   <div className="min-w-0 flex-1">
-                    <div className="flex items-center gap-2">
-                      <p className="text-[13.5px] font-semibold text-[#EDE5D4] truncate">
-                        {friend.displayName}
-                      </p>
-                      <span
-                        className={`inline-block w-1.5 h-1.5 rounded-full shrink-0 ${
-                          isOnline ? 'bg-[#22C55E]' : 'bg-[#6B6259]'
-                        }`}
-                        title={isOnline ? 'Online' : 'Offline'}
-                      />
+                    <p className="text-[13px] font-medium text-[#EDE5D4] truncate">{log.peerName}</p>
+                    <div className="flex items-center gap-1.5 text-[11px] text-[#6B6259]">
+                      {log.direction === 'outgoing' ? (
+                        <ArrowUpRight className="w-3 h-3 text-[#D97706]" />
+                      ) : (
+                        <ArrowDownLeft className="w-3 h-3 text-[#22C55E]" />
+                      )}
+                      <span className={log.status === 'missed' ? 'text-[#F87171]' : ''}>
+                        {log.status === 'missed' ? 'Missed' : formatDur(log.durationSec)}
+                      </span>
+                      <span>·</span>
+                      <span>{formatWhen(log.timestamp)}</span>
                     </div>
-                    <p className="text-[11.5px] text-[#6B6259] truncate mt-0.5">
-                      @{friend.handle}
-                    </p>
                   </div>
-
-                  <div className="flex items-center gap-1.5 shrink-0">
-                    <button
-                      onClick={() => void handleCall(friend.userId, 0)}
-                      disabled={callBusy || isBusy}
-                      className="h-8 px-3 rounded-lg bg-white/[0.04] hover:bg-white/[0.08] disabled:opacity-40 disabled:cursor-not-allowed border border-white/[0.06] text-[12px] font-medium text-[#EDE5D4] inline-flex items-center gap-1.5 transition-colors"
-                      title="Audio call"
-                    >
-                      {isBusy ? (
-                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                      ) : (
-                        <Phone className="w-3.5 h-3.5 text-[#D97706]" />
-                      )}
-                      <span className="hidden sm:inline">Audio</span>
-                    </button>
-
-                    <button
-                      onClick={() => void handleCall(friend.userId, 1)}
-                      disabled={callBusy || isBusy}
-                      className="h-8 px-3 rounded-lg bg-[#D97706] hover:bg-[#B45309] disabled:opacity-40 disabled:cursor-not-allowed text-[#0F0D0A] text-[12px] font-semibold inline-flex items-center gap-1.5 transition-colors"
-                      title="Video call"
-                    >
-                      {isBusy ? (
-                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                      ) : (
-                        <VideoIcon className="w-3.5 h-3.5" />
-                      )}
-                      <span className="hidden sm:inline">Video</span>
-                    </button>
-                  </div>
+                  <button
+                    onClick={() => handleCall(log.peerId, log.type === 'video' ? 1 : 0)}
+                    disabled={callBusy}
+                    className="w-8 h-8 rounded-full flex items-center justify-center text-[#A8A29E] hover:text-[#EDE5D4] hover:bg-white/[0.08] disabled:opacity-40"
+                  >
+                    {log.type === 'video' ? <VideoIcon className="w-4 h-4" /> : <Phone className="w-4 h-4" />}
+                  </button>
                 </div>
-              );
-            })}
+              ))}
+            </div>
           </div>
         )}
+
+        {/* Search */}
+        {friends.length > 0 && (
+          <div className="px-4 sm:px-6 py-3 shrink-0">
+            <div className="max-w-md flex items-center gap-2 px-2.5 py-1.5 rounded-lg bg-[#0F0D0A] border border-white/[0.08] focus-within:border-[#D97706]/50 transition-colors">
+              <Search className="w-3.5 h-3.5 text-[#6B6259] shrink-0" />
+              <input
+                type="text"
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder="Search friends by @handle or name..."
+                className="flex-1 bg-transparent text-[12.5px] text-[#EDE5D4] placeholder-[#6B6259] outline-none"
+              />
+            </div>
+          </div>
+        )}
+
+        {/* Friends List */}
+        <div className="px-4 sm:px-6 pb-4">
+          {loading ? (
+            <div className="h-40 flex items-center justify-center text-[12.5px] text-[#6B6259]">
+              <Loader2 className="w-4 h-4 animate-spin mr-2 text-[#D97706]" />
+              Loading friends…
+            </div>
+          ) : friends.length === 0 ? (
+            <div className="max-w-md mx-auto mt-8 text-center">
+              <div className="w-16 h-16 rounded-2xl bg-white/[0.03] border border-white/[0.06] flex items-center justify-center mx-auto">
+                <UserPlus className="w-7 h-7 text-[#6B6259]" />
+              </div>
+              <p className="text-[14.5px] text-[#EDE5D4] font-semibold tracking-tight mt-4">
+                No friends to call
+              </p>
+              <p className="text-[12.5px] text-[#6B6259] mt-1 leading-relaxed max-w-sm mx-auto">
+                Add friends first, then come back here to call them.
+              </p>
+              <button
+                onClick={() => navigate('/app/friends')}
+                className="mt-5 h-9 px-4 rounded-xl bg-[#D97706] hover:bg-[#B45309] text-[#0F0D0A] text-[12.5px] font-semibold inline-flex items-center gap-1.5 transition-colors"
+              >
+                <UserPlus className="w-4 h-4" />
+                <span>Add friends</span>
+              </button>
+            </div>
+          ) : filteredFriends.length === 0 ? (
+            <div className="max-w-md mx-auto mt-8 text-center">
+              <div className="w-16 h-16 rounded-2xl bg-white/[0.03] border border-white/[0.06] flex items-center justify-center mx-auto">
+                <Search className="w-7 h-7 text-[#6B6259]" />
+              </div>
+              <p className="text-[14.5px] text-[#EDE5D4] font-semibold tracking-tight mt-4">
+                No matches
+              </p>
+              <p className="text-[12.5px] text-[#6B6259] mt-1">
+                No friends matched &ldquo;{query}&rdquo;.
+              </p>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+              {filteredFriends.map((friend) => {
+                const isOnline = presenceStore.isOnline(friend.userId);
+                const isBusy = busyPeerId === friend.userId;
+
+                return (
+                  <div
+                    key={friend.friendshipId}
+                    className="bg-[#1A1816] border border-white/[0.06] rounded-2xl p-4 flex items-center gap-3 hover:border-white/[0.12] transition-colors"
+                  >
+                    <Avatar
+                      name={friend.displayName}
+                      src={friend.avatarUrl}
+                      size="md"
+                      isOnline={isOnline}
+                    />
+
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-2">
+                        <p className="text-[13.5px] font-semibold text-[#EDE5D4] truncate">
+                          {friend.displayName}
+                        </p>
+                        <span
+                          className={`inline-block w-1.5 h-1.5 rounded-full shrink-0 ${
+                            isOnline ? 'bg-[#22C55E]' : 'bg-[#6B6259]'
+                          }`}
+                          title={isOnline ? 'Online' : 'Offline'}
+                        />
+                      </div>
+                      <p className="text-[11.5px] text-[#6B6259] truncate mt-0.5">
+                        @{friend.handle}
+                      </p>
+                    </div>
+
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      <button
+                        onClick={() => void handleCall(friend.userId, 0)}
+                        disabled={callBusy || isBusy}
+                        className="h-8 px-3 rounded-lg bg-white/[0.04] hover:bg-white/[0.08] disabled:opacity-40 disabled:cursor-not-allowed border border-white/[0.06] text-[12px] font-medium text-[#EDE5D4] inline-flex items-center gap-1.5 transition-colors"
+                        title="Audio call"
+                      >
+                        {isBusy ? (
+                          <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                        ) : (
+                          <Phone className="w-3.5 h-3.5 text-[#D97706]" />
+                        )}
+                        <span className="hidden sm:inline">Audio</span>
+                      </button>
+
+                      <button
+                        onClick={() => void handleCall(friend.userId, 1)}
+                        disabled={callBusy || isBusy}
+                        className="h-8 px-3 rounded-lg bg-[#D97706] hover:bg-[#B45309] disabled:opacity-40 disabled:cursor-not-allowed text-[#0F0D0A] text-[12px] font-semibold inline-flex items-center gap-1.5 transition-colors"
+                        title="Video call"
+                      >
+                        {isBusy ? (
+                          <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                        ) : (
+                          <VideoIcon className="w-3.5 h-3.5" />
+                        )}
+                        <span className="hidden sm:inline">Video</span>
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );
 }
-///working
+
 export default CallsPane;
