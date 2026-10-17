@@ -449,7 +449,7 @@ function FriendsPane(): React.JSX.Element {
                 Friends
               </h1>
               <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-[#D97706]/[0.10] border border-[#D97706]/25 text-[10.5px] font-semibold text-[#D97706]">
-                <Sparkles className="w-3 h-3" />
+               
                 {friends.length}
               </span>
             </div>

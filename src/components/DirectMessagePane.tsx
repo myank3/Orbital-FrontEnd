@@ -3203,8 +3203,12 @@ export function DirectMessagePane(): React.JSX.Element {
     } catch (err) { setFriendRequestStatus(extractErrorMessage(err)); }
   };
 
-  const handleAudioCall = async () => {
+    const handleAudioCall = async () => {
     if (!userId) return;
+    if (!isTargetOnline) {
+      alert(`${targetUser?.displayName ?? 'This user'} is offline. Try again when they come back.`);
+      return;
+    }
     callPendingRef.current = {
       peerId: userId,
       kind: 'audio',
@@ -3214,8 +3218,12 @@ export function DirectMessagePane(): React.JSX.Element {
     try { await initiateCall(userId, CallType.Audio); }
     catch (err) { alert(`Call failed: ${extractErrorMessage(err)}`); }
   };
-  const handleVideoCall = async () => {
+    const handleVideoCall = async () => {
     if (!userId) return;
+    if (!isTargetOnline) {
+      alert(`${targetUser?.displayName ?? 'This user'} is offline. Try again when they come back.`);
+      return;
+    }
     callPendingRef.current = {
       peerId: userId,
       kind: 'video',
@@ -3225,7 +3233,6 @@ export function DirectMessagePane(): React.JSX.Element {
     try { await initiateCall(userId, CallType.Video); }
     catch (err) { alert(`Call failed: ${extractErrorMessage(err)}`); }
   };
-
   const handleDeleteForMe = useCallback(async (m: LocalMessage) => {
     startTransition(() => {
       setMessages((prev) => prev.filter((x) => x.id !== m.id));
@@ -3466,10 +3473,20 @@ export function DirectMessagePane(): React.JSX.Element {
                 </div>
               </div>
               <div className="flex items-center gap-0.5 sm:gap-1 shrink-0">
-                <button onClick={() => void handleAudioCall()} className={`w-10 h-10 rounded-2xl flex items-center justify-center ${theme.textSecondary} ${theme.hoverBg}`}>
+                               <button
+                  onClick={() => void handleAudioCall()}
+                  disabled={!isTargetOnline}
+                  title={!isTargetOnline ? `${targetUser.displayName} is offline` : 'Audio call'}
+                  className={`w-10 h-10 rounded-2xl flex items-center justify-center ${theme.textSecondary} ${theme.hoverBg} disabled:opacity-40 disabled:cursor-not-allowed`}
+                >
                   <Phone className="w-[18px] h-[18px]" />
                 </button>
-                <button onClick={() => void handleVideoCall()} className={`w-10 h-10 rounded-2xl flex items-center justify-center ${theme.textSecondary} ${theme.hoverBg}`}>
+                <button
+                  onClick={() => void handleVideoCall()}
+                  disabled={!isTargetOnline}
+                  title={!isTargetOnline ? `${targetUser.displayName} is offline` : 'Video call'}
+                  className={`w-10 h-10 rounded-2xl flex items-center justify-center ${theme.textSecondary} ${theme.hoverBg} disabled:opacity-40 disabled:cursor-not-allowed`}
+                >
                   <Video className="w-[18px] h-[18px]" />
                 </button>
                 <button onClick={() => setInfoOpen(true)} className={`w-10 h-10 rounded-2xl flex items-center justify-center ${theme.textSecondary} ${theme.hoverBg}`}>
