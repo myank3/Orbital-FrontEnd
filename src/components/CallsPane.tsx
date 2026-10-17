@@ -15,6 +15,7 @@ import {
   Clock,
   ArrowDownLeft,
   ArrowUpRight,
+  X,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Avatar } from './Avatar';
@@ -23,6 +24,52 @@ import { FriendDto } from '../types/api';
 import { presenceStore } from '../services/presenceStore';
 import { useCall } from '../context/CallContext';
 import { useAuth } from '../context/AuthContext';
+
+/* ────────────────────────────────────────────────────────── */
+/* Custom toast: offline call warning                         */
+/* ────────────────────────────────────────────────────────── */
+
+interface OfflineCallToastProps {
+  name: string;
+  avatarUrl?: string | null;
+  type: 'audio' | 'video';
+  onDismiss: () => void;
+}
+
+function OfflineCallToast({ name, avatarUrl, type, onDismiss }: OfflineCallToastProps) {
+  const Icon = type === 'video' ? VideoIcon : Phone;
+  return (
+    <div className="w-[320px] rounded-2xl bg-[#1A1816] border border-white/[0.08] shadow-2xl overflow-hidden">
+      <div className="p-4 flex items-start gap-3">
+        <div className="shrink-0">
+          <Avatar name={name} src={avatarUrl} size="md" />
+        </div>
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-1.5 text-[#F87171]">
+            <Icon className="w-3.5 h-3.5" />
+            <span className="text-[11px] font-bold uppercase tracking-wider">
+              {type === 'video' ? 'Video call' : 'Audio call'}
+            </span>
+          </div>
+          <p className="text-[13.5px] font-semibold text-[#EDE5D4] truncate mt-0.5">
+            {name} is offline
+          </p>
+          <p className="text-[12px] text-[#A8A29E] mt-0.5 leading-snug">
+            You can still send them a message.
+          </p>
+        </div>
+        <button
+          onClick={onDismiss}
+          className="shrink-0 w-6 h-6 -mr-1 -mt-1 rounded-md flex items-center justify-center text-[#6B6259] hover:text-[#EDE5D4] hover:bg-white/[0.06] transition-colors"
+          aria-label="Dismiss"
+        >
+          <X className="w-3.5 h-3.5" />
+        </button>
+      </div>
+      <div className="h-[3px] bg-gradient-to-r from-[#D97706] via-[#F59E0B] to-transparent" />
+    </div>
+  );
+}
 
 /* ────────────────────────────────────────────────────────── */
 /* Local Call History Storage (Cookie/LS based)               */
@@ -76,7 +123,7 @@ function CallsPane(): React.JSX.Element {
   const [loading, setLoading] = useState(true);
   const [query, setQuery] = useState('');
   const [busyPeerId, setBusyPeerId] = useState<string | null>(null);
-  
+
   // Local call history state
   const [history, setHistory] = useState<LocalCallLog[]>(() => loadLocalHistory(user?.id));
 
@@ -132,7 +179,7 @@ function CallsPane(): React.JSX.Element {
       // Call started
       const peerId = activeSession?.peerId || incomingCall?.initiatorId;
       const isOutgoing = Boolean(activeSession) || callState === 'outgoing';
-      
+
       if (peerId) {
         const friend = friends.find((f) => f.userId === peerId);
         pendingCallRef.current = {
@@ -151,7 +198,7 @@ function CallsPane(): React.JSX.Element {
 
       // Only log if we actually connected (assume > 1 second is a real answer)
       const durationSec = Math.max(0, Math.round((Date.now() - pending.startedAt) / 1000));
-      
+
       if (durationSec > 1) {
         const newLog: LocalCallLog = {
           id: `${Date.now()}-${Math.random()}`,
@@ -186,9 +233,28 @@ function CallsPane(): React.JSX.Element {
     );
   }, [friends, query]);
 
-  const handleCall = async (peerId: string, callType: number) => {
+  const handleCall = async (
+    peerId: string,
+    callType: number,
+    peerName?: string,
+    peerAvatar?: string | null,
+  ) => {
     if (callBusy) {
       toast.error('You are already in a call.');
+      return;
+    }
+    if (!presenceStore.isOnline(peerId)) {
+      toast.custom(
+        (t) => (
+          <OfflineCallToast
+            name={peerName ?? 'This friend'}
+            avatarUrl={peerAvatar}
+            type={callType === 1 ? 'video' : 'audio'}
+            onDismiss={() => toast.dismiss(t)}
+          />
+        ),
+        { duration: 5000 },
+      );
       return;
     }
     setBusyPeerId(peerId);
@@ -239,7 +305,7 @@ function CallsPane(): React.JSX.Element {
 
       {/* Body */}
       <div className="flex-1 overflow-y-auto">
-        
+
         {/* Call History Section */}
         {history.length > 0 && (
           <div className="px-4 sm:px-6 py-4 border-b border-white/[0.05]">
@@ -266,9 +332,17 @@ function CallsPane(): React.JSX.Element {
                     </div>
                   </div>
                   <button
-                    onClick={() => handleCall(log.peerId, log.type === 'video' ? 1 : 0)}
+                    onClick={() =>
+                      handleCall(
+                        log.peerId,
+                        log.type === 'video' ? 1 : 0,
+                        log.peerName,
+                        log.peerAvatar,
+                      )
+                    }
                     disabled={callBusy}
-                    className="w-8 h-8 rounded-full flex items-center justify-center text-[#A8A29E] hover:text-[#EDE5D4] hover:bg-white/[0.08] disabled:opacity-40"
+                    className="w-8 h-8 rounded-full flex items-center justify-center text-[#A8A29E] hover:text-[#EDE5D4] hover:bg-white/[0.08] disabled:opacity-40 disabled:cursor-not-allowed"
+                    title={log.type === 'video' ? 'Video call' : 'Audio call'}
                   >
                     {log.type === 'video' ? <VideoIcon className="w-4 h-4" /> : <Phone className="w-4 h-4" />}
                   </button>
@@ -369,7 +443,14 @@ function CallsPane(): React.JSX.Element {
 
                     <div className="flex items-center gap-1.5 shrink-0">
                       <button
-                        onClick={() => void handleCall(friend.userId, 0)}
+                        onClick={() =>
+                          void handleCall(
+                            friend.userId,
+                            0,
+                            friend.displayName,
+                            friend.avatarUrl,
+                          )
+                        }
                         disabled={callBusy || isBusy}
                         className="h-8 px-3 rounded-lg bg-white/[0.04] hover:bg-white/[0.08] disabled:opacity-40 disabled:cursor-not-allowed border border-white/[0.06] text-[12px] font-medium text-[#EDE5D4] inline-flex items-center gap-1.5 transition-colors"
                         title="Audio call"
@@ -383,7 +464,14 @@ function CallsPane(): React.JSX.Element {
                       </button>
 
                       <button
-                        onClick={() => void handleCall(friend.userId, 1)}
+                        onClick={() =>
+                          void handleCall(
+                            friend.userId,
+                            1,
+                            friend.displayName,
+                            friend.avatarUrl,
+                          )
+                        }
                         disabled={callBusy || isBusy}
                         className="h-8 px-3 rounded-lg bg-[#D97706] hover:bg-[#B45309] disabled:opacity-40 disabled:cursor-not-allowed text-[#0F0D0A] text-[12px] font-semibold inline-flex items-center gap-1.5 transition-colors"
                         title="Video call"

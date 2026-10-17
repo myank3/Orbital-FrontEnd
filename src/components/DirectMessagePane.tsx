@@ -13,6 +13,7 @@ import React, {
   startTransition,
 } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
+import { toast } from 'sonner';
 import { apiService, extractErrorMessage } from '../services/api';
 import { signalRService } from '../services/signalr';
 import { presenceStore } from '../services/presenceStore';
@@ -91,6 +92,52 @@ import {
   VoiceRecorder,
   type VoiceRecording,
 } from './dm/ComposerToolkit';
+
+/* ────────────────────────────────────────────────────────── */
+/* Custom toast: offline call warning                         */
+/* ────────────────────────────────────────────────────────── */
+
+interface OfflineCallToastProps {
+  name: string;
+  avatarUrl?: string | null;
+  type: 'audio' | 'video';
+  onDismiss: () => void;
+}
+
+function OfflineCallToast({ name, avatarUrl, type, onDismiss }: OfflineCallToastProps) {
+  const Icon = type === 'video' ? Video : Phone;
+  return (
+    <div className="w-[320px] rounded-2xl bg-[#1A1816] border border-white/[0.08] shadow-2xl overflow-hidden">
+      <div className="p-4 flex items-start gap-3">
+        <div className="shrink-0">
+          <Avatar name={name} src={avatarUrl} size="md" />
+        </div>
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-1.5 text-[#F87171]">
+            <Icon className="w-3.5 h-3.5" />
+            <span className="text-[11px] font-bold uppercase tracking-wider">
+              {type === 'video' ? 'Video call' : 'Audio call'}
+            </span>
+          </div>
+          <p className="text-[13.5px] font-semibold text-[#EDE5D4] truncate mt-0.5">
+            {name} is offline
+          </p>
+          <p className="text-[12px] text-[#A8A29E] mt-0.5 leading-snug">
+            You can still send them a message.
+          </p>
+        </div>
+        <button
+          onClick={onDismiss}
+          className="shrink-0 w-6 h-6 -mr-1 -mt-1 rounded-md flex items-center justify-center text-[#6B6259] hover:text-[#EDE5D4] hover:bg-white/[0.06] transition-colors"
+          aria-label="Dismiss"
+        >
+          <X className="w-3.5 h-3.5" />
+        </button>
+      </div>
+      <div className="h-[3px] bg-gradient-to-r from-[#D97706] via-[#F59E0B] to-transparent" />
+    </div>
+  );
+}
 
 /* ────────────────────────────────────────────────────────── */
 /* Tunables                                                   */
@@ -3203,10 +3250,20 @@ export function DirectMessagePane(): React.JSX.Element {
     } catch (err) { setFriendRequestStatus(extractErrorMessage(err)); }
   };
 
-    const handleAudioCall = async () => {
+  const handleAudioCall = async () => {
     if (!userId) return;
     if (!isTargetOnline) {
-      alert(`${targetUser?.displayName ?? 'This user'} is offline. Try again when they come back.`);
+      toast.custom(
+        (t) => (
+          <OfflineCallToast
+            name={targetUser?.displayName ?? 'This user'}
+            avatarUrl={targetUser?.avatarUrl}
+            type="audio"
+            onDismiss={() => toast.dismiss(t)}
+          />
+        ),
+        { duration: 5000 },
+      );
       return;
     }
     callPendingRef.current = {
@@ -3218,10 +3275,21 @@ export function DirectMessagePane(): React.JSX.Element {
     try { await initiateCall(userId, CallType.Audio); }
     catch (err) { alert(`Call failed: ${extractErrorMessage(err)}`); }
   };
-    const handleVideoCall = async () => {
+
+  const handleVideoCall = async () => {
     if (!userId) return;
     if (!isTargetOnline) {
-      alert(`${targetUser?.displayName ?? 'This user'} is offline. Try again when they come back.`);
+      toast.custom(
+        (t) => (
+          <OfflineCallToast
+            name={targetUser?.displayName ?? 'This user'}
+            avatarUrl={targetUser?.avatarUrl}
+            type="video"
+            onDismiss={() => toast.dismiss(t)}
+          />
+        ),
+        { duration: 5000 },
+      );
       return;
     }
     callPendingRef.current = {
@@ -3233,6 +3301,7 @@ export function DirectMessagePane(): React.JSX.Element {
     try { await initiateCall(userId, CallType.Video); }
     catch (err) { alert(`Call failed: ${extractErrorMessage(err)}`); }
   };
+
   const handleDeleteForMe = useCallback(async (m: LocalMessage) => {
     startTransition(() => {
       setMessages((prev) => prev.filter((x) => x.id !== m.id));
@@ -3473,19 +3542,17 @@ export function DirectMessagePane(): React.JSX.Element {
                 </div>
               </div>
               <div className="flex items-center gap-0.5 sm:gap-1 shrink-0">
-                               <button
+                <button
                   onClick={() => void handleAudioCall()}
-                  disabled={!isTargetOnline}
-                  title={!isTargetOnline ? `${targetUser.displayName} is offline` : 'Audio call'}
-                  className={`w-10 h-10 rounded-2xl flex items-center justify-center ${theme.textSecondary} ${theme.hoverBg} disabled:opacity-40 disabled:cursor-not-allowed`}
+                  title="Audio call"
+                  className={`w-10 h-10 rounded-2xl flex items-center justify-center ${theme.textSecondary} ${theme.hoverBg}`}
                 >
                   <Phone className="w-[18px] h-[18px]" />
                 </button>
                 <button
                   onClick={() => void handleVideoCall()}
-                  disabled={!isTargetOnline}
-                  title={!isTargetOnline ? `${targetUser.displayName} is offline` : 'Video call'}
-                  className={`w-10 h-10 rounded-2xl flex items-center justify-center ${theme.textSecondary} ${theme.hoverBg} disabled:opacity-40 disabled:cursor-not-allowed`}
+                  title="Video call"
+                  className={`w-10 h-10 rounded-2xl flex items-center justify-center ${theme.textSecondary} ${theme.hoverBg}`}
                 >
                   <Video className="w-[18px] h-[18px]" />
                 </button>
