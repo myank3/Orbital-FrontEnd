@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { AlertCircle, AtSign, KeyRound, Lock } from 'lucide-react';
+import { AlertCircle, AtSign, KeyRound } from 'lucide-react';
 
 import { useAuth } from '../context/AuthContext';
 import { AuthShell } from '../components/AuthShell';
@@ -91,10 +91,19 @@ export default function Login(): React.JSX.Element {
     }
   }, [identifier, password, loading, login, navigate]);
 
+  const handleGoogleLogin = () => {
+    window.location.href = `${API_BASE_URL.replace(/\/+$/, '')}/api/Auth/google-login?prompt=select_account`;
+  };
+
   return (
     <AuthShell title="Welcome back" subtitle="Sign in to continue your orbit.">
       <div className="space-y-6">
-        <button type="button" onClick={() => window.location.href = `${API_BASE_URL.replace(/\/+$/, '')}/api/Auth/google-login?prompt=select_account`} disabled={loading} className="w-full h-12 rounded-xl bg-white text-[#0F0D0A] hover:bg-[#F2EDE3] text-[14px] font-medium inline-flex items-center justify-center gap-2.5 transition-all duration-200 active:scale-[0.98] shadow-[0_6px_20px_-8px_rgba(0,0,0,0.5)] disabled:opacity-50">
+        <button 
+          type="button" 
+          onClick={handleGoogleLogin} 
+          disabled={loading} 
+          className="w-full h-12 rounded-xl bg-white text-[#0F0D0A] hover:bg-[#F2EDE3] text-[14px] font-medium inline-flex items-center justify-center gap-2.5 transition-all duration-200 active:scale-[0.98] shadow-[0_6px_20px_-8px_rgba(0,0,0,0.5)] disabled:opacity-50"
+        >
           <GoogleIcon />
           <span>Continue with Google</span>
         </button>
