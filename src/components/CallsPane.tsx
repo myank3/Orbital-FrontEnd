@@ -120,7 +120,7 @@ function loadLocalHistory(userId?: string): LocalCallLog[] {
 function saveLocalHistory(userId: string | undefined, logs: LocalCallLog[]) {
   if (typeof window === 'undefined') return;
   try {
-    localStorage.setItem(getHistoryKey(userId), JSON.stringify(logs.slice(0, 50))); // keep last 50
+    localStorage.setItem(getHistoryKey(userId), JSON.stringify(logs.slice(0, 50)));
   } catch {
     /* quota */
   }
@@ -140,10 +140,8 @@ function CallsPane(): React.JSX.Element {
   const [query, setQuery] = useState('');
   const [busyPeerId, setBusyPeerId] = useState<string | null>(null);
 
-  // Local call history state
   const [history, setHistory] = useState<LocalCallLog[]>(() => loadLocalHistory(user?.id));
 
-  // Track the active call to log it when it ends
   const pendingCallRef = useRef<{
     peerId: string;
     peerName: string;
@@ -153,19 +151,16 @@ function CallsPane(): React.JSX.Element {
     startedAt: number;
   } | null>(null);
 
-  // Live presence
   const [, setPresenceTick] = useState(0);
   useEffect(() => {
     const unsub = presenceStore.subscribe(() => setPresenceTick((v) => v + 1));
     return () => unsub();
   }, []);
 
-  // Sync history when user changes
   useEffect(() => {
     setHistory(loadLocalHistory(user?.id));
   }, [user?.id]);
 
-  // Load friends
   useEffect(() => {
     let active = true;
     setLoading(true);
@@ -187,12 +182,10 @@ function CallsPane(): React.JSX.Element {
     };
   }, []);
 
-  // Watch call state to start/end logging
   useEffect(() => {
     const isInCall = Boolean(activeSession || incomingCall || callState !== 'idle');
 
     if (isInCall && !pendingCallRef.current) {
-      // Call started
       const peerId = activeSession?.peerId || incomingCall?.initiatorId;
       const isOutgoing = Boolean(activeSession) || callState === 'outgoing';
 
@@ -208,11 +201,9 @@ function CallsPane(): React.JSX.Element {
         };
       }
     } else if (!isInCall && pendingCallRef.current) {
-      // Call ended
       const pending = pendingCallRef.current;
       pendingCallRef.current = null;
 
-      // Only log if we actually connected (assume > 1 second is a real answer)
       const durationSec = Math.max(0, Math.round((Date.now() - pending.startedAt) / 1000));
 
       if (durationSec > 1) {
@@ -278,21 +269,18 @@ function CallsPane(): React.JSX.Element {
       await initiateCall(peerId, callType);
     } catch (err) {
       toast.error(extractErrorMessage(err, 'Could not start call.'));
-      // Clear the pending ref if initiation fails immediately
       pendingCallRef.current = null;
     } finally {
       setBusyPeerId(null);
     }
   };
 
-  // Format duration (e.g. 1:24)
   const formatDur = (sec: number) => {
     const m = Math.floor(sec / 60);
     const s = sec % 60;
     return `${m}:${s.toString().padStart(2, '0')}`;
   };
 
-  // Format time for history list
   const formatWhen = (ts: number) => {
     const d = new Date(ts);
     const today = new Date();
@@ -429,7 +417,7 @@ function CallsPane(): React.JSX.Element {
               </p>
             </div>
           ) : (
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+            <div className="space-y-1.5">
               {filteredFriends.map((friend) => {
                 const isOnline = presenceStore.isOnline(friend.userId);
                 const isBusy = busyPeerId === friend.userId;

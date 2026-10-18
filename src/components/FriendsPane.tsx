@@ -28,14 +28,11 @@ import {
   MessageSquare,
   Check,
   X,
-  Loader2,
   AlertCircle,
   CheckCircle2,
   Search,
-  Users,
   Inbox,
   Compass,
-  Sparkles,
   Zap,
 } from 'lucide-react';
 
@@ -64,120 +61,256 @@ function relativeTime(dateStr: string): string {
   }
 }
 
+function bannerAngle(id: string): number {
+  let h = 0;
+  for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) % 360;
+  return h;
+}
+
 /* ────────────────────────────────────────────────────────── */
-/* Skeleton card for loading state                            */
+/* Memory moments — auto-spinning shelf                       */
 /* ────────────────────────────────────────────────────────── */
 
-function FriendCardSkeleton() {
+const MEMORY_MOMENTS = [
+  {
+    id: 'coffee-chats',
+    title: 'Coffee chats',
+    subtitle: 'Catch up over espresso.',
+    image:
+      'https://images.unsplash.com/photo-1521737604893-d14cc237f11d?w=600&q=80&auto=format&fit=crop',
+    tag: '☕ Cafe',
+  },
+  {
+    id: 'late-laughs',
+    title: 'Late night laughs',
+    subtitle: 'Nothing serious. Everything funny.',
+    image:
+      'https://images.unsplash.com/photo-1543269865-cbf427effbad?w=600&q=80&auto=format&fit=crop',
+    tag: '😄 Fun',
+  },
+  {
+    id: 'group-hangs',
+    title: 'Group hangs',
+    subtitle: 'The whole crew. Finally.',
+    image:
+      'https://images.unsplash.com/photo-1511632765486-a01980e01a18?w=600&q=80&auto=format&fit=crop',
+    tag: '🎉 Friends',
+  },
+  {
+    id: 'deep-talks',
+    title: 'Deep talks',
+    subtitle: 'When the world melts away.',
+    image:
+      'https://images.unsplash.com/photo-1517486808906-6ca8b3f04846?w=600&q=80&auto=format&fit=crop',
+    tag: '💬 Talk',
+  },
+  {
+    id: 'sunday-brunch',
+    title: 'Sunday brunch',
+    subtitle: 'Eggs, stories, seconds.',
+    image:
+      'https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=600&q=80&auto=format&fit=crop',
+    tag: '🍳 Brunch',
+  },
+  {
+    id: 'quick-catchups',
+    title: 'Quick catch-ups',
+    subtitle: 'Ten minutes. One good story.',
+    image:
+      'https://images.unsplash.com/photo-1529156069898-49953e39b3ac?w=600&q=80&auto=format&fit=crop',
+    tag: '👋 Casual',
+  },
+  {
+    id: 'night-out',
+    title: 'Night out',
+    subtitle: 'Music, laughs, memories.',
+    image:
+      'https://images.unsplash.com/photo-1573497019940-1c28c88b4f3e?w=600&q=80&auto=format&fit=crop',
+    tag: '🌃 Hangout',
+  },
+];
+
+function MemoryShelf() {
+  const looped = useMemo(() => [...MEMORY_MOMENTS, ...MEMORY_MOMENTS], []);
+
   return (
-    <div className="rounded-2xl bg-[#1A1816] border border-white/[0.06] overflow-hidden">
-      <div className="h-20 bg-gradient-to-br from-white/[0.04] to-transparent" />
-      <div className="px-4 pb-4 -mt-8">
-        <div className="w-16 h-16 rounded-full bg-white/[0.06] border-4 border-[#1A1816] animate-pulse" />
-        <div className="mt-3 h-3.5 w-24 rounded bg-white/[0.06] animate-pulse" />
-        <div className="mt-2 h-2.5 w-16 rounded bg-white/[0.04] animate-pulse" />
-        <div className="mt-4 h-8 w-full rounded-lg bg-white/[0.05] animate-pulse" />
+    <div className="mt-8">
+      <style>{`
+        @keyframes memory-scroll {
+          0%   { transform: translate3d(0, 0, 0); }
+          100% { transform: translate3d(-50%, 0, 0); }
+        }
+        .memory-track {
+          display: flex;
+          width: max-content;
+          animation: memory-scroll 70s linear infinite;
+          will-change: transform;
+          backface-visibility: hidden;
+        }
+        .memory-track:hover,
+        .memory-track:active {
+          animation-play-state: paused;
+        }
+        .memory-viewport {
+          overflow: hidden;
+          -webkit-mask-image: linear-gradient(
+            to right,
+            transparent 0%,
+            black 6%,
+            black 94%,
+            transparent 100%
+          );
+          mask-image: linear-gradient(
+            to right,
+            transparent 0%,
+            black 6%,
+            black 94%,
+            transparent 100%
+          );
+        }
+        @media (prefers-reduced-motion: reduce) {
+          .memory-track { animation: none; }
+        }
+      `}</style>
+
+      <div className="flex items-baseline justify-between mb-3 px-1">
+        <div>
+          <h3 className="text-[15px] font-semibold text-[#EDE5D4] tracking-tight">
+            Make memories with friends
+          </h3>
+          <p className="text-[11.5px] text-[#6B6259] mt-0.5">
+            Real conversations. Real moments.
+          </p>
+        </div>
+        <span className="text-[10px] uppercase tracking-[0.18em] text-[#6B6259] font-mono hidden sm:inline">
+          
+        </span>
+      </div>
+
+      <div className="memory-viewport -mx-4 sm:-mx-6">
+        <div className="memory-track py-1">
+          {looped.map((m, i) => (
+            <div
+              key={`${m.id}-${i}`}
+              className="shrink-0 w-[200px] h-[260px] mr-3 relative rounded-2xl overflow-hidden border border-white/[0.06] hover:border-[#D97706]/40 transition-colors group"
+            >
+              <img
+                src={m.image}
+                alt={m.title}
+                loading="lazy"
+                className="absolute inset-0 w-full h-full object-cover transition-transform duration-700 group-hover:scale-[1.06]"
+              />
+              <div className="absolute inset-0 bg-gradient-to-t from-black/95 via-black/40 to-transparent" />
+              <div className="absolute top-3 left-3">
+                <span className="text-[9.5px] font-mono uppercase tracking-[0.12em] text-white/90 bg-black/50 backdrop-blur-md px-2 py-1 rounded-full border border-white/10">
+                  {m.tag}
+                </span>
+              </div>
+              <div className="absolute inset-x-0 bottom-0 p-3.5">
+                <p className="text-[15px] font-semibold text-white leading-tight">
+                  {m.title}
+                </p>
+                <p className="text-[11px] text-white/70 mt-1 leading-snug">
+                  {m.subtitle}
+                </p>
+              </div>
+            </div>
+          ))}
+        </div>
       </div>
     </div>
   );
 }
 
 /* ────────────────────────────────────────────────────────── */
-/* Friend card (Instagram-ish)                                */
+/* Skeletons                                                  */
 /* ────────────────────────────────────────────────────────── */
 
-interface FriendCardProps {
+function FriendRowSkeleton() {
+  return (
+    <div className="flex items-center gap-3 py-2.5">
+      <div className="w-10 h-10 rounded-full bg-white/[0.06] animate-pulse shrink-0" />
+      <div className="flex-1 flex items-center gap-2">
+        <div className="h-3.5 w-24 rounded bg-white/[0.06] animate-pulse" />
+        <div className="h-2.5 w-16 rounded bg-white/[0.04] animate-pulse" />
+      </div>
+    </div>
+  );
+}
+
+function DiscoverCardSkeleton() {
+  return (
+    <div className="rounded-2xl bg-[#1A1816] border border-white/[0.06] overflow-hidden">
+      <div className="h-20 bg-gradient-to-br from-white/[0.04] to-transparent" />
+      <div className="px-3 pb-3 -mt-8">
+        <div className="w-12 h-12 rounded-full bg-white/[0.06] border-4 border-[#1A1816] animate-pulse" />
+        <div className="mt-2 h-3.5 w-24 rounded bg-white/[0.06] animate-pulse" />
+        <div className="mt-1.5 h-2.5 w-16 rounded bg-white/[0.04] animate-pulse" />
+        <div className="mt-3 h-8 w-full rounded-lg bg-white/[0.05] animate-pulse" />
+      </div>
+    </div>
+  );
+}
+
+/* ────────────────────────────────────────────────────────── */
+/* Friend row — borderless, contact-list style                */
+/* ────────────────────────────────────────────────────────── */
+
+interface FriendRowProps {
   friend: FriendDto;
   isOnline: boolean;
   onOpenProfile: (id: string) => void;
   onMessage: (id: string) => void;
 }
 
-function FriendCard({ friend, isOnline, onOpenProfile, onMessage }: FriendCardProps) {
+function FriendRow({ friend, isOnline, onOpenProfile, onMessage }: FriendRowProps) {
   return (
     <motion.div
       layout
-      initial={{ opacity: 0, y: 8 }}
+      initial={{ opacity: 0, y: 6 }}
       animate={{ opacity: 1, y: 0 }}
       exit={{ opacity: 0, y: -4 }}
       transition={{ type: 'spring', stiffness: 320, damping: 30 }}
-      className="group relative rounded-2xl bg-[#1A1816] border border-white/[0.06] hover:border-white/[0.14] overflow-hidden transition-colors"
+      className="group flex items-center gap-3.5 px-2 py-2.5 rounded-lg hover:bg-white/[0.03] transition-colors"
     >
-      {/* Cover strip — subtle gradient band */}
-      <div className="h-20 bg-gradient-to-br from-[#D97706]/[0.10] via-[#D97706]/[0.03] to-transparent relative">
-        {isOnline && (
-          <span className="absolute top-3 right-3 inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-[#15803D]/20 border border-[#22C55E]/30 text-[10px] font-semibold text-[#4ADE80]">
-            <span className="w-1.5 h-1.5 rounded-full bg-[#22C55E] animate-pulse" />
-            Online
-          </span>
-        )}
-      </div>
-
-      {/* Avatar with gradient ring */}
       <button
         type="button"
         onClick={() => onOpenProfile(friend.userId)}
-        className="absolute top-8 left-4 rounded-full focus:outline-none focus-visible:ring-2 focus-visible:ring-[#D97706]/60"
+        className="shrink-0 relative rounded-full focus:outline-none focus-visible:ring-2 focus-visible:ring-[#D97706]/60"
         aria-label={`View ${friend.displayName}'s profile`}
       >
-        <span
-          className={`block p-[3px] rounded-full ${
-            isOnline
-              ? 'bg-gradient-to-tr from-[#22C55E] via-[#D97706] to-[#4ADE80]'
-              : 'bg-gradient-to-tr from-white/[0.10] to-white/[0.02]'
-          }`}
-        >
-          <span className="block p-[2px] rounded-full bg-[#1A1816]">
-            <Avatar name={friend.displayName} src={friend.avatarUrl} size="lg" />
-          </span>
-        </span>
+        <Avatar name={friend.displayName} src={friend.avatarUrl} size="md" />
+        {isOnline && (
+          <span className="absolute -bottom-0.5 -right-0.5 w-3.5 h-3.5 rounded-full bg-[#22C55E] border-[2.5px] border-[#0B0A08]" />
+        )}
       </button>
 
-      {/* Card body */}
-      <div className="px-4 pt-10 pb-4">
-        <div className="min-w-0">
-          <p className="text-[14px] font-semibold text-[#EDE5D4] truncate tracking-tight">
-            {friend.displayName}
-          </p>
-          <p className="text-[11.5px] text-[#6B6259] truncate mt-0.5">
-            @{friend.handle}
-          </p>
-        </div>
-
-        {/* Stat chips */}
-        <div className="mt-3 flex items-center gap-1.5 flex-wrap">
-          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-white/[0.04] border border-white/[0.05] text-[10.5px] text-[#A8A29E]">
-            <span
-              className={`w-1.5 h-1.5 rounded-full ${
-                isOnline ? 'bg-[#22C55E]' : 'bg-[#6B6259]'
-              }`}
-            />
-            {isOnline ? 'Active now' : 'Offline'}
-          </span>
-          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-white/[0.04] border border-white/[0.05] text-[10.5px] text-[#A8A29E]">
-            <Clock className="w-3 h-3" />
-            {relativeTime(friend.establishedAt)}
-          </span>
-        </div>
-
-        {/* Message CTA — appears on hover, always tappable */}
-        <button
-          onClick={() => onMessage(friend.userId)}
-          className="mt-4 w-full h-9 rounded-xl bg-white/[0.04] hover:bg-[#D97706] border border-white/[0.06] hover:border-[#D97706] text-[12.5px] font-medium text-[#EDE5D4] hover:text-[#0F0D0A] inline-flex items-center justify-center gap-1.5 transition-all"
-        >
-          <MessageSquare className="w-3.5 h-3.5" />
-          <span>Message</span>
-        </button>
+      <div className="flex-1 min-w-0">
+        <p className="text-[14px] font-medium text-[#EDE5D4] truncate leading-tight">
+          {friend.displayName}
+        </p>
+        <p className="text-[11.5px] text-[#6B6259] truncate mt-0.5 font-mono">
+          @{friend.handle}
+        </p>
       </div>
+
+      <button
+        onClick={() => onMessage(friend.userId)}
+        className="shrink-0 h-8 w-8 sm:w-auto sm:px-3 rounded-lg bg-transparent hover:bg-[#D97706] border border-white/[0.06] hover:border-[#D97706] text-[12px] font-medium text-[#A8A29E] hover:text-[#0F0D0A] inline-flex items-center justify-center gap-1.5 transition-all duration-150 active:scale-[0.97]"
+        aria-label={`Message ${friend.displayName}`}
+      >
+        <MessageSquare className="w-3.5 h-3.5" />
+        <span className="hidden sm:inline">Message</span>
+      </button>
     </motion.div>
   );
 }
 
 /* ────────────────────────────────────────────────────────── */
-/* Discover result row                                        */
+/* Discover card                                              */
 /* ────────────────────────────────────────────────────────── */
 
-interface DiscoverRowProps {
+interface DiscoverCardProps {
   user: UserProfileDto;
   isFriend: boolean;
   sent: boolean;
@@ -186,67 +319,93 @@ interface DiscoverRowProps {
   onAdd: (u: UserProfileDto) => void;
 }
 
-function DiscoverRow({
+function DiscoverCard({
   user,
   isFriend,
   sent,
   onOpenProfile,
   onMessage,
   onAdd,
-}: DiscoverRowProps) {
+}: DiscoverCardProps) {
+  const angle = useMemo(() => bannerAngle(user.id), [user.id]);
+
   return (
     <motion.div
       layout
-      initial={{ opacity: 0, y: 6 }}
+      initial={{ opacity: 0, y: 8 }}
       animate={{ opacity: 1, y: 0 }}
       exit={{ opacity: 0, y: -4 }}
       transition={{ type: 'spring', stiffness: 320, damping: 30 }}
-      className="group relative rounded-2xl bg-[#1A1816] border border-white/[0.06] hover:border-white/[0.14] p-3.5 flex items-center gap-3.5 transition-colors"
+      className="group relative rounded-2xl bg-[#1A1816] border border-white/[0.06] hover:border-[#D97706]/35 overflow-hidden transition-colors"
     >
-      <button
-        type="button"
-        onClick={() => onOpenProfile(user.id)}
-        className="shrink-0 rounded-full focus:outline-none focus-visible:ring-2 focus-visible:ring-[#D97706]/50 transition-transform group-hover:scale-[1.03]"
-        aria-label={`View ${user.displayName}'s profile`}
+      <div
+        className="relative h-20 overflow-hidden"
+        style={{
+          background: `linear-gradient(${angle}deg, rgba(217,119,6,0.22) 0%, rgba(217,119,6,0.06) 45%, transparent 80%)`,
+        }}
       >
-        <span className="block p-[2.5px] rounded-full bg-gradient-to-tr from-[#D97706]/40 to-[#D97706]/[0.05]">
-          <span className="block p-[2px] rounded-full bg-[#1A1816]">
-            <Avatar name={user.displayName} src={user.avatarUrl} size="md" />
-          </span>
+        <div
+          aria-hidden
+          className="absolute inset-0 opacity-[0.10] mix-blend-overlay pointer-events-none"
+          style={{
+            backgroundImage:
+              "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='n'%3E%3CfeTurbulence baseFrequency='0.9' numOctaves='2'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E\")",
+          }}
+        />
+        <span
+          aria-hidden
+          className="absolute -right-2 -top-3 text-[84px] leading-none font-bold text-[#D97706]/[0.07] select-none pointer-events-none"
+        >
+          {(user.displayName || '?')[0].toUpperCase()}
         </span>
-      </button>
-
-      <div className="min-w-0 flex-1">
-        <p className="text-[13.5px] font-semibold text-[#EDE5D4] truncate tracking-tight">
-          {user.displayName}
-        </p>
-        <p className="text-[11.5px] text-[#6B6259] truncate mt-0.5">
-          @{user.userHandle}
-        </p>
       </div>
 
-      {isFriend ? (
+      <div className="px-3 pb-3 -mt-7">
         <button
-          onClick={() => onMessage(user.id)}
-          className="shrink-0 h-8 px-3 rounded-lg bg-white/[0.04] hover:bg-[#D97706] border border-white/[0.06] hover:border-[#D97706] text-[12px] font-medium text-[#EDE5D4] hover:text-[#0F0D0A] inline-flex items-center gap-1.5 transition-colors"
+          type="button"
+          onClick={() => onOpenProfile(user.id)}
+          className="block rounded-full focus:outline-none focus-visible:ring-2 focus-visible:ring-[#D97706]/60 transition-transform duration-150 group-hover:scale-[1.04]"
+          aria-label={`View ${user.displayName}'s profile`}
         >
-          <MessageSquare className="w-3.5 h-3.5" />
-          <span>Message</span>
+          <span className="block p-[2.5px] rounded-full bg-gradient-to-tr from-[#D97706]/45 to-[#D97706]/[0.05] group-hover:from-[#D97706]/70 transition-all duration-150">
+            <span className="block p-[2px] rounded-full bg-[#1A1816]">
+              <Avatar name={user.displayName} src={user.avatarUrl} size="md" />
+            </span>
+          </span>
         </button>
-      ) : sent ? (
-        <span className="shrink-0 h-8 px-3 rounded-lg bg-white/[0.03] border border-white/[0.06] text-[12px] font-medium text-[#6B6259] inline-flex items-center gap-1.5">
-          <CheckCircle2 className="w-3.5 h-3.5 text-[#4ADE80]" />
-          <span>Sent</span>
-        </span>
-      ) : (
-        <button
-          onClick={() => onAdd(user)}
-          className="shrink-0 h-8 px-3 rounded-lg bg-[#D97706] hover:bg-[#B45309] text-[#0F0D0A] text-[12px] font-semibold inline-flex items-center gap-1.5 transition-colors"
-        >
-          <UserPlus className="w-3.5 h-3.5" />
-          <span>Add</span>
-        </button>
-      )}
+
+        <p className="text-[13px] font-semibold text-[#EDE5D4] truncate tracking-tight mt-2">
+          {user.displayName}
+        </p>
+        <p className="text-[11px] text-[#7A6F65] font-mono truncate mt-0.5">
+          @{user.userHandle}
+        </p>
+
+        <div className="mt-2.5">
+          {isFriend ? (
+            <button
+              onClick={() => onMessage(user.id)}
+              className="w-full h-8 rounded-lg bg-white/[0.04] hover:bg-[#D97706] border border-white/[0.06] hover:border-[#D97706] text-[11.5px] font-medium text-[#EDE5D4] hover:text-[#0F0D0A] inline-flex items-center justify-center gap-1.5 transition-all duration-150 active:scale-[0.97]"
+            >
+              <MessageSquare className="w-3.5 h-3.5" />
+              <span>Message</span>
+            </button>
+          ) : sent ? (
+            <span className="w-full h-8 rounded-lg bg-[#15803D]/[0.10] border border-[#22C55E]/25 text-[11.5px] font-semibold text-[#4ADE80] inline-flex items-center justify-center gap-1.5">
+              <CheckCircle2 className="w-3.5 h-3.5" />
+              <span>Sent</span>
+            </span>
+          ) : (
+            <button
+              onClick={() => onAdd(user)}
+              className="w-full h-8 rounded-lg bg-[#D97706] hover:bg-[#B45309] text-[#0F0D0A] text-[11.5px] font-semibold inline-flex items-center justify-center gap-1.5 transition-all duration-150 active:scale-[0.97]"
+            >
+              <UserPlus className="w-3.5 h-3.5" />
+              <span>Add</span>
+            </button>
+          )}
+        </div>
+      </div>
     </motion.div>
   );
 }
@@ -278,6 +437,33 @@ function EmptyState({
         {subtitle}
       </p>
       {action}
+    </div>
+  );
+}
+
+/* ────────────────────────────────────────────────────────── */
+/* Section divider — "Online" / "Offline" group header        */
+/* ────────────────────────────────────────────────────────── */
+
+function SectionHeader({
+  label,
+  count,
+  color,
+}: {
+  label: string;
+  count: number;
+  color: string;
+}) {
+  return (
+    <div className="flex items-center gap-2.5 px-2 mb-1 mt-4 first:mt-0">
+      <span className={`w-1.5 h-1.5 rounded-full ${color}`} />
+      <span className="text-[10.5px] uppercase tracking-[0.16em] text-[#6B6259] font-mono font-medium">
+        {label}
+      </span>
+      <span className="text-[10.5px] text-[#6B6259]/70 font-mono tabular-nums">
+        {count}
+      </span>
+      <div className="flex-1 h-px bg-white/[0.04]" />
     </div>
   );
 }
@@ -377,7 +563,18 @@ function FriendsPane(): React.JSX.Element {
     );
   }, [friends, searchQuery]);
 
-  // Exact-word match. "may" does NOT match "mayank". "mayank" does.
+  /** Split friends into online / offline groups. */
+  const { onlineFriends, offlineFriends } = useMemo(() => {
+    const online: FriendDto[] = [];
+    const offline: FriendDto[] = [];
+    for (const f of filteredFriends) {
+      if (presenceStore.isOnline(f.userId)) online.push(f);
+      else offline.push(f);
+    }
+    return { onlineFriends: online, offlineFriends: offline };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filteredFriends, presenceStore]);
+
   const filteredDiscoverResults = useMemo(() => {
     const q = discoverQuery.trim().replace(/^@/, '').toLowerCase();
     if (!q) return discoverResults;
@@ -449,7 +646,6 @@ function FriendsPane(): React.JSX.Element {
                 Friends
               </h1>
               <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-[#D97706]/[0.10] border border-[#D97706]/25 text-[10.5px] font-semibold text-[#D97706]">
-               
                 {friends.length}
               </span>
             </div>
@@ -557,9 +753,9 @@ function FriendsPane(): React.JSX.Element {
       {/* ── Body ───────────────────────────────────────── */}
       <div className="flex-1 overflow-y-auto px-4 sm:px-6 py-5">
         {loading && activeTab !== 'discover' ? (
-          <div className="grid grid-cols-2 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
-            {Array.from({ length: 8 }).map((_, i) => (
-              <FriendCardSkeleton key={i} />
+          <div className="max-w-2xl mx-auto space-y-1">
+            {Array.from({ length: 6 }).map((_, i) => (
+              <FriendRowSkeleton key={i} />
             ))}
           </div>
         ) : activeTab === 'all' ? (
@@ -585,18 +781,50 @@ function FriendsPane(): React.JSX.Element {
               subtitle={`No friends matched "${searchQuery}".`}
             />
           ) : (
-            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
-              <AnimatePresence initial={false}>
-                {filteredFriends.map((friend) => (
-                  <FriendCard
-                    key={friend.friendshipId}
-                    friend={friend}
-                    isOnline={presenceStore.isOnline(friend.userId)}
-                    onOpenProfile={setProfileModalUserId}
-                    onMessage={(id) => navigate(`/app/dm/${id}`)}
+            <div className="max-w-2xl mx-auto">
+              {/* Online section */}
+              {onlineFriends.length > 0 && (
+                <section>
+                  <SectionHeader
+                    label="Online"
+                    count={onlineFriends.length}
+                    color="bg-[#22C55E]"
                   />
-                ))}
-              </AnimatePresence>
+                  <AnimatePresence initial={false}>
+                    {onlineFriends.map((friend) => (
+                      <FriendRow
+                        key={friend.friendshipId}
+                        friend={friend}
+                        isOnline
+                        onOpenProfile={setProfileModalUserId}
+                        onMessage={(id) => navigate(`/app/dm/${id}`)}
+                      />
+                    ))}
+                  </AnimatePresence>
+                </section>
+              )}
+
+              {/* Offline section */}
+              {offlineFriends.length > 0 && (
+                <section className={onlineFriends.length > 0 ? 'mt-5' : ''}>
+                  <SectionHeader
+                    label="Offline"
+                    count={offlineFriends.length}
+                    color="bg-[#6B6259]"
+                  />
+                  <AnimatePresence initial={false}>
+                    {offlineFriends.map((friend) => (
+                      <FriendRow
+                        key={friend.friendshipId}
+                        friend={friend}
+                        isOnline={false}
+                        onOpenProfile={setProfileModalUserId}
+                        onMessage={(id) => navigate(`/app/dm/${id}`)}
+                      />
+                    ))}
+                  </AnimatePresence>
+                </section>
+              )}
             </div>
           )
         ) : activeTab === 'pending' ? (
@@ -656,73 +884,92 @@ function FriendsPane(): React.JSX.Element {
             </div>
           )
         ) : (
+          /* ── Discover ────────────────────────────────── */
           <div className="max-w-2xl mx-auto">
-            <div className="flex items-center gap-2 px-3.5 py-2.5 rounded-xl bg-[#0F0D0A] border border-white/[0.08] focus-within:border-[#D97706]/50 transition-colors">
+            {/* Borderless search — underline only */}
+            <div className="flex items-center gap-3 px-1 pb-3 border-b border-white/[0.06] focus-within:border-[#D97706]/50 transition-colors">
               <Search className="w-4 h-4 text-[#6B6259] shrink-0" />
               <input
                 type="text"
                 value={discoverQuery}
                 onChange={(e) => setDiscoverQuery(e.target.value)}
-                placeholder="Search people by @handle or name..."
+                placeholder="Search by @handle or name"
                 autoFocus
-                className="flex-1 bg-transparent text-[13.5px] text-[#EDE5D4] placeholder-[#6B6259] outline-none"
+                className="flex-1 bg-transparent text-[14px] text-[#EDE5D4] placeholder-[#6B6259] outline-none py-1"
               />
               {discoverQuery && (
                 <button
                   onClick={() => setDiscoverQuery('')}
-                  className="p-0.5 rounded text-[#6B6259] hover:text-[#EDE5D4]"
+                  className="w-6 h-6 rounded-md hover:bg-white/[0.04] flex items-center justify-center text-[#6B6259] hover:text-[#EDE5D4] transition-colors"
                   aria-label="Clear search"
                 >
-                  <X className="w-4 h-4" />
+                  <X className="w-3 h-3" />
                 </button>
               )}
             </div>
 
+            {/* Empty state — memory shelf + CTA */}
             {discoverQuery.trim().length < 2 && (
-              <EmptyState
-                icon={<Compass className="w-7 h-7 text-[#6B6259]" />}
-                title="Discover people"
-                subtitle="Type at least 2 characters. Matches the start of a @handle or display name."
-              />
+              <div>
+                <MemoryShelf />
+
+                <div className="my-8 h-px bg-gradient-to-r from-transparent via-white/[0.06] to-transparent" />
+
+                <div className="flex flex-col items-center text-center">
+                  <div className="w-12 h-12 rounded-2xl bg-[#D97706]/[0.08] border border-[#D97706]/20 flex items-center justify-center">
+                    <Compass className="w-5 h-5 text-[#D97706]" />
+                  </div>
+                  <h2 className="text-[22px] leading-tight text-[#EDE5D4] tracking-tight mt-4 font-semibold">
+                    Find your people
+                  </h2>
+                  <p className="text-[12.5px] text-[#7A6F65] mt-1.5 max-w-xs">
+                    Search by @handle or name to start connecting.
+                  </p>
+                </div>
+              </div>
             )}
 
+            {/* Loading */}
             {discoverQuery.trim().length >= 2 && discoverLoading && (
-              <div className="mt-6 space-y-2">
-                {Array.from({ length: 3 }).map((_, i) => (
-                  <div
-                    key={i}
-                    className="h-[72px] rounded-2xl bg-[#1A1816] border border-white/[0.06] animate-pulse"
-                  />
+              <div className="mt-5 grid grid-cols-2 sm:grid-cols-3 gap-3">
+                {Array.from({ length: 6 }).map((_, i) => (
+                  <DiscoverCardSkeleton key={i} />
                 ))}
               </div>
             )}
 
+            {/* Error */}
             {discoverQuery.trim().length >= 2 && !discoverLoading && discoverError && (
-              <div className="mt-8 p-4 rounded-xl bg-[#B91C1C]/10 border border-[#B91C1C]/20 text-[12.5px] text-[#F87171] flex items-center gap-2">
+              <div className="mt-4 p-4 rounded-xl bg-[#B91C1C]/[0.08] border border-[#B91C1C]/25 text-[12.5px] text-[#F87171] flex items-center gap-3">
                 <AlertCircle className="w-4 h-4 shrink-0" />
                 <span>{discoverError}</span>
               </div>
             )}
 
+            {/* No results */}
             {discoverQuery.trim().length >= 2 &&
               !discoverLoading &&
               !discoverError &&
               filteredDiscoverResults.length === 0 && (
-                <EmptyState
-                  icon={<Search className="w-7 h-7 text-[#6B6259]" />}
-                  title="No users found"
-                  subtitle={`No one matched "${discoverQuery}".`}
-                />
+                <div className="mt-16 text-center">
+                  <div className="w-14 h-14 rounded-2xl bg-white/[0.03] border border-white/[0.06] flex items-center justify-center mx-auto">
+                    <Search className="w-6 h-6 text-[#6B6259]" />
+                  </div>
+                  <p className="text-[13px] text-[#7A6F65] mt-4">
+                    No one found for &ldquo;{discoverQuery}&rdquo;
+                  </p>
+                </div>
               )}
 
+            {/* Results */}
             {discoverQuery.trim().length >= 2 &&
               !discoverLoading &&
               !discoverError &&
               filteredDiscoverResults.length > 0 && (
-                <div className="mt-4 space-y-2">
+                <div className="mt-5 grid grid-cols-2 sm:grid-cols-3 gap-3">
                   <AnimatePresence initial={false}>
                     {filteredDiscoverResults.map((user) => (
-                      <DiscoverRow
+                      <DiscoverCard
                         key={user.id}
                         user={user}
                         isFriend={friendUserIds.has(user.id)}
