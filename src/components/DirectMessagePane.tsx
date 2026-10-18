@@ -1251,7 +1251,7 @@ function ChatContextMenu({
 }) {
   const actions = [
     { key: 'pin', label: isPinned ? 'Unpin chat' : 'Pin chat', icon: isPinned ? <PinOff className="w-4 h-4" /> : <Pin className="w-4 h-4" />, onClick: onPin, danger: false },
-    { key: 'mute', label: isMuted ? 'Unmute notifications' : 'Mute notifications', icon: isMuted ? <Bell className="w-4 h-4" /> : <BellOff className="w-4 h-4" />, onClick: onMute, danger: false },
+    // { key: 'mute', label: isMuted ? 'Unmute notifications' : 'Mute notifications', icon: isMuted ? <Bell className="w-4 h-4" /> : <BellOff className="w-4 h-4" />, onClick: onMute, danger: false },
     { key: 'read', label: 'Mark as read', icon: <CheckCheck className="w-4 h-4" />, onClick: onMarkRead, danger: false },
     { key: 'deleteFromHere', label: 'Delete from here', icon: <Trash2 className="w-4 h-4" />, onClick: onDeleteFromHere, danger: false },
     { key: 'block', label: `Block @${friend.handle}`, icon: <ShieldOff className="w-4 h-4" />, onClick: onBlock, danger: true },
