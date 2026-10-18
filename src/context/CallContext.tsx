@@ -111,38 +111,6 @@ const SESSION_TIMEOUT_MS = 15000;
 const RING_ACK_TIMEOUT_MS = 20000;
 
 /* ─────────────────────────────────────────────────────────
-   Metered TURN servers — static credentials
-   Workspace: orbitalhq
-   ───────────────────────────────────────────────────────── */
-
-const METERED_USERNAME = '314b509605be09e502e550bd';
-const METERED_CREDENTIAL = 'x53QpqdPM1wUJnAa';
-
-const METERED_ICE_SERVERS: RTCIceServer[] = [
-  { urls: 'stun:stun.relay.metered.ca:80' },
-  {
-    urls: 'turn:global.relay.metered.ca:80',
-    username: METERED_USERNAME,
-    credential: METERED_CREDENTIAL,
-  },
-  {
-    urls: 'turn:global.relay.metered.ca:80?transport=tcp',
-    username: METERED_USERNAME,
-    credential: METERED_CREDENTIAL,
-  },
-  {
-    urls: 'turn:global.relay.metered.ca:443',
-    username: METERED_USERNAME,
-    credential: METERED_CREDENTIAL,
-  },
-  {
-    urls: 'turns:global.relay.metered.ca:443?transport=tcp',
-    username: METERED_USERNAME,
-    credential: METERED_CREDENTIAL,
-  },
-];
-
-/* ─────────────────────────────────────────────────────────
    DM notification helpers
    ───────────────────────────────────────────────────────── */
 
@@ -1009,13 +977,13 @@ function CallProviderComponent({
   }, [clearWatchdog]);
 
   /* ── ICE config ──────────────────────────────────────── */
+  //
+  // TURN credentials are generated server-side (Cloudflare + Metered)
+  // and returned as an array. This function only maps them into the
+  // shape RTCPeerConnection expects. No hardcoded fallback providers
+  // here — the backend decides which TURN services are active.
 
   const getRtcConfiguration = useCallback(async (): Promise<RTCConfiguration> => {
-    const stunOnly: RTCIceServer[] = [
-      { urls: 'stun:stun.l.google.com:19302' },
-      { urls: 'stun:stun1.l.google.com:19302' },
-    ];
-
     try {
       const serverConfigs: IceServerConfigDto[] = await withTimeout(
         apiService.getIceServers(),
@@ -1023,37 +991,30 @@ function CallProviderComponent({
         'getIceServers',
       );
       if (serverConfigs && serverConfigs.length > 0) {
-        const mapped: RTCIceServer[] = serverConfigs.map((c) => ({
-          urls: c.urls,
-          username: c.username,
-          credential: c.credential,
-        }));
-        const hasTurn = mapped.some((s) => {
-          const urls = Array.isArray(s.urls) ? s.urls : [s.urls];
-          return urls.some(
-            (u) =>
-              typeof u === 'string' &&
-              (u.startsWith('turn:') || u.startsWith('turns:')),
-          );
+        console.log('[Call] ICE config from backend', {
+          count: serverConfigs.length,
+          urls: serverConfigs.flatMap((c) => c.urls),
         });
-        if (hasTurn) {
-          console.log('[Call] ICE config: backend TURN + Metered TURN (policy: all)');
-          return {
-            iceServers: [...mapped, ...METERED_ICE_SERVERS],
-            iceTransportPolicy: 'all',
-          };
-        }
+        return {
+          iceServers: serverConfigs.map((c) => ({
+            urls: c.urls,
+            username: c.username ?? undefined,
+            credential: c.credential ?? undefined,
+          })),
+          iceTransportPolicy: 'all',
+        };
       }
     } catch {
       /* fall through */
     }
 
-    console.log('[Call] ICE config: STUN + Metered TURN (policy: all)', {
-      turnServers: METERED_ICE_SERVERS.length,
-    });
-
+    // Backend unreachable — STUN-only fallback.
+    console.log('[Call] ICE config: STUN-only fallback');
     return {
-      iceServers: [...stunOnly, ...METERED_ICE_SERVERS],
+      iceServers: [
+        { urls: 'stun:stun.l.google.com:19302' },
+        { urls: 'stun:stun1.l.google.com:19302' },
+      ],
       iceTransportPolicy: 'all',
     };
   }, []);
