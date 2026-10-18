@@ -4095,7 +4095,7 @@ export function DirectMessagePane(): React.JSX.Element {
         />
       )}
 
-      <Toaster position="top-right" richColors closeButton />
+      {/* <Toaster position="top-right" richColors closeButton /> */}
     </div>
   );
 }

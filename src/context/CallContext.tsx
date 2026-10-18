@@ -12,19 +12,26 @@ import React, {
   useRef,
   useState,
 } from 'react';
+import { createPortal } from 'react-dom';
+import { useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
 import { apiService, API_BASE_URL, getAccessToken } from '../services/api';
 import { signalRService } from '../services/signalr';
 import { presenceStore } from '../services/presenceStore';
-import { encryptFor, getPublicKeyFor } from '../services/cryptoService';
+import { encryptFor, getPublicKeyFor, decryptOne } from '../services/cryptoService';
+import { playReceive } from '../services/sounds';
 import { useAuth } from './AuthContext';
+import { Avatar } from '../components/Avatar';
+import { MessageSquare, X } from 'lucide-react';
 import {
   CallEndedPayload,
   CallSessionDto,
   CallSessionStatus,
   CallSignalPayload,
   CallType,
+  DirectMessageDto,
   IceServerConfigDto,
+  MediaType,
 } from '../types/api';
 
 export interface CallSignalMessage {
@@ -55,10 +62,6 @@ export interface CallContextType {
   peerId: string | null;
   callState: CallState;
   duration: number;
-  /**
-   * True once the callee's device has acknowledged the incoming call.
-   * Caller-side only. Turn "Calling…" into "Ringing…" on this.
-   */
   peerRinging: boolean;
   initiateCall: (peerId: string, callType: number) => Promise<void>;
   acceptCall: () => Promise<void>;
@@ -72,6 +75,23 @@ export interface CallContextType {
   minimize: () => void;
   expand: () => void;
   replaceVideoTrack: (track: MediaStreamTrack) => void;
+
+  /* ── DM notifications ─────────────────────────────── */
+
+  unreadCounts: Record<string, number>;
+  totalUnread: number;
+  clearUnread: (userId: string) => void;
+  requestNotificationPermission: () => Promise<void>;
+  notificationPermission: NotificationPermission | 'unsupported';
+
+  /**
+   * Prefetched DM history keyed by sender id. Populated as notifications
+   * arrive so `DirectMessagePane` can render instantly on click. The pane
+   * is free to ignore this — it's an optional cache.
+   */
+  prefetchedHistory: Map<string, DirectMessageDto[]>;
+  /** Read + clear the prefetch for a peer. */
+  consumePrefetchedHistory: (userId: string) => DirectMessageDto[] | null;
 }
 
 export const CallContext = createContext<CallContextType | undefined>(undefined);
@@ -82,11 +102,8 @@ export interface CallProviderProps {
 
 const ACTIVE_CALL_STORAGE_KEY = 'orbital.activeCallSessionId';
 const DISCONNECT_WATCHDOG_MS = 30000;
-/** Cheap reads (ICE servers, GETs). */
 const API_TIMEOUT_MS = 5000;
-/** Session-creating / session-mutating calls. */
 const SESSION_TIMEOUT_MS = 15000;
-/** How long to wait for the callee's device to ACK before giving up. */
 const RING_ACK_TIMEOUT_MS = 20000;
 
 /* ─────────────────────────────────────────────────────────
@@ -120,6 +137,124 @@ const METERED_ICE_SERVERS: RTCIceServer[] = [
     credential: METERED_CREDENTIAL,
   },
 ];
+
+/* ─────────────────────────────────────────────────────────
+   DM notification helpers
+   ───────────────────────────────────────────────────────── */
+
+const DM_UNREAD_KEY = (uid: string) => `orbital.unreadDms.${uid}`;
+const NOTIF_PROMPTED_KEY = 'orbital.notifPrompted.v1';
+
+function readDmUnread(uid: string): Record<string, number> {
+  try {
+    const raw = localStorage.getItem(DM_UNREAD_KEY(uid));
+    return raw ? (JSON.parse(raw) as Record<string, number>) : {};
+  } catch {
+    return {};
+  }
+}
+
+function writeDmUnread(uid: string, data: Record<string, number>) {
+  try {
+    localStorage.setItem(DM_UNREAD_KEY(uid), JSON.stringify(data));
+  } catch {
+    /* quota */
+  }
+}
+
+function isInDmSection(): boolean {
+  return (
+    typeof window !== 'undefined' &&
+    window.location.pathname.startsWith('/app/dm')
+  );
+}
+
+/**
+ * Turn a raw DM into a single-line human preview.
+ * Strips internal control payloads so `[call:audio:missed:0]` never leaks.
+ */
+function previewTextFor(msg: DirectMessageDto): string {
+  let body = msg.plaintext ?? msg.content ?? '';
+
+  const callMatch = body.match(
+    /^\[call:(audio|video):(answered|missed|declined):\d+\]$/,
+  );
+  if (callMatch) {
+    return callMatch[1] === 'video' ? '🎥 Video call' : '📞 Audio call';
+  }
+
+  if (/^\[react:/.test(body)) return '👍 Reacted';
+  if (body.startsWith('[sticker]')) return '🎨 Sticker';
+  if (body.startsWith('[v1]')) body = body.slice(4);
+
+  const replyMatch = body.match(/^\[reply:(-?\d+)\]/);
+  if (replyMatch) body = body.slice(replyMatch[0].length);
+
+  const trimmed = body.trim();
+
+  if (msg.mediaType === MediaType.Image) return trimmed || '📷 Photo';
+  if (msg.mediaType === MediaType.Video) return '🎥 Video';
+  if (msg.mediaType === MediaType.Audio) return '🎤 Voice message';
+  if (msg.mediaType === MediaType.File) return trimmed || '📎 File';
+
+  return trimmed || 'New message';
+}
+
+/**
+ * In-app message toast.
+ *
+ * The entire card body is the "open chat" affordance — one big click
+ * target, no footer buttons. A single subtle X in the top-right corner
+ * dismisses without opening.
+ */
+function MessageToast({
+  name,
+  avatarUrl,
+  preview,
+  onOpen,
+  onDismiss,
+}: {
+  name: string;
+  avatarUrl?: string | null;
+  preview: string;
+  onOpen: () => void;
+  onDismiss: () => void;
+}) {
+  return (
+    <div className="relative w-[320px] rounded-2xl bg-[#1A1816] border border-white/[0.08] shadow-[0_20px_60px_-12px_rgba(0,0,0,0.9),inset_0_1px_0_rgba(255,255,255,0.05)] overflow-hidden">
+      <button
+        type="button"
+        onClick={onOpen}
+        className="w-full p-3.5 pr-11 flex items-start gap-3 text-left hover:bg-white/[0.03] active:bg-white/[0.06] transition-colors"
+      >
+        <Avatar name={name} src={avatarUrl} size="md" />
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-1.5 text-[#D97706]">
+            <MessageSquare className="w-3 h-3" />
+            <span className="text-[10.5px] font-bold uppercase tracking-[0.14em]">
+              New message
+            </span>
+          </div>
+          <p className="text-[13.5px] font-bold text-[#EDE5D4] truncate mt-0.5 tracking-tight">
+            {name}
+          </p>
+          <p className="text-[12px] text-[#A8A29E] mt-0.5 leading-snug line-clamp-2">
+            {preview}
+          </p>
+        </div>
+      </button>
+      <button
+        type="button"
+        onClick={onDismiss}
+        className="absolute top-2.5 right-2.5 w-7 h-7 rounded-md flex items-center justify-center text-[#6B6259] hover:text-[#EDE5D4] hover:bg-white/[0.06] transition-colors"
+        aria-label="Dismiss"
+      >
+        <X className="w-3.5 h-3.5" />
+      </button>
+      <div className="h-[3px] bg-gradient-to-r from-[#D97706] via-[#F59E0B] to-transparent" />
+    </div>
+  );
+}
 
 /* ─────────────────────────────────────────────────────────
    Ringtone — Web Audio, soft & phone-like
@@ -221,7 +356,6 @@ function useRingtone(
 
 /* ─────────────────────────────────────────────────────────
    Audio-file ringtone — loops an actual MP3/audio file.
-   Same interface as useRingtone but plays a real asset.
    ───────────────────────────────────────────────────────── */
 
 function useAudioRingtone(
@@ -254,8 +388,6 @@ function useAudioRingtone(
     el.volume = volume;
 
     el.play().catch(() => {
-      // Autoplay may be blocked until user gesture — installAudioUnlock()
-      // usually covers this, but retry on the next interaction just in case.
       const resume = () => {
         el.play().catch(() => {});
         document.removeEventListener('click', resume);
@@ -283,39 +415,23 @@ function useAudioRingtone(
 }
 
 /* ── Ringtone presets ────────────────────────────────────── */
-/*
- * Modern Instagram-inspired tonal palette.
- *
- * The incoming pattern is a five-note rising-then-falling arpeggio
- * (A5 → C#6 → E6 → D6 → B5) that has the same bright, melodic,
- * bell-like character as Instagram's call chime. The ringback is
- * a two-note figure for the caller while the peer is ringing; the
- * end tone is a short descending two-note "blip".
- */
 
-// Ringback — what the *caller* hears while waiting for the peer.
-// A clean two-note figure. Not intrusive over long rings.
 const RINGBACK_PATTERN: ToneStep[] = [
-  { freq: 587.33, durationMs: 320, gapAfterMs: 90 },  // D5
-  { freq: 880.00, durationMs: 520, gapAfterMs: 0 },   // A5
+  { freq: 587.33, durationMs: 320, gapAfterMs: 90 },
+  { freq: 880.0, durationMs: 520, gapAfterMs: 0 },
 ];
 
-// Incoming — the main ringtone. Bright, melodic, modern.
-// Five notes rising then resolving down, played as a chime.
-// NOTE: kept for reference; incoming call now uses a real MP3.
 const INCOMING_SOFT_PATTERN: ToneStep[] = [
-  { freq: 880.00, durationMs: 180, gapAfterMs: 50 },   // A5
-  { freq: 1108.73, durationMs: 180, gapAfterMs: 50 },  // C#6
-  { freq: 1318.51, durationMs: 300, gapAfterMs: 110 }, // E6
-  { freq: 1174.66, durationMs: 200, gapAfterMs: 60 },  // D6
-  { freq: 987.77, durationMs: 420, gapAfterMs: 0 },    // B5
+  { freq: 880.0, durationMs: 180, gapAfterMs: 50 },
+  { freq: 1108.73, durationMs: 180, gapAfterMs: 50 },
+  { freq: 1318.51, durationMs: 300, gapAfterMs: 110 },
+  { freq: 1174.66, durationMs: 200, gapAfterMs: 60 },
+  { freq: 987.77, durationMs: 420, gapAfterMs: 0 },
 ];
 
-// End tone — short descending two-note "blip" when a call ends.
-// NOTE: kept for reference; end call now uses a real MP3.
 const END_PATTERN: ToneStep[] = [
-  { freq: 659.25, durationMs: 140, gapAfterMs: 50 },   // E5
-  { freq: 493.88, durationMs: 260, gapAfterMs: 0 },    // B4
+  { freq: 659.25, durationMs: 140, gapAfterMs: 50 },
+  { freq: 493.88, durationMs: 260, gapAfterMs: 0 },
 ];
 
 /* ── Timeout helper ──────────────────────────────────────── */
@@ -390,8 +506,25 @@ function installAudioUnlock(): () => void {
    Provider
    ───────────────────────────────────────────────────────── */
 
-function CallProviderComponent({ children }: CallProviderProps): React.JSX.Element {
+/**
+ * The single in-app notification currently visible.
+ *
+ * Rendered via a portal directly into document.body — bypassing Sonner
+ * entirely — so it can only ever appear ONCE, regardless of how many
+ * `<Toaster>` components are mounted elsewhere in the app.
+ */
+interface ActiveNotification {
+  senderId: string;
+  senderName: string;
+  avatarUrl: string | null;
+  preview: string;
+}
+
+function CallProviderComponent({
+  children,
+}: CallProviderProps): React.JSX.Element {
   const { user } = useAuth();
+  const navigate = useNavigate();
 
   const myUserId = user?.id ?? null;
 
@@ -410,6 +543,49 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
   const [duration, setDuration] = useState<number>(0);
   const [peerRinging, setPeerRinging] = useState<boolean>(false);
 
+  /* ── DM notification state ───────────────────────────── */
+
+  const [unreadCounts, setUnreadCounts] = useState<Record<string, number>>(
+    () => (myUserId ? readDmUnread(myUserId) : {}),
+  );
+
+  const [notificationPermission, setNotificationPermission] = useState<
+    NotificationPermission | 'unsupported'
+  >(() =>
+    typeof Notification !== 'undefined'
+      ? Notification.permission
+      : 'unsupported',
+  );
+
+  /**
+   * Prefetch cache. Populated as soon as a notification is queued so the
+   * DM pane can render instantly on click. Keyed by sender id.
+   * `useCall()` consumers (i.e. DirectMessagePane) can call
+   * `consumePrefetchedHistory(senderId)` to skip the initial fetch+decrypt.
+   */
+  const prefetchedHistoryRef = useRef<Map<string, DirectMessageDto[]>>(
+    new Map(),
+  );
+  const [prefetchedHistory, setPrefetchedHistory] = useState<
+    Map<string, DirectMessageDto[]>
+  >(() => new Map());
+
+  /**
+   * The single in-app notification. Only one can exist at a time — a new
+   * message replaces the current notification rather than stacking.
+   * Rendered via createPortal below, so it is fully independent of any
+   * `<Toaster>` instances elsewhere in the app. Fixes the duplicate-toast
+   * problem when the app mounts multiple Toasters.
+   */
+  const [activeNotification, setActiveNotification] =
+    useState<ActiveNotification | null>(null);
+  const notifTimerRef = useRef<number | null>(null);
+
+  const notificationPermissionRef = useRef(notificationPermission);
+  notificationPermissionRef.current = notificationPermission;
+
+  const lastSoundAtRef = useRef<Record<string, number>>({});
+
   const peerConnectionRef = useRef<RTCPeerConnection | null>(null);
   const iceCandidateQueueRef = useRef<RTCIceCandidateInit[]>([]);
   const remoteDescriptionSetRef = useRef<boolean>(false);
@@ -424,28 +600,15 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
   const callStartedAtRef = useRef<number | null>(null);
   const screenStreamRef = useRef<MediaStream | null>(null);
 
-  // Call-logging flags — only the caller logs a call to chat.
   const callInitiatedByMeRef = useRef<boolean>(false);
   const callAnsweredRef = useRef<boolean>(false);
 
-  // Ring-ACK watchdog — caller-side only.
   const ringAckTimerRef = useRef<number | null>(null);
 
-  /**
-   * Dedicated HTMLAudioElement for remote audio playback.
-   *
-   * IMPORTANT: We do NOT pre-assign an empty MediaStream to `srcObject`.
-   * Assigning an empty MediaStream and later calling `addTrack()` is
-   * known to silently drop playback in Chromium (the element reports
-   * playing:true, muted:false, but outputs silence). Instead we build a
-   * fresh MediaStream that already contains the remote track and assign
-   * it once — this is the reliable path on both desktop and mobile.
-   */
   const audioSinkRef = useRef<HTMLAudioElement | null>(null);
 
   useEffect(() => installAudioUnlock(), []);
 
-  // Sync state to refs to prevent stale closures in SignalR callbacks
   useEffect(() => {
     callStateRef.current = callState;
   }, [callState]);
@@ -458,7 +621,6 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
     incomingCallRef.current = incomingCall;
   }, [incomingCall]);
 
-  // Create persistent audio element. srcObject starts null on purpose.
   useEffect(() => {
     if (typeof window === 'undefined') return;
     if (audioSinkRef.current) return;
@@ -487,18 +649,254 @@ function CallProviderComponent({ children }: CallProviderProps): React.JSX.Eleme
     };
   }, []);
 
+  /* ── DM unread persistence + hydrate ─────────────────── */
+
+  useEffect(() => {
+    if (!myUserId) {
+      setUnreadCounts({});
+      return;
+    }
+    setUnreadCounts(readDmUnread(myUserId));
+  }, [myUserId]);
+
+  useEffect(() => {
+    if (!myUserId) return;
+    writeDmUnread(myUserId, unreadCounts);
+  }, [myUserId, unreadCounts]);
+
+  const clearUnread = useCallback((peer: string) => {
+    setUnreadCounts((prev) => {
+      if (!prev[peer]) return prev;
+      const next = { ...prev };
+      delete next[peer];
+      return next;
+    });
+  }, []);
+
+  const requestNotificationPermission = useCallback(async () => {
+    if (typeof Notification === 'undefined') return;
+    if (
+      Notification.permission === 'granted' ||
+      Notification.permission === 'denied'
+    ) {
+      setNotificationPermission(Notification.permission);
+      return;
+    }
+    try {
+      const result = await Notification.requestPermission();
+      setNotificationPermission(result);
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
+  /**
+   * Read + clear the prefetched history for a peer.
+   * Called by DirectMessagePane (optional). Returns null if nothing cached.
+   */
+  const consumePrefetchedHistory = useCallback(
+    (peer: string): DirectMessageDto[] | null => {
+      const cached = prefetchedHistoryRef.current.get(peer);
+      if (!cached) return null;
+      prefetchedHistoryRef.current.delete(peer);
+      // Mirror into state so consumers can react to invalidation.
+      setPrefetchedHistory(new Map(prefetchedHistoryRef.current));
+      return cached;
+    },
+    [],
+  );
+
+  /* ── Dismiss helpers for the portal notification ─────── */
+
+  const dismissActiveNotification = useCallback(() => {
+    if (notifTimerRef.current != null) {
+      window.clearTimeout(notifTimerRef.current);
+      notifTimerRef.current = null;
+    }
+    setActiveNotification(null);
+  }, []);
+
+  // Clean up the pending notification timer on unmount.
+  useEffect(() => {
+    return () => {
+      if (notifTimerRef.current != null) {
+        window.clearTimeout(notifTimerRef.current);
+        notifTimerRef.current = null;
+      }
+    };
+  }, []);
+
+  /* ── Global DM listener (notifications + prefetch) ───── */
+  useEffect(() => {
+    if (!myUserId) return;
+
+    const unsub = signalRService.onReceiveDirectMessage(
+      async (msg: DirectMessageDto) => {
+        if (msg.recipientId !== myUserId) return;
+        if (!msg.senderId || msg.senderId === myUserId) return;
+
+        const senderId = msg.senderId;
+        const paneMounted = isInDmSection();
+        const tabHidden =
+          typeof document !== 'undefined' && document.hidden;
+
+        // ── Unread ────────────────────────────────────────
+        if (!paneMounted) {
+          setUnreadCounts(() => {
+            const fresh = readDmUnread(myUserId);
+            fresh[senderId] = (fresh[senderId] ?? 0) + 1;
+            return fresh;
+          });
+        }
+
+        // ── Sound ─────────────────────────────────────────
+        if (!paneMounted) {
+          const now = Date.now();
+          const last = lastSoundAtRef.current[senderId] ?? 0;
+          if (now - last > 1500) {
+            try {
+              playReceive();
+            } catch {
+              /* ignore */
+            }
+            lastSoundAtRef.current[senderId] = now;
+          }
+        }
+
+        // ── Ultra-fast prefetch ───────────────────────────
+        // Fire-and-forget: fetch full history for this peer so the DM pane
+        // has data ready the instant the user taps the notification. We
+        // stash the raw DTOs (un-decrypted — the pane handles that) in a
+        // module-level cache. Multiple messages from the same sender within
+        // a short window coalesce into one fetch.
+        if (!paneMounted && !prefetchedHistoryRef.current.has(senderId)) {
+          void apiService
+            .getDmHistory(senderId, 200)
+            .then((history) => {
+              prefetchedHistoryRef.current.set(senderId, history);
+              // Public mirror — cheap since consumers only read on mount.
+              setPrefetchedHistory(new Map(prefetchedHistoryRef.current));
+            })
+            .catch(() => {
+              /* silent */
+            });
+        }
+
+        // ── Resolve display data ──────────────────────────
+        let senderName = 'Someone';
+        let avatarUrl: string | null = null;
+        let preview = 'New message';
+        try {
+          const profile = await apiService.getUserProfile(senderId);
+          senderName =
+            profile?.displayName || profile?.userHandle || senderName;
+          avatarUrl = profile?.avatarUrl ?? null;
+        } catch {
+          /* ignore */
+        }
+        try {
+          const decrypted = await decryptOne(msg, myUserId);
+          preview = previewTextFor(decrypted);
+        } catch {
+          /* ignore */
+        }
+
+        // ── Browser notification (tab is hidden) ──────────
+        if (
+          tabHidden &&
+          notificationPermissionRef.current === 'granted' &&
+          typeof Notification !== 'undefined'
+        ) {
+          try {
+            const n = new Notification(senderName, {
+              body: preview,
+              icon: avatarUrl ?? undefined,
+              tag: `dm-${senderId}`,
+            });
+            n.onclick = () => {
+              window.focus();
+              navigate(`/app/dm/${senderId}`);
+              n.close();
+            };
+          } catch {
+            /* ignore */
+          }
+          return;
+        }
+
+        // ── In-app notification ───────────────────────────
+        // Rendered via createPortal (below). Only one can be visible at
+        // a time — a new message replaces the previous notification.
+        // Bypassing Sonner entirely eliminates the duplicate-toast issue
+        // that occurs when more than one <Toaster> is mounted.
+        if (!tabHidden && !paneMounted) {
+          if (notifTimerRef.current != null) {
+            window.clearTimeout(notifTimerRef.current);
+            notifTimerRef.current = null;
+          }
+          setActiveNotification({
+            senderId,
+            senderName,
+            avatarUrl,
+            preview,
+          });
+          notifTimerRef.current = window.setTimeout(() => {
+            setActiveNotification(null);
+            notifTimerRef.current = null;
+          }, 6000);
+        }
+      },
+    );
+
+    return unsub;
+  }, [myUserId, navigate]);
+
+  /* ── Auto-request Notification permission (once ever) ── */
+
+  useEffect(() => {
+    if (typeof Notification === 'undefined') return;
+    if (Notification.permission !== 'default') return;
+    try {
+      if (localStorage.getItem(NOTIF_PROMPTED_KEY) === '1') return;
+    } catch {
+      /* ignore */
+    }
+
+    const ask = () => {
+      try {
+        localStorage.setItem(NOTIF_PROMPTED_KEY, '1');
+      } catch {
+        /* ignore */
+      }
+      void requestNotificationPermission();
+      document.removeEventListener('click', ask);
+      document.removeEventListener('touchstart', ask);
+    };
+
+    const timer = window.setTimeout(() => {
+      document.addEventListener('click', ask, { once: true });
+      document.addEventListener('touchstart', ask, { once: true });
+    }, 3000);
+
+    return () => {
+      window.clearTimeout(timer);
+      document.removeEventListener('click', ask);
+      document.removeEventListener('touchstart', ask);
+    };
+  }, [requestNotificationPermission]);
+
+  const totalUnread = useMemo(
+    () => Object.values(unreadCounts).reduce((s, n) => s + n, 0),
+    [unreadCounts],
+  );
+
   /* ── Ringtone ────────────────────────────────────────── */
 
   const isOutgoingRinging = callState === 'outgoing' && !isMinimized;
   const isIncomingRinging = callState === 'incoming';
 
-  // Ringback — caller waits, hears the outgoing MP3.
-useAudioRingtone(isOutgoingRinging, '/sounds/outgoing.mp3', 0.25);
-
-  // Incoming — looping MP3 ringtone from /public/sounds/ringtone.mp3
+  useAudioRingtone(isOutgoingRinging, '/sounds/outgoing.mp3', 0.25);
   useAudioRingtone(isIncomingRinging, '/sounds/ringtone.mp3', 0.35);
-
-  // End tone — disconnect MP3, plays once.
   useAudioRingtone(endToneActive, '/sounds/disconnect.mp3', 0.3, false);
 
   const playEndTone = useCallback(() => {
@@ -705,8 +1103,6 @@ useAudioRingtone(isOutgoingRinging, '/sounds/outgoing.mp3', 0.25);
       callStartedAtRef.current = null;
       iceCandidateQueueRef.current = [];
 
-      // Reset call-logging flags only on teardown — endCall reads them
-      // *before* calling teardown.
       callInitiatedByMeRef.current = false;
       callAnsweredRef.current = false;
 
@@ -856,7 +1252,7 @@ useAudioRingtone(isOutgoingRinging, '/sounds/outgoing.mp3', 0.25);
               existing instanceof MediaStream &&
               existing.getTracks().some((t) => t.id === event.track.id)
             ) {
-              // already wired up
+              /* already wired up */
             } else {
               const fresh = new MediaStream();
               fresh.addTrack(event.track);
@@ -966,11 +1362,6 @@ useAudioRingtone(isOutgoingRinging, '/sounds/outgoing.mp3', 0.25);
 
   /* ── Call-to-chat logging ────────────────────────────── */
 
-  /**
-   * Persist a call event as a DM so it shows up in the chat thread
-   * like WhatsApp. Only the caller invokes this — the callee relies on
-   * the caller to log it, avoiding duplicate entries per call.
-   */
   const logCallToChat = useCallback(
     async (
       peer: string,
@@ -1009,7 +1400,7 @@ useAudioRingtone(isOutgoingRinging, '/sounds/outgoing.mp3', 0.25);
       if (!targetPeerId) {
         throw new Error('Peer ID is required to initiate a call.');
       }
-            if (callStateRef.current !== 'idle') {
+      if (callStateRef.current !== 'idle') {
         throw new Error('A call is already in progress.');
       }
 
@@ -1022,13 +1413,9 @@ useAudioRingtone(isOutgoingRinging, '/sounds/outgoing.mp3', 0.25);
       setPeerId(targetPeerId);
       activePeerIdRef.current = targetPeerId;
 
-      // Mark the *caller* role here — used later by endCall to decide
-      // whether to write the call-log entry.
       callInitiatedByMeRef.current = true;
       callAnsweredRef.current = false;
 
-      // Arm the ring-ACK timer. Cleared when the callee sends
-      // { type: 'ringing' } back, or when the connection goes active.
       clearRingAckTimer();
       ringAckTimerRef.current = window.setTimeout(() => {
         console.warn('[Call] Ring-ACK timed out — peer never received the call.');
@@ -1036,9 +1423,6 @@ useAudioRingtone(isOutgoingRinging, '/sounds/outgoing.mp3', 0.25);
         void endCallRef.current?.();
       }, RING_ACK_TIMEOUT_MS);
 
-      // ── Everything below can throw. If it does, we MUST tear down,
-      //    otherwise the user is stuck in 'outgoing' with no way out
-      //    except a page reload.
       try {
         const stream = await acquireMediaStream(callType);
         setLocalStream(stream);
@@ -1067,7 +1451,6 @@ useAudioRingtone(isOutgoingRinging, '/sounds/outgoing.mp3', 0.25);
         );
       } catch (err) {
         console.warn('[Call] initiateCall failed:', err);
-        // Best-effort: close the server session if we created one.
         const s = sessionRef.current;
         if (s?.sessionId) {
           void apiService.endCall(s.sessionId).catch(() => {});
@@ -1103,7 +1486,6 @@ useAudioRingtone(isOutgoingRinging, '/sounds/outgoing.mp3', 0.25);
     setCallState('connecting');
     setPeerId(resolvedPeer);
 
-    // We're the callee — never log the call ourselves.
     callInitiatedByMeRef.current = false;
     callAnsweredRef.current = true;
 
@@ -1211,7 +1593,6 @@ useAudioRingtone(isOutgoingRinging, '/sounds/outgoing.mp3', 0.25);
     const resolvedPeer =
       activePeerIdRef.current ?? resolvePeerId(currentSession, currentIncoming);
 
-    // Snapshot call-log data BEFORE teardown clears the refs.
     const wasCaller = callInitiatedByMeRef.current;
     const wasAnswered = callAnsweredRef.current;
     const startedAt = callStartedAtRef.current;
@@ -1226,7 +1607,6 @@ useAudioRingtone(isOutgoingRinging, '/sounds/outgoing.mp3', 0.25);
 
     teardown({ playTone: hadActiveCall });
 
-    // Log to chat — caller-side only.
     if (wasCaller && resolvedPeer) {
       void logCallToChat(resolvedPeer, callType, wasAnswered, durationSec);
     }
@@ -1443,7 +1823,6 @@ useAudioRingtone(isOutgoingRinging, '/sounds/outgoing.mp3', 0.25);
       }
       if (!messageData?.type) return;
 
-      // Ringing ACK from the callee's device — the *caller* consumes this.
       if (messageData.type === 'ringing') {
         clearRingAckTimer();
         setPeerRinging(true);
@@ -1545,7 +1924,6 @@ useAudioRingtone(isOutgoingRinging, '/sounds/outgoing.mp3', 0.25);
           return;
         }
 
-        // ACK the ring so the caller can switch "Calling…" → "Ringing…".
         void signalRService
           .sendCallSignal(call.sessionId, peer, { type: 'ringing' })
           .catch(() => {});
@@ -1569,7 +1947,6 @@ useAudioRingtone(isOutgoingRinging, '/sounds/outgoing.mp3', 0.25);
           incomingCallRef.current?.sessionId === payload.sessionId;
         if (!matchesSession && !matchesIncoming) return;
 
-        // Snapshot for the call-log entry — only the caller logs.
         const wasCaller = callInitiatedByMeRef.current;
         const wasAnswered = callAnsweredRef.current;
         const startedAt = callStartedAtRef.current;
@@ -1640,6 +2017,15 @@ useAudioRingtone(isOutgoingRinging, '/sounds/outgoing.mp3', 0.25);
       minimize,
       expand,
       replaceVideoTrack,
+
+      unreadCounts,
+      totalUnread,
+      clearUnread,
+      requestNotificationPermission,
+      notificationPermission,
+
+      prefetchedHistory,
+      consumePrefetchedHistory,
     }),
     [
       session,
@@ -1667,12 +2053,68 @@ useAudioRingtone(isOutgoingRinging, '/sounds/outgoing.mp3', 0.25);
       minimize,
       expand,
       replaceVideoTrack,
+
+      unreadCounts,
+      totalUnread,
+      clearUnread,
+      requestNotificationPermission,
+      notificationPermission,
+
+      prefetchedHistory,
+      consumePrefetchedHistory,
     ],
   );
 
   return (
     <CallContext.Provider value={contextValue}>
       {children}
+
+      {/*
+        In-app DM notification — rendered via portal directly into
+        document.body. It is a singleton (only one `activeNotification`
+        can exist at a time), so it cannot duplicate even if multiple
+        <Toaster> components are mounted elsewhere in the app.
+
+        Positioned below the mobile header on small screens (via
+        env(safe-area-inset-top)) and at the top-right corner on desktop.
+      */}
+      {activeNotification && typeof document !== 'undefined' &&
+        createPortal(
+          <>
+            <style>{`
+              @keyframes orbital-dm-toast-in {
+                from { transform: translateX(120%); opacity: 0; }
+                to   { transform: translateX(0);    opacity: 1; }
+              }
+              @media (prefers-reduced-motion: reduce) {
+                .orbital-dm-toast { animation: none !important; }
+              }
+            `}</style>
+            <div
+              className="orbital-dm-toast fixed right-4 z-[9999] pointer-events-auto"
+              style={{
+                top: 'calc(env(safe-area-inset-top, 0px) + 4.5rem)',
+                animation:
+                  'orbital-dm-toast-in 220ms cubic-bezier(0.16, 1, 0.3, 1) forwards',
+              }}
+              role="status"
+              aria-live="polite"
+            >
+              <MessageToast
+                name={activeNotification.senderName}
+                avatarUrl={activeNotification.avatarUrl}
+                preview={activeNotification.preview}
+                onOpen={() => {
+                  const target = activeNotification.senderId;
+                  dismissActiveNotification();
+                  navigate(`/app/dm/${target}`);
+                }}
+                onDismiss={dismissActiveNotification}
+              />
+            </div>
+          </>,
+          document.body,
+        )}
     </CallContext.Provider>
   );
 }
