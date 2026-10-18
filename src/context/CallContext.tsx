@@ -34,7 +34,6 @@ import {
   CallSignalPayload,
   CallType,
   DirectMessageDto,
-  IceServerConfigDto,
   MediaType,
 } from '../types/api';
 
@@ -976,40 +975,17 @@ function CallProviderComponent({
     }, DISCONNECT_WATCHDOG_MS);
   }, [clearWatchdog]);
 
-  /* ── ICE config ──────────────────────────────────────── */
+  /* ── ICE config (STUN only, no TURN) ─────────────────── */
   //
-  // TURN credentials are generated server-side (Cloudflare + Metered)
-  // and returned as an array. This function only maps them into the
-  // shape RTCPeerConnection expects. No hardcoded fallback providers
-  // here — the backend decides which TURN services are active.
+  // No relay servers are configured. All calls rely on direct
+  // peer-to-peer connectivity via STUN hole-punching. This works on
+  // most home / mixed networks, but will fail when either peer sits
+  // behind a symmetric NAT (mobile carriers, CGNAT) or a UDP-blocking
+  // firewall. When that happens `pc.iceConnectionState` becomes
+  // `'failed'` and the existing handler tears the call down.
 
   const getRtcConfiguration = useCallback(async (): Promise<RTCConfiguration> => {
-    try {
-      const serverConfigs: IceServerConfigDto[] = await withTimeout(
-        apiService.getIceServers(),
-        3000,
-        'getIceServers',
-      );
-      if (serverConfigs && serverConfigs.length > 0) {
-        console.log('[Call] ICE config from backend', {
-          count: serverConfigs.length,
-          urls: serverConfigs.flatMap((c) => c.urls),
-        });
-        return {
-          iceServers: serverConfigs.map((c) => ({
-            urls: c.urls,
-            username: c.username ?? undefined,
-            credential: c.credential ?? undefined,
-          })),
-          iceTransportPolicy: 'all',
-        };
-      }
-    } catch {
-      /* fall through */
-    }
-
-    // Backend unreachable — STUN-only fallback.
-    console.log('[Call] ICE config: STUN-only fallback');
+    console.log('[Call] ICE config: STUN only (TURN removed)');
     return {
       iceServers: [
         { urls: 'stun:stun.l.google.com:19302' },
