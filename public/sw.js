@@ -1,17 +1,18 @@
 /**
  * Orbital service worker.
  *
- * Bump SW_VERSION on every deploy that changes cached content.
- * The new version triggers:
+ * Bump SW_VERSION on every deploy that changes cached content OR adds new
+ * event handlers. The new version triggers:
  *   1. Chrome detects sw.js changed
  *   2. New SW installs
  *   3. Activate deletes every cache except the current one
  *   4. Old caches are gone, new ones are used
  *
- * If you forget to bump this, clients will keep running old JS.
+ * If you forget to bump this, clients will keep running old JS — and in
+ * particular, the new `notificationclick` handler below will never fire.
  */
 
-const SW_VERSION = 'v3'; // ← bumped from v2
+const SW_VERSION = 'v4'; // ← bumped from v3 (notificationclick added)
 const CACHE_NAME = `orbital-${SW_VERSION}`;
 
 /* ────────────────────────────────────────────────────────── */
@@ -112,5 +113,53 @@ self.addEventListener('fetch', (event) => {
           })
         );
       }),
+  );
+});
+
+/* ────────────────────────────────────────────────────────── */
+/* Notification click — focus tab + SPA-navigate              */
+/* ────────────────────────────────────────────────────────── */
+//
+// Fires when the user taps a browser notification shown by
+// `registration.showNotification(...)` from `serviceWorker.ts`.
+//
+// The notification is created with `data: { url: '/app/dm/<id>' }`.
+// We try to focus an existing Orbital tab and post a NAVIGATE
+// message so the SPA router can jump to that route without a full
+// page reload. If no tab is open, we open a new window at the URL.
+
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close();
+
+  const data = event.notification.data || {};
+  const urlToOpen = typeof data.url === 'string' ? data.url : '/app';
+
+  event.waitUntil(
+    (async () => {
+      // 1) Look for an existing window client on the same origin.
+      const clientList = await self.clients.matchAll({
+        type: 'window',
+        includeUncontrolled: true,
+      });
+
+      for (const client of clientList) {
+        try {
+          const clientUrl = new URL(client.url);
+          if (clientUrl.origin === self.location.origin) {
+            // Focus the tab and ask the SPA to navigate.
+            await client.focus();
+            client.postMessage({ type: 'NAVIGATE', url: urlToOpen });
+            return;
+          }
+        } catch {
+          /* malformed client URL — try next */
+        }
+      }
+
+      // 2) No existing tab — open a new one at the target route.
+      if (self.clients.openWindow) {
+        await self.clients.openWindow(urlToOpen);
+      }
+    })(),
   );
 });

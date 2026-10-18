@@ -20,6 +20,10 @@ import { signalRService } from '../services/signalr';
 import { presenceStore } from '../services/presenceStore';
 import { encryptFor, getPublicKeyFor, decryptOne } from '../services/cryptoService';
 import { playReceive } from '../services/sounds';
+import {
+  registerServiceWorker,
+  showDmNotification,
+} from '../services/serviceWorker';
 import { useAuth } from './AuthContext';
 import { Avatar } from '../components/Avatar';
 import { MessageSquare, X } from 'lucide-react';
@@ -649,6 +653,34 @@ function CallProviderComponent({
     };
   }, []);
 
+  /* ── Service worker + click-through navigation ───────── */
+  //
+  // Registers the SW once so `registration.showNotification()` works on
+  // Android Chrome and installed iOS PWAs (both of which reject the plain
+  // `new Notification()` constructor). Also listens for the SW's
+  // "NAVIGATE" message, which is posted when the user clicks a system
+  // notification — this navigates the SPA without a full page reload.
+  useEffect(() => {
+    void registerServiceWorker();
+
+    if (typeof window === 'undefined') return;
+    if (!('serviceWorker' in navigator)) return;
+
+    const onMessage = (event: MessageEvent) => {
+      if (
+        event.data?.type === 'NAVIGATE' &&
+        typeof event.data.url === 'string'
+      ) {
+        navigate(event.data.url);
+      }
+    };
+
+    navigator.serviceWorker.addEventListener('message', onMessage);
+    return () => {
+      navigator.serviceWorker.removeEventListener('message', onMessage);
+    };
+  }, [navigate]);
+
   /* ── DM unread persistence + hydrate ─────────────────── */
 
   useEffect(() => {
@@ -802,25 +834,21 @@ function CallProviderComponent({
         }
 
         // ── Browser notification (tab is hidden) ──────────
+        // Routed through the service worker (via `showDmNotification`),
+        // which is the ONLY path that works on Android Chrome and
+        // installed iOS PWAs. Falls back to `new Notification()` on
+        // desktop browsers that don't have a SW yet.
         if (
           tabHidden &&
           notificationPermissionRef.current === 'granted' &&
           typeof Notification !== 'undefined'
         ) {
-          try {
-            const n = new Notification(senderName, {
-              body: preview,
-              icon: avatarUrl ?? undefined,
-              tag: `dm-${senderId}`,
-            });
-            n.onclick = () => {
-              window.focus();
-              navigate(`/app/dm/${senderId}`);
-              n.close();
-            };
-          } catch {
-            /* ignore */
-          }
+          await showDmNotification({
+            senderId,
+            senderName,
+            preview,
+            avatarUrl,
+          });
           return;
         }
 
