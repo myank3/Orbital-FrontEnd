@@ -271,7 +271,7 @@ function FriendRow({ friend, isOnline, onOpenProfile, onMessage }: FriendRowProp
       animate={{ opacity: 1, y: 0 }}
       exit={{ opacity: 0, y: -4 }}
       transition={{ type: 'spring', stiffness: 320, damping: 30 }}
-      className="group flex items-center gap-3.5 px-2 py-2.5 rounded-lg hover:bg-white/[0.03] transition-colors"
+      className="group flex items-center gap-4 px-3 py-3.5 rounded-xl hover:bg-white/[0.03] transition-colors"
     >
       <button
         type="button"
@@ -286,20 +286,20 @@ function FriendRow({ friend, isOnline, onOpenProfile, onMessage }: FriendRowProp
       </button>
 
       <div className="flex-1 min-w-0">
-        <p className="text-[14px] font-medium text-[#EDE5D4] truncate leading-tight">
+        <p className="text-[15px] font-medium text-[#EDE5D4] truncate leading-tight tracking-tight">
           {friend.displayName}
         </p>
-        <p className="text-[11.5px] text-[#6B6259] truncate mt-0.5 font-mono">
+        <p className="text-[12px] text-[#6B6259] truncate mt-1 font-mono">
           @{friend.handle}
         </p>
       </div>
 
       <button
         onClick={() => onMessage(friend.userId)}
-        className="shrink-0 h-8 w-8 sm:w-auto sm:px-3 rounded-lg bg-transparent hover:bg-[#D97706] border border-white/[0.06] hover:border-[#D97706] text-[12px] font-medium text-[#A8A29E] hover:text-[#0F0D0A] inline-flex items-center justify-center gap-1.5 transition-all duration-150 active:scale-[0.97]"
+        className="shrink-0 h-9 w-9 sm:w-auto sm:px-3.5 rounded-lg bg-transparent hover:bg-[#D97706] border border-white/[0.06] hover:border-[#D97706] text-[12.5px] font-medium text-[#A8A29E] hover:text-[#0F0D0A] inline-flex items-center justify-center gap-1.5 transition-all duration-150 active:scale-[0.97]"
         aria-label={`Message ${friend.displayName}`}
       >
-        <MessageSquare className="w-3.5 h-3.5" />
+        <MessageSquare className="w-4 h-4" />
         <span className="hidden sm:inline">Message</span>
       </button>
     </motion.div>

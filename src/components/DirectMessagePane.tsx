@@ -166,7 +166,7 @@ const POLL_INTERVAL_MS = 5000;
 const PANEL_HEIGHT = 'h-[300px]';
 
 /* ────────────────────────────────────────────────────────── */
-/* Themes (static — no animated gradients / blur filters)     */
+/* Themes                                                     */
 /* ────────────────────────────────────────────────────────── */
 
 type ChatThemeKey =
@@ -390,7 +390,6 @@ const REACT_RE = /^\[react:(-?\d+):([^:\]]+)(?::(add|remove))?\]$/;
 const REPLY_RE = /^\[reply:(-?\d+)\]/;
 const V1_RE = /^\[v1\]/;
 const STICKER_RE = /^\[sticker\]/;
-// Call events are self-contained markers — never nested with other prefixes.
 const CALL_RE = /^\[call:(audio|video):(answered|missed|declined):(\d+)\]$/;
 
 export interface ReactionEntry {
@@ -401,7 +400,7 @@ export interface ReactionEntry {
 export interface CallLogInfo {
   kind: 'audio' | 'video';
   result: 'answered' | 'missed' | 'declined';
-  duration: number; // seconds
+  duration: number;
 }
 
 export interface DecodedMessage {
@@ -423,7 +422,6 @@ export interface DecodedReaction {
 export type Decoded = DecodedMessage | DecodedReaction;
 
 export function decodeIncoming(text: string): Decoded {
-  // Call events are checked first — they're a standalone payload.
   const callMatch = text.match(CALL_RE);
   if (callMatch) {
     return {
@@ -534,6 +532,7 @@ function v1SeenKey(u?: string) { return `orbital.v1seen.${u ?? 'anon'}`; }
 function pinnedKey(u?: string) { return `orbital.pinned.${u ?? 'anon'}`; }
 function mutedKey(u?: string) { return `orbital.muted.${u ?? 'anon'}`; }
 function reactionsKey(u?: string, p?: string) { return `orbital.reactions.${u ?? 'anon'}.${p ?? 'none'}`; }
+function hiddenDmsKey(u?: string) { return `orbital.hiddenDms.${u ?? 'anon'}`; }
 
 function readThemeFor(u?: string, p?: string): ChatThemeKey {
   const raw = lsGet<string | null>(themeKey(u, p), null);
@@ -555,6 +554,8 @@ function readReactions(u?: string, p?: string): Record<string, ReactionEntry[]> 
 function writeReactions(u: string | undefined, p: string | undefined, d: Record<string, ReactionEntry[]>) {
   lsSet(reactionsKey(u, p), d);
 }
+function readHiddenDms(u?: string): Set<string> { return new Set(lsGet<string[]>(hiddenDmsKey(u), [])); }
+function writeHiddenDms(u: string | undefined, s: Set<string>) { lsSet(hiddenDmsKey(u), Array.from(s)); }
 
 function applyReactionEvents(
   prev: Record<string, ReactionEntry[]>,
@@ -578,7 +579,6 @@ function applyReactionEvents(
   return next;
 }
 
-/** Replace the optimistic temp message with the real one, or append. */
 function mergeIncoming(prev: LocalMessage[], local: LocalMessage): LocalMessage[] {
   if (prev.some((m) => m.id === local.id)) return prev;
   const newText = local.plaintext ?? local.content ?? '';
@@ -692,7 +692,6 @@ function previewText(msg: DirectMessageDto, myId: string): LastMessagePreview {
   const body = msg.plaintext ?? msg.content ?? '';
   const d = decodeIncoming(body);
 
-  // Call logs are not surfaced in the sidebar; the row falls back to @handle.
   if (!d.isReaction && d.call) {
     return { text: '', sentAt: msg.sentAt, isMe };
   }
@@ -707,8 +706,6 @@ function previewText(msg: DirectMessageDto, myId: string): LastMessagePreview {
   else text = d.body;
   return { text, sentAt: msg.sentAt, isMe };
 }
-
-/* Links */
 
 const URL_REGEX = /https?:\/\/[^\s<>"']+/gi;
 
@@ -774,7 +771,6 @@ function LinkifiedText({ text, isMe }: { text: string; isMe: boolean }) {
   );
 }
 
-/** Lightweight previews — no iframes (they were a big source of lag). */
 const LinkPreviews = React.memo(function LinkPreviews({ urls }: { urls: string[] }) {
   if (urls.length === 0) return null;
   return (
@@ -1003,7 +999,6 @@ function messageTypeLabel(m: LocalMessage): string {
   return 'Text';
 }
 
-/** WhatsApp-style message menu: reactions on top, message preview, actions below. */
 function MessageMenu({
   message, isMe, theme, reactions, currentUserId,
   onClose, onReact, onReply, onCopy, onInfo, onDeleteForMe, onDeleteForEveryone,
@@ -1105,7 +1100,12 @@ function MessageMenu({
 
 function MessageInfoModal({
   message, isMe, targetName, onClose,
-}: { message: LocalMessage; isMe: boolean; targetName: string; onClose: () => void }) {
+}: {
+  message: LocalMessage;
+  isMe: boolean;
+  targetName: string;
+  onClose: () => void;
+}) {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
     window.addEventListener('keydown', onKey);
@@ -1241,17 +1241,17 @@ function ReplyPreviewBubble({
 }
 
 function ChatContextMenu({
-  friend, isPinned, isMuted, onClose, onPin, onMute, onMarkRead, onClearChat, onBlock, onUnfriend,
+  friend, isPinned, isMuted, onClose, onPin, onMute, onMarkRead, onDeleteFromHere, onBlock, onUnfriend,
 }: {
   friend: FriendDto; isPinned: boolean; isMuted: boolean;
   onClose: () => void; onPin: () => void; onMute: () => void; onMarkRead: () => void;
-  onClearChat: () => void; onBlock: () => void; onUnfriend: () => void;
+  onDeleteFromHere: () => void; onBlock: () => void; onUnfriend: () => void;
 }) {
   const actions = [
     { key: 'pin', label: isPinned ? 'Unpin chat' : 'Pin chat', icon: isPinned ? <PinOff className="w-4 h-4" /> : <Pin className="w-4 h-4" />, onClick: onPin, danger: false },
     { key: 'mute', label: isMuted ? 'Unmute notifications' : 'Mute notifications', icon: isMuted ? <Bell className="w-4 h-4" /> : <BellOff className="w-4 h-4" />, onClick: onMute, danger: false },
     { key: 'read', label: 'Mark as read', icon: <CheckCheck className="w-4 h-4" />, onClick: onMarkRead, danger: false },
-    { key: 'clear', label: 'Clear chat', icon: <Eraser className="w-4 h-4" />, onClick: onClearChat, danger: false },
+    { key: 'deleteFromHere', label: 'Delete from here', icon: <Trash2 className="w-4 h-4" />, onClick: onDeleteFromHere, danger: false },
     { key: 'block', label: `Block @${friend.handle}`, icon: <ShieldOff className="w-4 h-4" />, onClick: onBlock, danger: true },
     { key: 'unfriend', label: `Unfriend @${friend.handle}`, icon: <UserMinus className="w-4 h-4" />, onClick: onUnfriend, danger: true },
   ];
@@ -1532,7 +1532,6 @@ const MessageRow = React.memo(
       return count > 0 && count * 1.5 >= chars.length;
     }, [displayText, hasText]);
 
-    // Call logs are not rendered in the chat list.
     if (message.call) return null;
 
     const isVoice = message.mediaType === MediaType.Audio;
@@ -1990,7 +1989,7 @@ function InfoModal({
 }
 
 /* ────────────────────────────────────────────────────────── */
-/* Telegram-style media preview (full screen, not in chat)    */
+/* MediaPreview                                               */
 /* ────────────────────────────────────────────────────────── */
 
 function MediaPreview({
@@ -2160,27 +2159,29 @@ function MediaPreview({
 }
 
 /* ────────────────────────────────────────────────────────── */
-/* Attachment panel (lives in the keyboard area)              */
+/* Attachment panel                                           */
 /* ────────────────────────────────────────────────────────── */
 
 function AttachPanel({
-  theme, onPhoto, onCamera, onDocument, onAudio,
+  theme, onPhoto, onCamera, onVideo, onDocument, onAudio,
 }: {
   theme: ChatTheme;
   onPhoto: () => void;
   onCamera: () => void;
+  onVideo: () => void;
   onDocument: () => void;
   onAudio: () => void;
 }) {
   const items = [
     { key: 'photo', label: 'Gallery', icon: <ImageIcon className="w-6 h-6" />, color: 'from-[#7C3AED] to-[#A855F7]', onClick: onPhoto },
     { key: 'camera', label: 'Camera', icon: <Camera className="w-6 h-6" />, color: 'from-[#EF4444] to-[#F97316]', onClick: onCamera },
+    { key: 'video', label: 'Video', icon: <Video className="w-6 h-6" />, color: 'from-[#EC4899] to-[#F43F5E]', onClick: onVideo },
     { key: 'doc', label: 'Document', icon: <FileText className="w-6 h-6" />, color: 'from-[#2563EB] to-[#3B82F6]', onClick: onDocument },
     { key: 'audio', label: 'Audio', icon: <Music className="w-6 h-6" />, color: 'from-[#F59E0B] to-[#F97316]', onClick: onAudio },
   ];
   return (
     <div className={`${PANEL_HEIGHT} border-t ${theme.subtleBorder} overflow-y-auto p-5`}>
-      <div className="grid grid-cols-4 gap-y-5 gap-x-2">
+      <div className="grid grid-cols-5 gap-y-5 gap-x-2">
         {items.map((it) => (
           <button
             key={it.key}
@@ -2200,8 +2201,7 @@ function AttachPanel({
 }
 
 /* ────────────────────────────────────────────────────────── */
-/* Composer — owns its own state so typing never re-renders   */
-/* the message list                                           */
+/* Composer                                                   */
 /* ────────────────────────────────────────────────────────── */
 
 type PanelKind = 'none' | 'emoji' | 'attach';
@@ -2233,6 +2233,7 @@ const Composer = React.memo(function Composer({
   const cameraRef = useRef<HTMLInputElement | null>(null);
   const documentRef = useRef<HTMLInputElement | null>(null);
   const audioRef = useRef<HTMLInputElement | null>(null);
+  const videoRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
     if (replyTo) textareaRef.current?.focus();
@@ -2277,9 +2278,17 @@ const Composer = React.memo(function Composer({
       input.value = '';
       return;
     }
+
+    // Auto-detect from MIME so a video picked via Document still
+    // renders as a <video> player instead of a download link.
+    let resolvedType = type;
+    if (file.type.startsWith('video/')) resolvedType = MediaType.Video;
+    else if (file.type.startsWith('image/')) resolvedType = MediaType.Image;
+    else if (file.type.startsWith('audio/')) resolvedType = MediaType.Audio;
+
     setPanel('none');
     try {
-      await onSendMedia(await readAsDataUrl(file), type);
+      await onSendMedia(await readAsDataUrl(file), resolvedType);
     } catch (err) {
       setFileError(extractErrorMessage(err));
     } finally {
@@ -2453,6 +2462,7 @@ const Composer = React.memo(function Composer({
             theme={theme}
             onPhoto={() => galleryRef.current?.click()}
             onCamera={() => cameraRef.current?.click()}
+            onVideo={() => videoRef.current?.click()}
             onDocument={() => documentRef.current?.click()}
             onAudio={() => audioRef.current?.click()}
           />
@@ -2463,6 +2473,7 @@ const Composer = React.memo(function Composer({
       <input type="file" ref={cameraRef} onChange={(e) => void addImages(e)} accept="image/*" capture="environment" className="hidden" />
       <input type="file" ref={documentRef} onChange={(e) => void sendRawFile(e, MediaType.File)} className="hidden" />
       <input type="file" ref={audioRef} onChange={(e) => void sendRawFile(e, MediaType.Audio)} accept="audio/*" className="hidden" />
+      <input type="file" ref={videoRef} onChange={(e) => void sendRawFile(e, MediaType.Video)} accept="video/*" className="hidden" />
 
       {previewFiles.length > 0 && (
         <MediaPreview
@@ -2488,9 +2499,6 @@ export function DirectMessagePane(): React.JSX.Element {
   const navigate = useNavigate();
   const { user } = useAuth();
 
-  // useCall() exposes the live call state used to render the floating
-  // timer pill during a connected call. No call logs are written or
-  // rendered in chat — only the pill.
   const callCtx = useCall() as unknown as {
     initiateCall: (peerId: string, type: CallType) => Promise<void>;
     callState: CallState;
@@ -2537,11 +2545,35 @@ export function DirectMessagePane(): React.JSX.Element {
 
   const [pinnedIds, setPinnedIds] = useState<Set<string>>(() => readPinned(user?.id));
   const [mutedIds, setMutedIds] = useState<Set<string>>(() => readMuted(user?.id));
+  const [hiddenDmIds, setHiddenDmIds] = useState<Set<string>>(() => readHiddenDms(user?.id));
 
   useEffect(() => {
     setPinnedIds(readPinned(user?.id));
     setMutedIds(readMuted(user?.id));
+    setHiddenDmIds(readHiddenDms(user?.id));
   }, [user?.id]);
+
+  useEffect(() => {
+    writeHiddenDms(user?.id, hiddenDmIds);
+  }, [user?.id, hiddenDmIds]);
+
+  const unhideDm = useCallback((peerId: string) => {
+    setHiddenDmIds((prev) => {
+      if (!prev.has(peerId)) return prev;
+      const next = new Set(prev);
+      next.delete(peerId);
+      return next;
+    });
+  }, []);
+
+  const hideDm = useCallback((peerId: string) => {
+    setHiddenDmIds((prev) => {
+      if (prev.has(peerId)) return prev;
+      const next = new Set(prev);
+      next.add(peerId);
+      return next;
+    });
+  }, []);
 
   const [chatThemeKey, setChatThemeKey] = useState<ChatThemeKey>(() => readThemeFor(user?.id, userId));
 
@@ -2607,14 +2639,44 @@ export function DirectMessagePane(): React.JSX.Element {
     if (el) el.scrollTop = el.scrollHeight;
   }, []);
 
+  // ── Batched load: friends + previews in one state update ──
+  // Fetching both together and setting both in the same tick means the
+  // first render of the sidebar is already sorted by most recent message.
+  // No "unsorted → sorted" flip that would reshuffle rows on load.
   const loadFriends = useCallback(async () => {
     try {
       const friendList = await apiService.getFriends();
+
+      if (!user?.id) {
+        setFriends(friendList);
+        return;
+      }
+
+      const previews = await Promise.all(
+        friendList.map(async (f) => {
+          try {
+            const history = await apiService.getDmHistory(f.userId, 1);
+            if (history.length === 0) return null;
+            const decrypted = await decryptBatch(history, user.id);
+            return { userId: f.userId, msg: decrypted[0] };
+          } catch {
+            return null;
+          }
+        }),
+      );
+
+      const lastMap: Record<string, DirectMessageDto> = {};
+      for (const p of previews) {
+        if (p) lastMap[p.userId] = p.msg;
+      }
+
+      // Both updates in the same tick → React batches into one render.
       setFriends(friendList);
+      setLastMessages(lastMap);
     } catch (err) {
       console.error('Failed to load friends list:', err);
     }
-  }, []);
+  }, [user?.id]);
 
   useEffect(() => { void loadFriends(); }, [loadFriends]);
 
@@ -2622,35 +2684,6 @@ export function DirectMessagePane(): React.JSX.Element {
     const unsub = presenceStore.subscribe(() => setPresenceTick((v) => v + 1));
     return () => unsub();
   }, []);
-
-  useEffect(() => {
-    if (friends.length === 0 || !user?.id) return;
-    let active = true;
-    const seedPreviews = async () => {
-      const results = await Promise.all(
-        friends.map(async (f) => {
-          try {
-            const history = await apiService.getDmHistory(f.userId, 1);
-            if (history.length === 0) return null;
-            const decrypted = await decryptBatch(history, user.id);
-            return { userId: f.userId, msg: decrypted[0] };
-          } catch { return null; }
-        }),
-      );
-      if (!active) return;
-      setLastMessages((prev) => {
-        const next = { ...prev };
-        for (const r of results) {
-          if (!r) continue;
-          const existing = next[r.userId];
-          if (!existing || getMessageTime(r.msg) > getMessageTime(existing)) next[r.userId] = r.msg;
-        }
-        return next;
-      });
-    };
-    void seedPreviews();
-    return () => { active = false; };
-  }, [friends, user?.id]);
 
   const isConfirmedFriend = useMemo(() => {
     if (!userId) return false;
@@ -2661,24 +2694,32 @@ export function DirectMessagePane(): React.JSX.Element {
 
   const filteredFriends = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
-    const base = [...friends];
+    const base = friends.filter((f) => !hiddenDmIds.has(f.userId));
     const list = q
       ? base.filter(
           (f) => f.displayName.toLowerCase().includes(q) || (f.handle ?? '').toLowerCase().includes(q),
         )
       : base;
+
+    // Sort: pinned first → most recent message → stable tiebreaker on
+    // friendshipId so rows with equal timestamps never flip-flop.
     list.sort((a, b) => {
       const aP = pinnedIds.has(a.userId) ? 1 : 0;
       const bP = pinnedIds.has(b.userId) ? 1 : 0;
       if (aP !== bP) return bP - aP;
+
       const ma = lastMessages[a.userId];
       const mb = lastMessages[b.userId];
       const ta = ma ? getMessageTime(ma) : 0;
       const tb = mb ? getMessageTime(mb) : 0;
-      return tb - ta;
+      if (tb !== ta) return tb - ta;
+
+      // No message on either side, or equal timestamps → stable order.
+      return a.friendshipId - b.friendshipId;
     });
+
     return list;
-  }, [friends, searchQuery, lastMessages, pinnedIds]);
+  }, [friends, searchQuery, lastMessages, pinnedIds, hiddenDmIds]);
 
   const chatImages = useMemo(
     () =>
@@ -2964,6 +3005,8 @@ export function DirectMessagePane(): React.JSX.Element {
 
         const otherId = msg.senderId === user?.id ? msg.recipientId : msg.senderId;
         if (otherId) {
+          // Re-surface a hidden conversation when a message goes in or out.
+          unhideDm(otherId);
           setLastMessages((prev) => {
             const existing = prev[otherId];
             if (existing && getMessageTime(existing) >= getMessageTime(local)) return prev;
@@ -2974,7 +3017,6 @@ export function DirectMessagePane(): React.JSX.Element {
         if (isCurrentChat) {
           startTransition(() => { setMessages((prev) => mergeIncoming(prev, local)); });
           if (msg.senderId === userIdRef.current) {
-            // Don't chime for call events.
             if (!local.call) playReceive();
             void apiService.markDmRead(userIdRef.current!);
           }
@@ -2985,7 +3027,7 @@ export function DirectMessagePane(): React.JSX.Element {
       },
     );
     return () => { unsub(); };
-  }, [user?.id]);
+  }, [user?.id, unhideDm]);
 
   useLayoutEffect(() => {
     const el = messagesContainerRef.current;
@@ -3044,12 +3086,13 @@ export function DirectMessagePane(): React.JSX.Element {
         }
         await signalRService.sendDirectMessage({ recipientId: userId, ciphertext, nonce, mediaUrl, mediaType });
         playSend();
+        unhideDm(userId);
       } catch (err) {
         setMessages((prev) => prev.filter((m) => m.id !== tempId));
         throw err;
       }
     },
-    [userId, user?.id],
+    [userId, user?.id, unhideDm],
   );
 
   const handleSendMedia = useCallback(
@@ -3113,6 +3156,7 @@ export function DirectMessagePane(): React.JSX.Element {
             });
             playSend();
           }
+          unhideDm(userId);
         } else if (text.length > 0) {
           const payload = replyId != null ? encodeReply(replyId, text) : text;
 
@@ -3136,13 +3180,14 @@ export function DirectMessagePane(): React.JSX.Element {
             mediaUrl: undefined, mediaType: undefined,
           });
           playSend();
+          unhideDm(userId);
         }
       } catch (err) {
         setMessages((prev) => prev.filter((m) => !tempIds.includes(m.id as number)));
         throw err;
       }
     },
-    [userId, user?.id],
+    [userId, user?.id, unhideDm],
   );
 
   const handleReact = useCallback(
@@ -3169,7 +3214,7 @@ export function DirectMessagePane(): React.JSX.Element {
 
   const handleStartReply = useCallback((m: LocalMessage) => {
     if (typeof m.id === 'number' && m.id < 0) return;
-    if (m.call) return; // Call events aren't repliable.
+    if (m.call) return;
     setReplyTo(m);
   }, []);
 
@@ -3313,7 +3358,6 @@ export function DirectMessagePane(): React.JSX.Element {
     let lastTs = 0;
 
     for (const m of messages) {
-      // Call log events are never shown in the chat list.
       if (m.call) continue;
 
       const day = parseUtc(m.sentAt).toDateString();
@@ -3329,7 +3373,6 @@ export function DirectMessagePane(): React.JSX.Element {
       lastSenderId = m.senderId ?? '';
       lastTs = ts;
     }
-    // Mark "last of group" — next item must be a real message from the same sender.
     for (let i = 0; i < out.length; i++) {
       const it = out[i];
       if (it.type !== 'msg') continue;
@@ -3376,7 +3419,7 @@ export function DirectMessagePane(): React.JSX.Element {
         <div className="h-[68px] px-5 flex items-center justify-between shrink-0">
           <div className="flex items-baseline gap-2">
             <h2 className={`text-[22px] font-bold tracking-tight ${theme.textPrimary}`}>Chats</h2>
-            <span className={`text-[12px] tabular-nums font-semibold ${theme.textSecondary}`}>{friends.length}</span>
+            <span className={`text-[12px] tabular-nums font-semibold ${theme.textSecondary}`}>{filteredFriends.length}</span>
           </div>
         </div>
 
@@ -3396,7 +3439,11 @@ export function DirectMessagePane(): React.JSX.Element {
         <div className="flex-1 overflow-y-auto px-2.5 pb-2 space-y-0.5">
           {filteredFriends.length === 0 ? (
             <div className={`p-8 text-center text-[13px] font-medium ${theme.textSecondary}`}>
-              {friends.length === 0 ? 'No contacts yet.' : 'No matches found.'}
+              {friends.length === 0
+                ? 'No contacts yet.'
+                : searchQuery
+                ? 'No matches found.'
+                : 'No conversations. Start one from Friends.'}
             </div>
           ) : (
             filteredFriends.map((friend) => (
@@ -3704,10 +3751,21 @@ export function DirectMessagePane(): React.JSX.Element {
             setUnreadCounts((prev) => { const next = { ...prev }; delete next[chatMenuFriend.userId]; return next; });
             void apiService.markDmRead(chatMenuFriend.userId);
           }}
-          onClearChat={() => {
-            void apiService.clearConversation(chatMenuFriend.userId);
-            setLastMessages((prev) => { const next = { ...prev }; delete next[chatMenuFriend.userId]; return next; });
-            if (chatMenuFriend.userId === userId) { setMessages([]); setReactions({}); }
+          onDeleteFromHere={() => {
+            const peerId = chatMenuFriend.userId;
+            // Clear messages on the server (WhatsApp "delete chat" semantics)
+            void apiService.clearConversation(peerId).catch(() => {});
+            // Hide from sidebar
+            hideDm(peerId);
+            // Wipe local previews + unread
+            setLastMessages((prev) => { const next = { ...prev }; delete next[peerId]; return next; });
+            setUnreadCounts((prev) => { const next = { ...prev }; delete next[peerId]; return next; });
+            // If currently viewing that chat, drop messages and navigate away
+            if (peerId === userId) {
+              setMessages([]);
+              setReactions({});
+              navigate('/app/dm');
+            }
           }}
           onBlock={async () => {
             try {
