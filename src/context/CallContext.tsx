@@ -80,21 +80,13 @@ export interface CallContextType {
   expand: () => void;
   replaceVideoTrack: (track: MediaStreamTrack) => void;
 
-  /* ── DM notifications ─────────────────────────────── */
-
   unreadCounts: Record<string, number>;
   totalUnread: number;
   clearUnread: (userId: string) => void;
   requestNotificationPermission: () => Promise<void>;
   notificationPermission: NotificationPermission | 'unsupported';
 
-  /**
-   * Prefetched DM history keyed by sender id. Populated as notifications
-   * arrive so `DirectMessagePane` can render instantly on click. The pane
-   * is free to ignore this — it's an optional cache.
-   */
   prefetchedHistory: Map<string, DirectMessageDto[]>;
-  /** Read + clear the prefetch for a peer. */
   consumePrefetchedHistory: (userId: string) => DirectMessageDto[] | null;
 }
 
@@ -109,10 +101,6 @@ const DISCONNECT_WATCHDOG_MS = 30000;
 const API_TIMEOUT_MS = 5000;
 const SESSION_TIMEOUT_MS = 15000;
 const RING_ACK_TIMEOUT_MS = 20000;
-
-/* ─────────────────────────────────────────────────────────
-   DM notification helpers
-   ───────────────────────────────────────────────────────── */
 
 const DM_UNREAD_KEY = (uid: string) => `orbital.unreadDms.${uid}`;
 const NOTIF_PROMPTED_KEY = 'orbital.notifPrompted.v1';
@@ -141,10 +129,6 @@ function isInDmSection(): boolean {
   );
 }
 
-/**
- * Turn a raw DM into a single-line human preview.
- * Strips internal control payloads so `[call:audio:missed:0]` never leaks.
- */
 function previewTextFor(msg: DirectMessageDto): string {
   let body = msg.plaintext ?? msg.content ?? '';
 
@@ -172,13 +156,6 @@ function previewTextFor(msg: DirectMessageDto): string {
   return trimmed || 'New message';
 }
 
-/**
- * In-app message toast.
- *
- * The entire card body is the "open chat" affordance — one big click
- * target, no footer buttons. A single subtle X in the top-right corner
- * dismisses without opening.
- */
 function MessageToast({
   name,
   avatarUrl,
@@ -227,10 +204,6 @@ function MessageToast({
     </div>
   );
 }
-
-/* ─────────────────────────────────────────────────────────
-   Ringtone — Web Audio, soft & phone-like
-   ───────────────────────────────────────────────────────── */
 
 interface ToneStep {
   freq: number;
@@ -326,10 +299,6 @@ function useRingtone(
   }, []);
 }
 
-/* ─────────────────────────────────────────────────────────
-   Audio-file ringtone — loops an actual MP3/audio file.
-   ───────────────────────────────────────────────────────── */
-
 function useAudioRingtone(
   active: boolean,
   src: string,
@@ -386,8 +355,6 @@ function useAudioRingtone(
   }, []);
 }
 
-/* ── Ringtone presets ────────────────────────────────────── */
-
 const RINGBACK_PATTERN: ToneStep[] = [
   { freq: 587.33, durationMs: 320, gapAfterMs: 90 },
   { freq: 880.0, durationMs: 520, gapAfterMs: 0 },
@@ -405,8 +372,6 @@ const END_PATTERN: ToneStep[] = [
   { freq: 659.25, durationMs: 140, gapAfterMs: 50 },
   { freq: 493.88, durationMs: 260, gapAfterMs: 0 },
 ];
-
-/* ── Timeout helper ──────────────────────────────────────── */
 
 async function withTimeout<T>(
   promise: Promise<T>,
@@ -426,10 +391,6 @@ async function withTimeout<T>(
     if (timer != null) window.clearTimeout(timer);
   }
 }
-
-/* ─────────────────────────────────────────────────────────
-   Audio unlock — silent play on first user gesture
-   ───────────────────────────────────────────────────────── */
 
 function installAudioUnlock(): () => void {
   if (typeof window === 'undefined') return () => {};
@@ -474,17 +435,6 @@ function installAudioUnlock(): () => void {
   };
 }
 
-/* ─────────────────────────────────────────────────────────
-   Provider
-   ───────────────────────────────────────────────────────── */
-
-/**
- * The single in-app notification currently visible.
- *
- * Rendered via a portal directly into document.body — bypassing Sonner
- * entirely — so it can only ever appear ONCE, regardless of how many
- * `<Toaster>` components are mounted elsewhere in the app.
- */
 interface ActiveNotification {
   senderId: string;
   senderName: string;
@@ -515,8 +465,6 @@ function CallProviderComponent({
   const [duration, setDuration] = useState<number>(0);
   const [peerRinging, setPeerRinging] = useState<boolean>(false);
 
-  /* ── DM notification state ───────────────────────────── */
-
   const [unreadCounts, setUnreadCounts] = useState<Record<string, number>>(
     () => (myUserId ? readDmUnread(myUserId) : {}),
   );
@@ -529,12 +477,6 @@ function CallProviderComponent({
       : 'unsupported',
   );
 
-  /**
-   * Prefetch cache. Populated as soon as a notification is queued so the
-   * DM pane can render instantly on click. Keyed by sender id.
-   * `useCall()` consumers (i.e. DirectMessagePane) can call
-   * `consumePrefetchedHistory(senderId)` to skip the initial fetch+decrypt.
-   */
   const prefetchedHistoryRef = useRef<Map<string, DirectMessageDto[]>>(
     new Map(),
   );
@@ -542,13 +484,6 @@ function CallProviderComponent({
     Map<string, DirectMessageDto[]>
   >(() => new Map());
 
-  /**
-   * The single in-app notification. Only one can exist at a time — a new
-   * message replaces the current notification rather than stacking.
-   * Rendered via createPortal below, so it is fully independent of any
-   * `<Toaster>` instances elsewhere in the app. Fixes the duplicate-toast
-   * problem when the app mounts multiple Toasters.
-   */
   const [activeNotification, setActiveNotification] =
     useState<ActiveNotification | null>(null);
   const notifTimerRef = useRef<number | null>(null);
@@ -621,13 +556,6 @@ function CallProviderComponent({
     };
   }, []);
 
-  /* ── Service worker + click-through navigation ───────── */
-  //
-  // Registers the SW once so `registration.showNotification()` works on
-  // Android Chrome and installed iOS PWAs (both of which reject the plain
-  // `new Notification()` constructor). Also listens for the SW's
-  // "NAVIGATE" message, which is posted when the user clicks a system
-  // notification — this navigates the SPA without a full page reload.
   useEffect(() => {
     void registerServiceWorker();
 
@@ -648,8 +576,6 @@ function CallProviderComponent({
       navigator.serviceWorker.removeEventListener('message', onMessage);
     };
   }, [navigate]);
-
-  /* ── DM unread persistence + hydrate ─────────────────── */
 
   useEffect(() => {
     if (!myUserId) {
@@ -690,23 +616,16 @@ function CallProviderComponent({
     }
   }, []);
 
-  /**
-   * Read + clear the prefetched history for a peer.
-   * Called by DirectMessagePane (optional). Returns null if nothing cached.
-   */
   const consumePrefetchedHistory = useCallback(
     (peer: string): DirectMessageDto[] | null => {
       const cached = prefetchedHistoryRef.current.get(peer);
       if (!cached) return null;
       prefetchedHistoryRef.current.delete(peer);
-      // Mirror into state so consumers can react to invalidation.
       setPrefetchedHistory(new Map(prefetchedHistoryRef.current));
       return cached;
     },
     [],
   );
-
-  /* ── Dismiss helpers for the portal notification ─────── */
 
   const dismissActiveNotification = useCallback(() => {
     if (notifTimerRef.current != null) {
@@ -716,7 +635,6 @@ function CallProviderComponent({
     setActiveNotification(null);
   }, []);
 
-  // Clean up the pending notification timer on unmount.
   useEffect(() => {
     return () => {
       if (notifTimerRef.current != null) {
@@ -726,7 +644,6 @@ function CallProviderComponent({
     };
   }, []);
 
-  /* ── Global DM listener (notifications + prefetch) ───── */
   useEffect(() => {
     if (!myUserId) return;
 
@@ -740,7 +657,6 @@ function CallProviderComponent({
         const tabHidden =
           typeof document !== 'undefined' && document.hidden;
 
-        // ── Unread ────────────────────────────────────────
         if (!paneMounted) {
           setUnreadCounts(() => {
             const fresh = readDmUnread(myUserId);
@@ -749,7 +665,6 @@ function CallProviderComponent({
           });
         }
 
-        // ── Sound ─────────────────────────────────────────
         if (!paneMounted) {
           const now = Date.now();
           const last = lastSoundAtRef.current[senderId] ?? 0;
@@ -763,18 +678,11 @@ function CallProviderComponent({
           }
         }
 
-        // ── Ultra-fast prefetch ───────────────────────────
-        // Fire-and-forget: fetch full history for this peer so the DM pane
-        // has data ready the instant the user taps the notification. We
-        // stash the raw DTOs (un-decrypted — the pane handles that) in a
-        // module-level cache. Multiple messages from the same sender within
-        // a short window coalesce into one fetch.
         if (!paneMounted && !prefetchedHistoryRef.current.has(senderId)) {
           void apiService
             .getDmHistory(senderId, 200)
             .then((history) => {
               prefetchedHistoryRef.current.set(senderId, history);
-              // Public mirror — cheap since consumers only read on mount.
               setPrefetchedHistory(new Map(prefetchedHistoryRef.current));
             })
             .catch(() => {
@@ -782,7 +690,6 @@ function CallProviderComponent({
             });
         }
 
-        // ── Resolve display data ──────────────────────────
         let senderName = 'Someone';
         let avatarUrl: string | null = null;
         let preview = 'New message';
@@ -801,11 +708,6 @@ function CallProviderComponent({
           /* ignore */
         }
 
-        // ── Browser notification (tab is hidden) ──────────
-        // Routed through the service worker (via `showDmNotification`),
-        // which is the ONLY path that works on Android Chrome and
-        // installed iOS PWAs. Falls back to `new Notification()` on
-        // desktop browsers that don't have a SW yet.
         if (
           tabHidden &&
           notificationPermissionRef.current === 'granted' &&
@@ -820,11 +722,6 @@ function CallProviderComponent({
           return;
         }
 
-        // ── In-app notification ───────────────────────────
-        // Rendered via createPortal (below). Only one can be visible at
-        // a time — a new message replaces the previous notification.
-        // Bypassing Sonner entirely eliminates the duplicate-toast issue
-        // that occurs when more than one <Toaster> is mounted.
         if (!tabHidden && !paneMounted) {
           if (notifTimerRef.current != null) {
             window.clearTimeout(notifTimerRef.current);
@@ -846,8 +743,6 @@ function CallProviderComponent({
 
     return unsub;
   }, [myUserId, navigate]);
-
-  /* ── Auto-request Notification permission (once ever) ── */
 
   useEffect(() => {
     if (typeof Notification === 'undefined') return;
@@ -886,8 +781,6 @@ function CallProviderComponent({
     [unreadCounts],
   );
 
-  /* ── Ringtone ────────────────────────────────────────── */
-
   const isOutgoingRinging = callState === 'outgoing' && !isMinimized;
   const isIncomingRinging = callState === 'incoming';
 
@@ -899,8 +792,6 @@ function CallProviderComponent({
     setEndToneActive(true);
     window.setTimeout(() => setEndToneActive(false), 1500);
   }, []);
-
-  /* ── Duration ticker ─────────────────────────────────── */
 
   useEffect(() => {
     if (callState !== 'active') {
@@ -919,8 +810,6 @@ function CallProviderComponent({
     const id = window.setInterval(tick, 250);
     return () => window.clearInterval(id);
   }, [callState]);
-
-  /* ── Peer ID resolver ────────────────────────────────── */
 
   const resolvePeerId = useCallback(
     (
@@ -944,8 +833,6 @@ function CallProviderComponent({
     },
     [myUserId],
   );
-
-  /* ── Watchdogs ───────────────────────────────────────── */
 
   const clearWatchdog = useCallback(() => {
     if (watchdogRef.current != null) {
@@ -978,10 +865,13 @@ function CallProviderComponent({
 
   /* ── ICE config ──────────────────────────────────────── */
   //
-  // TURN credentials are generated server-side (Cloudflare + Metered)
-  // and returned as an array. This function only maps them into the
-  // shape RTCPeerConnection expects. No hardcoded fallback providers
-  // here — the backend decides which TURN services are active.
+  // Cloudflare is enforced as the ONLY TURN provider in the frontend.
+  // WebRTC does not respect array order — it races every candidate in
+  // parallel. So "priority" here means: if the backend returns a valid
+  // Cloudflare TURN entry, we drop any other TURN entries (Metered) and
+  // only pass Cloudflare to RTCPeerConnection. STUN-only entries are
+  // always kept. If no Cloudflare TURN entry is present, the backend's
+  // full response is used unchanged (Metered fallback still available).
 
   const getRtcConfiguration = useCallback(async (): Promise<RTCConfiguration> => {
     try {
@@ -991,12 +881,30 @@ function CallProviderComponent({
         'getIceServers',
       );
       if (serverConfigs && serverConfigs.length > 0) {
+        const hasCloudflareTurn = serverConfigs.some(
+          (c) =>
+            !!c.username &&
+            c.urls.some((u) => u.startsWith('turn') && u.includes('cloudflare')),
+        );
+
+        const used = hasCloudflareTurn
+          ? serverConfigs.filter((c) => {
+              const isCloudflare = c.urls.some((u) => u.includes('cloudflare'));
+              const isStunOnly =
+                !c.username && c.urls.every((u) => u.startsWith('stun'));
+              return isCloudflare || isStunOnly;
+            })
+          : serverConfigs;
+
         console.log('[Call] ICE config from backend', {
-          count: serverConfigs.length,
-          urls: serverConfigs.flatMap((c) => c.urls),
+          total: serverConfigs.length,
+          used: used.length,
+          cloudflareOnly: hasCloudflareTurn,
+          urls: used.flatMap((c) => c.urls),
         });
+
         return {
-          iceServers: serverConfigs.map((c) => ({
+          iceServers: used.map((c) => ({
             urls: c.urls,
             username: c.username ?? undefined,
             credential: c.credential ?? undefined,
@@ -1008,7 +916,6 @@ function CallProviderComponent({
       /* fall through */
     }
 
-    // Backend unreachable — STUN-only fallback.
     console.log('[Call] ICE config: STUN-only fallback');
     return {
       iceServers: [
@@ -1018,8 +925,6 @@ function CallProviderComponent({
       iceTransportPolicy: 'all',
     };
   }, []);
-
-  /* ── Teardown ────────────────────────────────────────── */
 
   const teardown = useCallback(
     (opts: { playTone?: boolean } = {}) => {
@@ -1122,8 +1027,6 @@ function CallProviderComponent({
     teardownRef.current = teardown;
   }, [teardown]);
 
-  /* ── ICE queue ───────────────────────────────────────── */
-
   const drainIceCandidateQueue = useCallback(async (pc: RTCPeerConnection) => {
     remoteDescriptionSetRef.current = true;
     while (iceCandidateQueueRef.current.length > 0) {
@@ -1136,8 +1039,6 @@ function CallProviderComponent({
       }
     }
   }, []);
-
-  /* ── Media ───────────────────────────────────────────── */
 
   const acquireMediaStream = useCallback(
     async (callType: number): Promise<MediaStream> => {
@@ -1190,8 +1091,6 @@ function CallProviderComponent({
     },
     [],
   );
-
-  /* ── Peer connection ─────────────────────────────────── */
 
   const createPeerConnection = useCallback(
     async (
@@ -1349,8 +1248,6 @@ function CallProviderComponent({
     [getRtcConfiguration, teardown, clearWatchdog, clearRingAckTimer, isSpeakerOn],
   );
 
-  /* ── Call-to-chat logging ────────────────────────────── */
-
   const logCallToChat = useCallback(
     async (
       peer: string,
@@ -1381,8 +1278,6 @@ function CallProviderComponent({
     },
     [user?.id],
   );
-
-  /* ── Initiate (caller) ───────────────────────────────── */
 
   const initiateCall = useCallback(
     async (targetPeerId: string, callType: number): Promise<void> => {
@@ -1450,8 +1345,6 @@ function CallProviderComponent({
     },
     [teardown, acquireMediaStream, createPeerConnection, clearRingAckTimer],
   );
-
-  /* ── Accept (callee) ─────────────────────────────────── */
 
   const acceptCall = useCallback(async (): Promise<void> => {
     const incoming = incomingCallRef.current;
@@ -1542,8 +1435,6 @@ function CallProviderComponent({
     clearWatchdog,
   ]);
 
-  /* ── Reject ──────────────────────────────────────────── */
-
   const rejectCall = useCallback(async (): Promise<void> => {
     const incoming = incomingCallRef.current;
     if (!incoming) return;
@@ -1571,8 +1462,6 @@ function CallProviderComponent({
       console.warn('[Call] Reject cleanup error (ignored):', err);
     }
   }, [resolvePeerId, teardown]);
-
-  /* ── End ─────────────────────────────────────────────── */
 
   const endCall = useCallback(async (): Promise<void> => {
     const currentSession = sessionRef.current;
@@ -1628,8 +1517,6 @@ function CallProviderComponent({
     endCallRef.current = endCall;
   }, [endCall]);
 
-  /* ── Session storage ─────────────────────────────────── */
-
   useEffect(() => {
     if (typeof window === 'undefined') return;
     if (session?.sessionId) {
@@ -1673,8 +1560,6 @@ function CallProviderComponent({
     void apiService.endCall(stale).catch(() => {});
   }, []);
 
-  /* ── Toggles ─────────────────────────────────────────── */
-
   const toggleMute = useCallback(() => {
     if (!localStream) return;
     const next = !isMuted;
@@ -1692,8 +1577,6 @@ function CallProviderComponent({
     });
     setIsVideoOff(next);
   }, [localStream, isVideoOff]);
-
-  /* ── Screen share ────────────────────────────────────── */
 
   const stopScreenShare = useCallback(() => {
     const pc = peerConnectionRef.current;
@@ -1770,8 +1653,6 @@ function CallProviderComponent({
     }
   }, [stopScreenShare]);
 
-  /* ── Camera flip ─────────────────────────────────────── */
-
   const replaceVideoTrack = useCallback((track: MediaStreamTrack) => {
     const pc = peerConnectionRef.current;
     if (!pc) return;
@@ -1781,8 +1662,6 @@ function CallProviderComponent({
       console.warn('[Call] replaceVideoTrack failed:', err);
     });
   }, []);
-
-  /* ── Speaker toggle ──────────────────────────────────── */
 
   const setSpeakerOn = useCallback((on: boolean) => {
     setIsSpeakerOn(on);
@@ -1795,8 +1674,6 @@ function CallProviderComponent({
 
   const minimize = useCallback(() => setIsMinimized(true), []);
   const expand = useCallback(() => setIsMinimized(false), []);
-
-  /* ── Signaling ───────────────────────────────────────── */
 
   const handleSignalMessage = useCallback(
     async (payload: CallSignalPayload) => {
@@ -1893,8 +1770,6 @@ function CallProviderComponent({
     [drainIceCandidateQueue, clearRingAckTimer],
   );
 
-  /* ── SignalR subscriptions ───────────────────────────── */
-
   useEffect(() => {
     const unsubIncoming = signalRService.onIncomingCall(
       (call: CallSessionDto) => {
@@ -1966,8 +1841,6 @@ function CallProviderComponent({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  /* ── Watchdog arm/disarm ─────────────────────────────── */
-
   useEffect(() => {
     if (callState === 'connecting' || callState === 'outgoing') {
       armWatchdog();
@@ -1976,8 +1849,6 @@ function CallProviderComponent({
     }
     return clearWatchdog;
   }, [callState, armWatchdog, clearWatchdog]);
-
-  /* ── Context value ───────────────────────────────────── */
 
   const contextValue = useMemo<CallContextType>(
     () => ({
@@ -2058,15 +1929,6 @@ function CallProviderComponent({
     <CallContext.Provider value={contextValue}>
       {children}
 
-      {/*
-        In-app DM notification — rendered via portal directly into
-        document.body. It is a singleton (only one `activeNotification`
-        can exist at a time), so it cannot duplicate even if multiple
-        <Toaster> components are mounted elsewhere in the app.
-
-        Positioned below the mobile header on small screens (via
-        env(safe-area-inset-top)) and at the top-right corner on desktop.
-      */}
       {activeNotification && typeof document !== 'undefined' &&
         createPortal(
           <>
