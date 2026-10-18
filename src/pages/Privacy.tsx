@@ -287,7 +287,7 @@ export default function Privacy(): React.JSX.Element {
       <p>
         <strong>Data controller:</strong> Mayank
         <br />
-        <strong>Jurisdiction:</strong> Chandigarh, India
+        <strong>Jurisdiction:</strong> Delhi, India
       </p>
     </LegalLayout>
   );
