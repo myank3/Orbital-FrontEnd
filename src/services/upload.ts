@@ -15,6 +15,19 @@ import { API_BASE_URL, extractErrorMessage, getAccessToken } from './api';
  */
 export const MAX_FILE_SIZE = 5 * 1024 * 1024; // 5 MB
 
+/**
+ * Largest file we're willing to *try* to compress in-browser.
+ *
+ * This is NOT an upload cap — the server still rejects anything over
+ * MAX_FILE_SIZE. It just bounds how much work ffmpeg.wasm is asked to
+ * do on the user's machine before we give up and show an error.
+ *
+ * A 50 MB clip re-encoded at 360p with a bitrate budget derived from
+ * MAX_FILE_SIZE will comfortably fit under 5 MB for anything up to a
+ * few minutes long.
+ */
+export const MAX_TRANSCODE_INPUT = 50 * 1024 * 1024; // 50 MB
+
 export interface ValidationResult {
   valid: boolean;
   error?: string;
@@ -186,6 +199,7 @@ export async function uploadAttachment(file: File): Promise<UploadResponse> {
 
 const uploadService = {
   MAX_FILE_SIZE,
+  MAX_TRANSCODE_INPUT,
   determineMediaType,
   validateFileSize,
   formatFileSize,

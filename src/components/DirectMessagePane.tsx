@@ -43,7 +43,8 @@ import {
 import { Avatar } from './Avatar';
 import { UserProfileModal } from './UserProfileModal';
 import MessageSkeleton from './MessageSkeleton';
-import { formatFileSize, MAX_FILE_SIZE } from '../services/upload';
+import { formatFileSize, MAX_FILE_SIZE, MAX_TRANSCODE_INPUT } from '../services/upload';
+import { compressVideo } from '../services/videoCompress';
 import {
   Phone,
   Video,
@@ -88,6 +89,7 @@ import {
   Image as ImageIcon,
   Camera,
   Music,
+  Maximize,
 } from 'lucide-react';
 import {
   EmojiPanel,
@@ -1427,6 +1429,223 @@ function StickerBubble({ url }: { url: string }) {
 }
 
 /* ────────────────────────────────────────────────────────── */
+/* Custom video player — Telegram/iMessage style              */
+/* ────────────────────────────────────────────────────────── */
+
+function VideoBubble({ url }: { url: string }) {
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const hideTimerRef = useRef<number | null>(null);
+  const [playing, setPlaying] = useState(false);
+  const [progress, setProgress] = useState(0);
+  const [duration, setDuration] = useState(0);
+  const [showControls, setShowControls] = useState(true);
+  const [isFullscreen, setIsFullscreen] = useState(false);
+
+  useEffect(() => {
+    const v = videoRef.current;
+    if (!v) return;
+    const onTime = () => setProgress(v.currentTime);
+    const onMeta = () => { if (isFinite(v.duration) && v.duration > 0) setDuration(v.duration); };
+    const onEnd = () => { setPlaying(false); setShowControls(true); };
+    const onPlay = () => setPlaying(true);
+    const onPause = () => setPlaying(false);
+    v.addEventListener('timeupdate', onTime);
+    v.addEventListener('loadedmetadata', onMeta);
+    v.addEventListener('durationchange', onMeta);
+    v.addEventListener('ended', onEnd);
+    v.addEventListener('play', onPlay);
+    v.addEventListener('pause', onPause);
+    return () => {
+      v.removeEventListener('timeupdate', onTime);
+      v.removeEventListener('loadedmetadata', onMeta);
+      v.removeEventListener('durationchange', onMeta);
+      v.removeEventListener('ended', onEnd);
+      v.removeEventListener('play', onPlay);
+      v.removeEventListener('pause', onPause);
+    };
+  }, []);
+
+  useEffect(() => {
+    const onFsChange = () => {
+      setIsFullscreen(document.fullscreenElement === videoRef.current);
+    };
+    document.addEventListener('fullscreenchange', onFsChange);
+    document.addEventListener('webkitfullscreenchange', onFsChange);
+    return () => {
+      document.removeEventListener('fullscreenchange', onFsChange);
+      document.removeEventListener('webkitfullscreenchange', onFsChange);
+    };
+  }, []);
+
+  const togglePlay = useCallback(() => {
+    const v = videoRef.current;
+    if (!v) return;
+    if (v.paused) { void v.play().catch(() => {}); }
+    else { v.pause(); }
+  }, []);
+
+  const revealControls = useCallback(() => {
+    setShowControls(true);
+    if (hideTimerRef.current) window.clearTimeout(hideTimerRef.current);
+    if (playing) {
+      hideTimerRef.current = window.setTimeout(() => setShowControls(false), 2400);
+    }
+  }, [playing]);
+
+  useEffect(() => {
+    if (!playing) {
+      if (hideTimerRef.current) window.clearTimeout(hideTimerRef.current);
+      setShowControls(true);
+      return;
+    }
+    revealControls();
+    return () => {
+      if (hideTimerRef.current) window.clearTimeout(hideTimerRef.current);
+    };
+  }, [playing, revealControls]);
+
+  const onSeek = (e: React.MouseEvent<HTMLDivElement>) => {
+    e.stopPropagation();
+    const v = videoRef.current;
+    if (!v || duration <= 0) return;
+    const rect = e.currentTarget.getBoundingClientRect();
+    const pct = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+    v.currentTime = pct * duration;
+    setProgress(pct * duration);
+    revealControls();
+  };
+
+  const onFullscreen = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    const v = videoRef.current;
+    if (!v) return;
+    if (document.fullscreenElement) {
+      void document.exitFullscreen().catch(() => {});
+    } else {
+      // Fullscreen the <video> element directly — NOT the container.
+      // The container has border-radius + overflow-hidden + max-w constraints
+      // that clip the video in fullscreen on Chromium/Safari.
+      const p = v.requestFullscreen?.();
+      if (p && typeof p.catch === 'function') {
+        p.catch(() => {
+          // iOS Safari doesn't implement requestFullscreen on <video>;
+          // it only has webkitEnterFullscreen.
+          // @ts-expect-error non-standard
+          v.webkitEnterFullscreen?.();
+        });
+      }
+    }
+  };
+
+  const pct = duration > 0 ? Math.min(100, (progress / duration) * 100) : 0;
+  const showBigPlay = !playing && progress < 0.05;
+
+  return (
+    <div
+      ref={containerRef}
+      className={`relative bg-black ${
+        isFullscreen
+          ? 'rounded-none border-0 overflow-visible max-w-none w-full h-full'
+          : 'rounded-[20px] overflow-hidden border border-white/[0.04] max-w-full'
+      }`}
+      onMouseMove={revealControls}
+      onMouseLeave={() => { if (playing) setShowControls(false); }}
+      onTouchStart={revealControls}
+    >
+      <video
+        ref={videoRef}
+        src={url}
+        preload="metadata"
+        playsInline
+        className={`block w-auto max-w-full ${
+          isFullscreen ? 'max-h-none h-full w-full' : 'max-h-[380px]'
+        }`}
+        onClick={togglePlay}
+      />
+
+      {/* Big center play button — only before the video has started */}
+      {showBigPlay && (
+        <button
+          type="button"
+          onClick={(e) => { e.stopPropagation(); togglePlay(); }}
+          className="absolute inset-0 flex items-center justify-center bg-black/15"
+          aria-label="Play video"
+        >
+          <span className="w-14 h-14 rounded-full bg-black/60 backdrop-blur-md flex items-center justify-center text-white border border-white/15 shadow-lg">
+            <span className="w-0 h-0 border-y-[10px] border-y-transparent border-l-[15px] border-l-white ml-1" />
+          </span>
+        </button>
+      )}
+
+      {/* Top-right action buttons */}
+      <div
+        className={`absolute top-2 right-2 flex items-center gap-1.5 transition-opacity duration-150 ${
+          showControls ? 'opacity-100' : 'opacity-0 pointer-events-none'
+        }`}
+      >
+        <button
+          type="button"
+          onClick={onFullscreen}
+          className="w-8 h-8 rounded-full bg-black/60 backdrop-blur-md text-white flex items-center justify-center hover:bg-black/80 transition-colors"
+          aria-label="Fullscreen"
+        >
+          <Maximize className="w-3.5 h-3.5" />
+        </button>
+        <a
+          href={url}
+          download
+          onClick={(e) => e.stopPropagation()}
+          className="w-8 h-8 rounded-full bg-black/60 backdrop-blur-md text-white flex items-center justify-center hover:bg-black/80 transition-colors"
+          aria-label="Download video"
+        >
+          <Download className="w-3.5 h-3.5" />
+        </a>
+      </div>
+
+      {/* Bottom controls bar */}
+      <div
+        className={`absolute inset-x-0 bottom-0 px-3 py-2 bg-gradient-to-t from-black/85 via-black/40 to-transparent transition-opacity duration-150 ${
+          showControls ? 'opacity-100' : 'opacity-0 pointer-events-none'
+        }`}
+      >
+        <div className="flex items-center gap-2.5">
+          <button
+            type="button"
+            onClick={(e) => { e.stopPropagation(); togglePlay(); }}
+            className="shrink-0 w-7 h-7 rounded-full text-white flex items-center justify-center hover:bg-white/10"
+            aria-label={playing ? 'Pause' : 'Play'}
+          >
+            {playing ? (
+              <span className="flex gap-[3px]">
+                <span className="w-[3px] h-3.5 rounded-sm bg-current" />
+                <span className="w-[3px] h-3.5 rounded-sm bg-current" />
+              </span>
+            ) : (
+              <span className="w-0 h-0 border-y-[6px] border-y-transparent border-l-[10px] border-l-white ml-0.5" />
+            )}
+          </button>
+
+          <span className="text-[10.5px] font-medium text-white/90 tabular-nums shrink-0">
+            {formatDuration(progress)} / {duration > 0 ? formatDuration(duration) : '--:--'}
+          </span>
+
+          <div
+            onClick={onSeek}
+            className="flex-1 h-1 rounded-full bg-white/25 cursor-pointer relative"
+          >
+            <div
+              className="absolute inset-y-0 left-0 rounded-full bg-white"
+              style={{ width: `${pct}%` }}
+            />
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ────────────────────────────────────────────────────────── */
 /* MessageRow                                                 */
 /* ────────────────────────────────────────────────────────── */
 
@@ -1681,13 +1900,8 @@ const MessageRow = React.memo(
                   </button>
                 )}
 
-                {message.mediaType === MediaType.Video && (
-                  <video
-                    src={message.mediaUrl ?? undefined}
-                    controls
-                    preload="metadata"
-                    className="rounded-[20px] max-h-[380px] w-full bg-black border border-white/[0.04]"
-                  />
+                {message.mediaType === MediaType.Video && message.mediaUrl && (
+                  <VideoBubble url={message.mediaUrl} />
                 )}
 
                 {message.mediaType === MediaType.File && (
@@ -2159,8 +2373,16 @@ function MediaPreview({
 }
 
 /* ────────────────────────────────────────────────────────── */
-/* Attachment panel                                           */
+/* Attachment panel — 3 + 2 layout                            */
 /* ────────────────────────────────────────────────────────── */
+
+type AttachItem = {
+  key: string;
+  label: string;
+  icon: React.ReactNode;
+  color: string;
+  onClick: () => void;
+};
 
 function AttachPanel({
   theme, onPhoto, onCamera, onVideo, onDocument, onAudio,
@@ -2172,29 +2394,39 @@ function AttachPanel({
   onDocument: () => void;
   onAudio: () => void;
 }) {
-  const items = [
+  const items: AttachItem[] = [
     { key: 'photo', label: 'Gallery', icon: <ImageIcon className="w-6 h-6" />, color: 'from-[#7C3AED] to-[#A855F7]', onClick: onPhoto },
     { key: 'camera', label: 'Camera', icon: <Camera className="w-6 h-6" />, color: 'from-[#EF4444] to-[#F97316]', onClick: onCamera },
     { key: 'video', label: 'Video', icon: <Video className="w-6 h-6" />, color: 'from-[#EC4899] to-[#F43F5E]', onClick: onVideo },
     { key: 'doc', label: 'Document', icon: <FileText className="w-6 h-6" />, color: 'from-[#2563EB] to-[#3B82F6]', onClick: onDocument },
     { key: 'audio', label: 'Audio', icon: <Music className="w-6 h-6" />, color: 'from-[#F59E0B] to-[#F97316]', onClick: onAudio },
   ];
+
+  const renderItem = (it: AttachItem) => (
+    <button
+      key={it.key}
+      type="button"
+      onClick={it.onClick}
+      className="flex flex-col items-center gap-2 py-2 px-2 rounded-2xl hover:bg-white/[0.04] active:bg-white/[0.08] transition-colors"
+    >
+      <span className={`w-14 h-14 rounded-full bg-gradient-to-br ${it.color} text-white flex items-center justify-center shadow-[0_4px_14px_-4px_rgba(0,0,0,0.5)]`}>
+        {it.icon}
+      </span>
+      <span className={`text-[11.5px] font-medium ${theme.textSecondary}`}>{it.label}</span>
+    </button>
+  );
+
   return (
-    <div className={`${PANEL_HEIGHT} border-t ${theme.subtleBorder} overflow-y-auto p-5`}>
-      <div className="grid grid-cols-5 gap-y-5 gap-x-2">
-        {items.map((it) => (
-          <button
-            key={it.key}
-            type="button"
-            onClick={it.onClick}
-            className="flex flex-col items-center gap-2"
-          >
-            <span className={`w-14 h-14 rounded-full bg-gradient-to-br ${it.color} text-white flex items-center justify-center`}>
-              {it.icon}
-            </span>
-            <span className={`text-[11.5px] font-medium ${theme.textSecondary}`}>{it.label}</span>
-          </button>
-        ))}
+    <div className={`${PANEL_HEIGHT} border-t ${theme.subtleBorder} overflow-y-auto flex flex-col justify-center`}>
+      <div className="flex flex-col gap-4 px-4 py-5">
+        {/* Row 1: Gallery, Camera, Video */}
+        <div className="flex justify-center gap-4 sm:gap-6">
+          {items.slice(0, 3).map(renderItem)}
+        </div>
+        {/* Row 2: Document, Audio — centered */}
+        <div className="flex justify-center gap-4 sm:gap-6">
+          {items.slice(3).map(renderItem)}
+        </div>
       </div>
     </div>
   );
@@ -2227,7 +2459,8 @@ const Composer = React.memo(function Composer({
   const [previewFiles, setPreviewFiles] = useState<File[]>([]);
   const [voiceOpen, setVoiceOpen] = useState(false);
   const [fileError, setFileError] = useState<string | null>(null);
-
+  const [compressProgress, setCompressProgress] = useState<number | null>(null);
+  
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const galleryRef = useRef<HTMLInputElement | null>(null);
   const cameraRef = useRef<HTMLInputElement | null>(null);
@@ -2265,36 +2498,68 @@ const Composer = React.memo(function Composer({
     input.value = '';
   };
 
-  const sendRawFile = async (
-    e: React.ChangeEvent<HTMLInputElement>,
-    type: number,
-  ) => {
-    const input = e.target;
-    const file = input.files?.[0];
-    if (!file) return;
-    setFileError(null);
-    if (file.size > MAX_FILE_SIZE) {
-      setFileError(`${file.name}: ${formatFileSize(file.size)} — max is ${formatFileSize(MAX_FILE_SIZE)}.`);
+   const sendRawFile = async (
+  e: React.ChangeEvent<HTMLInputElement>,
+  type: number,
+) => {
+  const input = e.target;
+  let file = input.files?.[0];
+  if (!file) return;
+  setFileError(null);
+
+  // Auto-detect from MIME so a video picked via Document still
+  // renders as a <video> player instead of a download link.
+  let resolvedType = type;
+  if (file.type.startsWith('video/')) resolvedType = MediaType.Video;
+  else if (file.type.startsWith('image/')) resolvedType = MediaType.Image;
+  else if (file.type.startsWith('audio/')) resolvedType = MediaType.Audio;
+
+  // ── Video: re-encode if over the server cap ──────────────
+  // Must run BEFORE the generic size check below, otherwise
+  // >5 MB videos are rejected before they ever get compressed.
+  if (resolvedType === MediaType.Video && file.size > MAX_FILE_SIZE) {
+    if (file.size > MAX_TRANSCODE_INPUT) {
+      setFileError(
+        `${file.name}: ${formatFileSize(file.size)} is too large to compress in-browser (limit ${formatFileSize(MAX_TRANSCODE_INPUT)}).`,
+      );
       input.value = '';
       return;
     }
-
-    // Auto-detect from MIME so a video picked via Document still
-    // renders as a <video> player instead of a download link.
-    let resolvedType = type;
-    if (file.type.startsWith('video/')) resolvedType = MediaType.Video;
-    else if (file.type.startsWith('image/')) resolvedType = MediaType.Image;
-    else if (file.type.startsWith('audio/')) resolvedType = MediaType.Audio;
-
-    setPanel('none');
+    setCompressProgress(0);
     try {
-      await onSendMedia(await readAsDataUrl(file), resolvedType);
-    } catch (err) {
-      setFileError(extractErrorMessage(err));
+      file = await compressVideo(file, {
+        maxBytes: MAX_FILE_SIZE,
+        maxWidth: 320,
+        onProgress: setCompressProgress,
+      });
     } finally {
-      input.value = '';
+      setCompressProgress(null);
     }
-  };
+    if (file.size > MAX_FILE_SIZE) {
+      setFileError(
+        `Couldn't shrink ${file.name} below ${formatFileSize(MAX_FILE_SIZE)} — try a shorter clip.`,
+      );
+      input.value = '';
+      return;
+    }
+  }
+
+  // ── Generic size check (post-compression) ────────────────
+  if (file.size > MAX_FILE_SIZE) {
+    setFileError(`${file.name}: ${formatFileSize(file.size)} — max is ${formatFileSize(MAX_FILE_SIZE)}.`);
+    input.value = '';
+    return;
+  }
+
+  setPanel('none');
+  try {
+    await onSendMedia(await readAsDataUrl(file), resolvedType);
+  } catch (err) {
+    setFileError(extractErrorMessage(err));
+  } finally {
+    input.value = '';
+  }
+};
 
   const handleVoiceComplete = async (rec: VoiceRecording) => {
     setVoiceOpen(false);
@@ -2369,6 +2634,12 @@ const Composer = React.memo(function Composer({
                 <div className="flex items-center gap-1.5 text-[11.5px] font-medium text-[#F87171] px-1">
                   <AlertCircle className="w-3.5 h-3.5 shrink-0" />
                   <span className="truncate">{fileError}</span>
+                </div>
+              )}
+                            {compressProgress !== null && (
+                <div className="flex items-center gap-1.5 text-[11.5px] font-medium text-[#F59E0B] px-1">
+                  <Loader2 className="w-3.5 h-3.5 shrink-0 animate-spin" />
+                  <span>Compressing video… {compressProgress}%</span>
                 </div>
               )}
 
@@ -2515,6 +2786,7 @@ export function DirectMessagePane(): React.JSX.Element {
   const isPeerTyping = useDmTypingReceiver(userId);
 
   const [friends, setFriends] = useState<FriendDto[]>([]);
+  const [friendsLoaded, setFriendsLoaded] = useState(false);
   const [targetUser, setTargetUser] = useState<UserProfileDto | null>(null);
   const [messages, setMessages] = useState<LocalMessage[]>([]);
   const [loadingHistory, setLoadingHistory] = useState(false);
@@ -2649,6 +2921,7 @@ export function DirectMessagePane(): React.JSX.Element {
 
       if (!user?.id) {
         setFriends(friendList);
+        setFriendsLoaded(true);  
         return;
       }
 
@@ -2673,6 +2946,7 @@ export function DirectMessagePane(): React.JSX.Element {
       // Both updates in the same tick → React batches into one render.
       setFriends(friendList);
       setLastMessages(lastMap);
+      setFriendsLoaded(true);  
     } catch (err) {
       console.error('Failed to load friends list:', err);
     }
@@ -3529,7 +3803,7 @@ export function DirectMessagePane(): React.JSX.Element {
               </div>
             )}
 
-            {!isConfirmedFriend && (
+            {friendsLoaded && !isConfirmedFriend && (
               <div className="shrink-0 px-4 sm:px-5 py-2.5 bg-[#D97706]/[0.08] border-b border-[#D97706]/20 flex flex-wrap items-center justify-between gap-3 text-[12.5px] relative z-10">
                 <div className={`flex items-center gap-2 min-w-0 ${theme.textSecondary}`}>
                   <AlertCircle className="w-4 h-4 text-[#D97706] shrink-0" />
