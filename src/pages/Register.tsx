@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { AlertCircle, AtSign, Check, KeyRound, Lock, Mail, User as UserIcon, X } from 'lucide-react';
 
@@ -10,6 +10,55 @@ import { API_BASE_URL, extractErrorMessage } from '../services/api';
 
 const HANDLE_RE = /^[a-z0-9_]{3,20}$/;
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+/* ─────────────────────────────────────────────────────────
+   Draft persistence — non-sensitive fields only.
+   sessionStorage is tab-scoped and cleared on tab close.
+   Passwords are intentionally NOT persisted.
+   ───────────────────────────────────────────────────────── */
+
+const DRAFT_KEY = 'orbital.register.draft';
+
+type RegisterDraft = {
+  displayName: string;
+  handle: string;
+  email: string;
+  consent: boolean;
+};
+
+function readDraft(): RegisterDraft | null {
+  try {
+    const raw = sessionStorage.getItem(DRAFT_KEY);
+    if (!raw) return null;
+    const p = JSON.parse(raw) as Partial<RegisterDraft>;
+    return {
+      displayName: typeof p.displayName === 'string' ? p.displayName : '',
+      handle: typeof p.handle === 'string' ? p.handle : '',
+      email: typeof p.email === 'string' ? p.email : '',
+      consent: Boolean(p.consent),
+    };
+  } catch {
+    return null;
+  }
+}
+
+function writeDraft(draft: RegisterDraft): void {
+  try {
+    sessionStorage.setItem(DRAFT_KEY, JSON.stringify(draft));
+  } catch {
+    /* quota / private mode — ignore */
+  }
+}
+
+function clearDraft(): void {
+  try {
+    sessionStorage.removeItem(DRAFT_KEY);
+  } catch {
+    /* ignore */
+  }
+}
+
+/* ───────────────────────────────────────────────────────── */
 
 type FieldKey = 'displayName' | 'handle' | 'email' | 'password' | 'confirm';
 type FieldErrors = Partial<Record<FieldKey, string>>;
@@ -77,17 +126,27 @@ export default function Register(): React.JSX.Element {
   const navigate = useNavigate();
   const { register } = useAuth();
 
-  const [displayName, setDisplayName] = useState('');
-  const [handle, setHandle] = useState('');
-  const [email, setEmail] = useState('');
+  // Read the draft once at mount — used to seed the initial state.
+  const initialDraft = useMemo(() => readDraft(), []);
+
+  const [displayName, setDisplayName] = useState(initialDraft?.displayName ?? '');
+  const [handle, setHandle] = useState(initialDraft?.handle ?? '');
+  const [email, setEmail] = useState(initialDraft?.email ?? '');
+  const [consent, setConsent] = useState(initialDraft?.consent ?? false);
+
+  // Passwords are intentionally NOT seeded from storage.
   const [password, setPassword] = useState('');
   const [confirm, setConfirm] = useState('');
-  const [consent, setConsent] = useState(false);
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<AuthError | null>(null);
   const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
   const [retryCountdown, setRetryCountdown] = useState<number | null>(null);
+
+  // Persist non-sensitive fields on every change.
+  useEffect(() => {
+    writeDraft({ displayName, handle, email, consent });
+  }, [displayName, handle, email, consent]);
 
   useEffect(() => {
     if (retryCountdown == null) return;
@@ -107,6 +166,7 @@ export default function Register(): React.JSX.Element {
     setLoading(true); setError(null); setFieldErrors({}); setRetryCountdown(null);
     try {
       await register({ displayName: displayName.trim(), userHandle: handle.trim().toLowerCase(), email: email.trim().toLowerCase(), password });
+      clearDraft(); // registration succeeded — no need to keep the draft
       navigate(`/confirm-email-pending?email=${encodeURIComponent(email.trim().toLowerCase())}`);
     } catch (err) {
       const authErr = toAuthError(err, 'Registration failed.');
@@ -184,8 +244,6 @@ export default function Register(): React.JSX.Element {
               I agree to the{' '}
               <Link
                 to="/terms"
-                target="_blank"
-                rel="noopener noreferrer"
                 onClick={(e) => e.stopPropagation()}
                 className="text-[#D97706] hover:text-[#B45309] underline underline-offset-2 decoration-[#D97706]/40"
               >
@@ -194,8 +252,6 @@ export default function Register(): React.JSX.Element {
               and{' '}
               <Link
                 to="/privacy"
-                target="_blank"
-                rel="noopener noreferrer"
                 onClick={(e) => e.stopPropagation()}
                 className="text-[#D97706] hover:text-[#B45309] underline underline-offset-2 decoration-[#D97706]/40"
               >
@@ -224,8 +280,6 @@ export default function Register(): React.JSX.Element {
           <span>Already have an account? <Link to="/login" className="text-[#D97706] hover:text-[#B45309] font-medium">Sign in</Link></span>
           <Link to="/confirm-email-pending" className="text-[#6B6259] hover:text-[#D97706]">Resend verification</Link>
         </div>
-
-      
       </div>
     </AuthShell>
   );
