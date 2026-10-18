@@ -164,7 +164,7 @@ export default function Terms(): React.JSX.Element {
       <h2 id="law">11. Governing law</h2>
       <p>
         These Terms are governed by the laws of <strong>India</strong>. Disputes
-        will be resolved in the courts of Chandigarh, India. If any provision of
+        will be resolved in the courts of Delhi, India. If any provision of
         these Terms is found unenforceable, the remaining provisions will remain
         in full force and effect.
       </p>
