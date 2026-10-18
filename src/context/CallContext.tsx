@@ -1009,6 +1009,9 @@ useAudioRingtone(isOutgoingRinging, '/sounds/outgoing.mp3', 0.25);
       if (!targetPeerId) {
         throw new Error('Peer ID is required to initiate a call.');
       }
+            if (callStateRef.current !== 'idle') {
+        throw new Error('A call is already in progress.');
+      }
 
       if (audioSinkRef.current) {
         audioSinkRef.current.play().catch(() => {});

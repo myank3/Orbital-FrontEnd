@@ -2782,6 +2782,8 @@ export function DirectMessagePane(): React.JSX.Element {
     duration: activeCallDuration,
     peerId: activeCallPeerId,
   } = callCtx;
+    const inCallWithThisPeer =
+    activeCallState !== 'idle' && activeCallPeerId === userId;
 
   const isPeerTyping = useDmTypingReceiver(userId);
 
@@ -3777,22 +3779,25 @@ export function DirectMessagePane(): React.JSX.Element {
                 </div>
               </div>
               <div className="flex items-center gap-0.5 sm:gap-1 shrink-0">
-                <button
+                                <button
                   onClick={() => void handleAudioCall()}
-                  title="Audio call"
-                  className={`w-10 h-10 rounded-2xl flex items-center justify-center ${theme.textSecondary} ${theme.hoverBg}`}
+                  title={inCallWithThisPeer ? 'Already in call' : 'Audio call'}
+                  disabled={inCallWithThisPeer}
+                  className={`w-10 h-10 rounded-2xl flex items-center justify-center ${theme.textSecondary} ${
+                    inCallWithThisPeer ? 'opacity-40 cursor-not-allowed' : theme.hoverBg
+                  }`}
                 >
                   <Phone className="w-[18px] h-[18px]" />
                 </button>
-                <button
+                               <button
                   onClick={() => void handleVideoCall()}
-                  title="Video call"
-                  className={`w-10 h-10 rounded-2xl flex items-center justify-center ${theme.textSecondary} ${theme.hoverBg}`}
+                  title={inCallWithThisPeer ? 'Already in call' : 'Video call'}
+                  disabled={inCallWithThisPeer}
+                  className={`w-10 h-10 rounded-2xl flex items-center justify-center ${theme.textSecondary} ${
+                    inCallWithThisPeer ? 'opacity-40 cursor-not-allowed' : theme.hoverBg
+                  }`}
                 >
                   <Video className="w-[18px] h-[18px]" />
-                </button>
-                <button onClick={() => setInfoOpen(true)} className={`w-10 h-10 rounded-2xl flex items-center justify-center ${theme.textSecondary} ${theme.hoverBg}`}>
-                  <Info className="w-[18px] h-[18px]" />
                 </button>
               </div>
             </div>
