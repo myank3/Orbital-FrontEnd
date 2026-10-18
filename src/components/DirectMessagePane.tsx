@@ -13,7 +13,7 @@ import React, {
   startTransition,
 } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { toast } from 'sonner';
+import { toast, Toaster } from 'sonner';
 import { apiService, extractErrorMessage } from '../services/api';
 import { signalRService } from '../services/signalr';
 import { presenceStore } from '../services/presenceStore';
@@ -4094,6 +4094,8 @@ export function DirectMessagePane(): React.JSX.Element {
           onClose={handleCloseViewOnce}
         />
       )}
+
+      <Toaster position="top-right" richColors closeButton />
     </div>
   );
 }
