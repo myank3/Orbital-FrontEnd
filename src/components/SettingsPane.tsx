@@ -669,36 +669,7 @@ function SettingsPane(): React.JSX.Element {
         </motion.section>
 
         {/* ── Footer ────────────────────────────────────── */}
-        <motion.div
-          {...stagger(0.32)}
-          className="text-center pt-2 pb-4 space-y-2"
-        >
-          <p className="text-[11px] text-[#5A524A]">
-            © {new Date().getFullYear()} Orbital · Private &amp; Direct
-          </p>
-          <p className="flex items-center justify-center gap-2 text-[10px] font-mono uppercase tracking-[0.18em]">
-            <Link
-              to="/terms"
-              className="text-[#5A524A] hover:text-[#D97706] transition-colors"
-            >
-              Terms
-            </Link>
-            <span aria-hidden className="text-[#3A342E]">·</span>
-            <Link
-              to="/privacy"
-              className="text-[#5A524A] hover:text-[#D97706] transition-colors"
-            >
-              Privacy
-            </Link>
-            <span aria-hidden className="text-[#3A342E]">·</span>
-            <a
-              href={`mailto:${SUPPORT_EMAIL}`}
-              className="text-[#5A524A] hover:text-[#D97706] transition-colors"
-            >
-              Support
-            </a>
-          </p>
-        </motion.div>
+       
       </div>
 
       {/* ── Avatar modal ────────────────────────────────── */}
