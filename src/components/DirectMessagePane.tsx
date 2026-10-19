@@ -2447,10 +2447,10 @@ function InfoModal({
 }
 
 /* ────────────────────────────────────────────────────────── */
-/* SendingOverlay — in-chat "Sending video…" screen           */
+/* SendingPill — compact, non-blocking send progress pill     */
 /* ────────────────────────────────────────────────────────── */
 
-function SendingOverlay({
+function SendingPill({
   sending,
   theme,
 }: {
@@ -2465,38 +2465,36 @@ function SendingOverlay({
       : 'Sending…';
 
   return (
-    <div className="h-full flex flex-col items-center justify-center text-center gap-5 select-none px-6">
-      <div
-        className={`w-20 h-20 rounded-3xl ${theme.subtleBg} border ${theme.subtleBorder} flex items-center justify-center`}
-      >
-        <Loader2 className={`w-8 h-8 animate-spin ${theme.accentText}`} />
-      </div>
+    <div
+      className={`pointer-events-none inline-flex items-center gap-2.5 pl-3 pr-4 py-2 rounded-full ${theme.composerBg} border ${theme.subtleBorder} shadow-[0_8px_24px_-6px_rgba(0,0,0,0.5)] backdrop-blur-md`}
+      role="status"
+      aria-live="polite"
+    >
+      <span className="relative flex w-4 h-4 shrink-0">
+        <span className={`absolute inline-flex h-full w-full rounded-full ${theme.accent} opacity-40 animate-ping`} />
+        <span className={`relative inline-flex w-4 h-4 rounded-full ${theme.accent} items-center justify-center`}>
+          <Loader2 className="w-2.5 h-2.5 animate-spin" />
+        </span>
+      </span>
 
-      <div>
-        <p className={`text-[16px] font-bold tracking-tight ${theme.textPrimary}`}>{label}</p>
-        <p className={`text-[12.5px] mt-1.5 ${theme.textSecondary}`}>
-          to <span className={`font-semibold ${theme.textPrimary}`}>{sending.targetName}</span>
-        </p>
-      </div>
+      <span className={`text-[12px] font-semibold ${theme.textPrimary} whitespace-nowrap`}>
+        {label}
+      </span>
 
-      <div className={`w-[220px] h-1.5 rounded-full ${theme.subtleBgStrong} overflow-hidden`}>
+      <span className={`text-[11px] ${theme.textSecondary} whitespace-nowrap`}>
+        to <span className={`font-semibold ${theme.textPrimary}`}>{sending.targetName}</span>
+      </span>
+
+      <span className={`w-[60px] h-1 rounded-full ${theme.subtleBgStrong} overflow-hidden shrink-0`}>
         {sending.phase === 'compressing' ? (
-          <div
-            className={`h-full ${theme.accent} transition-[width] duration-200`}
+          <span
+            className={`block h-full ${theme.accent} transition-[width] duration-200`}
             style={{ width: `${sending.progress}%` }}
           />
         ) : (
-          <div className={`h-full w-1/3 ${theme.accent} rounded-full animate-pulse`} />
+          <span className={`block h-full w-1/3 ${theme.accent} rounded-full animate-pulse`} />
         )}
-      </div>
-
-      <p className={`text-[11px] ${theme.textSecondary} opacity-70`}>
-        {sending.kind === 'video'
-          ? 'Keep this tab open until it finishes'
-          : sending.kind === 'voice'
-          ? 'Voice message is uploading'
-          : 'Image is uploading'}
-      </p>
+      </span>
     </div>
   );
 }
@@ -2919,7 +2917,7 @@ const Composer = React.memo(function Composer({
     }
   };
 
-    const sendPreview = async (caption: string, viewOnce: boolean) => {
+  const sendPreview = async (caption: string, viewOnce: boolean) => {
     const files = previewFiles;
     if (files.length === 0) return;
     const trimmed = caption.trim();
@@ -4291,113 +4289,114 @@ export function DirectMessagePane(): React.JSX.Element {
               </div>
             )}
 
+            {/* Floating sending pill — non-blocking, leaves the chat usable */}
+            {sendingMedia && (
+              <div className="absolute top-[76px] left-1/2 -translate-x-1/2 z-30 pointer-events-none max-w-[92%]">
+                <SendingPill sending={sendingMedia} theme={theme} />
+              </div>
+            )}
+
             <div
               ref={messagesContainerRef}
               onScroll={handleMessagesScroll}
               className="flex-1 overflow-y-auto px-3 sm:px-6 py-3 sm:py-5 relative z-10"
               style={{ overscrollBehavior: 'contain' }}
             >
-              {sendingMedia ? (
-                <SendingOverlay sending={sendingMedia} theme={theme} />
+              {loadingHistory && messages.length === 0 ? (
+                <MessageSkeleton />
+              ) : historyError && messages.length === 0 ? (
+                <div className="h-full flex flex-col items-center justify-center text-center gap-3 py-12">
+                  <div className="w-14 h-14 rounded-2xl bg-[#B91C1C]/[0.10] border border-[#B91C1C]/30 flex items-center justify-center">
+                    <AlertCircle className="w-6 h-6 text-[#F87171]" />
+                  </div>
+                  <div>
+                    <p className={`text-[14.5px] font-bold tracking-tight ${theme.textPrimary}`}>Couldn't load messages</p>
+                    <p className={`text-[12.5px] mt-1 max-w-[300px] ${theme.textSecondary}`}>{historyError}</p>
+                  </div>
+                  <button
+                    onClick={() => setReloadTick((t) => t + 1)}
+                    className={`h-9 px-4 rounded-xl ${theme.accent} text-[12.5px] font-semibold`}
+                  >Retry</button>
+                </div>
+              ) : messages.length === 0 ? (
+                <div className="h-full flex flex-col items-center justify-center text-center gap-3 py-12">
+                  <div className={`w-14 h-14 rounded-full ${theme.subtleBg} border ${theme.subtleBorder} flex items-center justify-center`}>
+                    <User className={`w-6 h-6 ${theme.textSecondary}`} />
+                  </div>
+                  <div>
+                    <p className={`text-[15.5px] font-bold tracking-tight ${theme.textPrimary}`}>No messages yet</p>
+                    <p className={`text-[13px] mt-1 ${theme.textSecondary}`}>Say hi to {targetUser.displayName}.</p>
+                  </div>
+                </div>
               ) : (
                 <>
-                  {loadingHistory && messages.length === 0 ? (
-                    <MessageSkeleton />
-                  ) : historyError && messages.length === 0 ? (
-                    <div className="h-full flex flex-col items-center justify-center text-center gap-3 py-12">
-                      <div className="w-14 h-14 rounded-2xl bg-[#B91C1C]/[0.10] border border-[#B91C1C]/30 flex items-center justify-center">
-                        <AlertCircle className="w-6 h-6 text-[#F87171]" />
-                      </div>
-                      <div>
-                        <p className={`text-[14.5px] font-bold tracking-tight ${theme.textPrimary}`}>Couldn't load messages</p>
-                        <p className={`text-[12.5px] mt-1 max-w-[300px] ${theme.textSecondary}`}>{historyError}</p>
-                      </div>
+                  {canLoadMore && (
+                    <div className="flex justify-center mb-2">
                       <button
-                        onClick={() => setReloadTick((t) => t + 1)}
-                        className={`h-9 px-4 rounded-xl ${theme.accent} text-[12.5px] font-semibold`}
-                      >Retry</button>
+                        onClick={handleLoadEarlier}
+                        disabled={loadingHistory}
+                        className={`h-8 px-4 rounded-full ${theme.subtleBg} border ${theme.subtleBorder} ${theme.textSecondary} text-[11.5px] font-semibold inline-flex items-center gap-1.5 disabled:opacity-60`}
+                      >
+                        {loadingHistory && <Loader2 className="w-3 h-3 animate-spin" />}
+                        Load earlier messages
+                      </button>
                     </div>
-                  ) : messages.length === 0 ? (
-                    <div className="h-full flex flex-col items-center justify-center text-center gap-3 py-12">
-                      <div className={`w-14 h-14 rounded-full ${theme.subtleBg} border ${theme.subtleBorder} flex items-center justify-center`}>
-                        <User className={`w-6 h-6 ${theme.textSecondary}`} />
-                      </div>
-                      <div>
-                        <p className={`text-[15.5px] font-bold tracking-tight ${theme.textPrimary}`}>No messages yet</p>
-                        <p className={`text-[13px] mt-1 ${theme.textSecondary}`}>Say hi to {targetUser.displayName}.</p>
-                      </div>
-                    </div>
-                  ) : (
-                    <>
-                      {canLoadMore && (
-                        <div className="flex justify-center mb-2">
-                          <button
-                            onClick={handleLoadEarlier}
-                            disabled={loadingHistory}
-                            className={`h-8 px-4 rounded-full ${theme.subtleBg} border ${theme.subtleBorder} ${theme.textSecondary} text-[11.5px] font-semibold inline-flex items-center gap-1.5 disabled:opacity-60`}
-                          >
-                            {loadingHistory && <Loader2 className="w-3 h-3 animate-spin" />}
-                            Load earlier messages
-                          </button>
+                  )}
+                  {items.map((item) => {
+                    if (item.type === 'date') {
+                      return (
+                        <div key={item.key} className="flex justify-center my-5 select-none">
+                          <span className={`px-3.5 py-1 rounded-full ${theme.subtleBg} border ${theme.subtleBorder} text-[10.5px] uppercase tracking-[0.14em] ${theme.textSecondary} font-bold`}>
+                            {item.label}
+                          </span>
                         </div>
-                      )}
-                      {items.map((item) => {
-                        if (item.type === 'date') {
-                          return (
-                            <div key={item.key} className="flex justify-center my-5 select-none">
-                              <span className={`px-3.5 py-1 rounded-full ${theme.subtleBg} border ${theme.subtleBorder} text-[10.5px] uppercase tracking-[0.14em] ${theme.textSecondary} font-bold`}>
-                                {item.label}
-                              </span>
-                            </div>
-                          );
-                        }
-                        const m = item.message;
-                        const isMe = m.senderId === user?.id;
-                        const replyTarget = m.replyToId != null ? messagesById.get(m.replyToId) ?? null : null;
-                        return (
-                          <MessageRow
-                            key={item.key}
-                            message={m}
-                            isMe={isMe}
-                            senderName={isMe ? 'You' : targetUser.displayName}
-                            senderAvatar={isMe ? user?.avatarUrl : targetUser.avatarUrl}
-                            grouped={item.grouped}
-                            isLastOfGroup={item.last}
-                            theme={theme}
-                            reactions={reactions[String(m.id)] ?? EMPTY_REACTIONS}
-                            currentUserId={user?.id}
-                            replyTarget={replyTarget}
-                            highlighted={highlightedMessageId === m.id}
-                            onRequestProfile={setProfileModalUserId}
-                            onOpenImage={handleOpenImage}
-                            onReact={handleReact}
-                            onStartReply={handleStartReply}
-                            onOpenMenu={handleOpenMenu}
-                            onJumpToReply={jumpToMessage}
-                            onMediaLoad={handleMediaLoad}
-                          />
-                        );
-                      })}
-                    </>
-                  )}
-
-                  {isPeerTyping && (
-                    <div className="flex items-end gap-2.5 mt-3 justify-start">
-                      <div className="w-8 shrink-0">
-                        <Avatar name={targetUser.displayName} src={targetUser.avatarUrl} size="sm" />
-                      </div>
-                      <div className={`inline-flex items-center gap-1.5 px-4 py-3 rounded-[20px] rounded-bl-[4px] ${theme.bubbleReceived}`}>
-                        <span className="w-1.5 h-1.5 rounded-full bg-current opacity-60 animate-bounce [animation-delay:-0.32s]" />
-                        <span className="w-1.5 h-1.5 rounded-full bg-current opacity-60 animate-bounce [animation-delay:-0.16s]" />
-                        <span className="w-1.5 h-1.5 rounded-full bg-current opacity-60 animate-bounce" />
-                      </div>
-                    </div>
-                  )}
+                      );
+                    }
+                    const m = item.message;
+                    const isMe = m.senderId === user?.id;
+                    const replyTarget = m.replyToId != null ? messagesById.get(m.replyToId) ?? null : null;
+                    return (
+                      <MessageRow
+                        key={item.key}
+                        message={m}
+                        isMe={isMe}
+                        senderName={isMe ? 'You' : targetUser.displayName}
+                        senderAvatar={isMe ? user?.avatarUrl : targetUser.avatarUrl}
+                        grouped={item.grouped}
+                        isLastOfGroup={item.last}
+                        theme={theme}
+                        reactions={reactions[String(m.id)] ?? EMPTY_REACTIONS}
+                        currentUserId={user?.id}
+                        replyTarget={replyTarget}
+                        highlighted={highlightedMessageId === m.id}
+                        onRequestProfile={setProfileModalUserId}
+                        onOpenImage={handleOpenImage}
+                        onReact={handleReact}
+                        onStartReply={handleStartReply}
+                        onOpenMenu={handleOpenMenu}
+                        onJumpToReply={jumpToMessage}
+                        onMediaLoad={handleMediaLoad}
+                      />
+                    );
+                  })}
                 </>
+              )}
+
+              {isPeerTyping && (
+                <div className="flex items-end gap-2.5 mt-3 justify-start">
+                  <div className="w-8 shrink-0">
+                    <Avatar name={targetUser.displayName} src={targetUser.avatarUrl} size="sm" />
+                  </div>
+                  <div className={`inline-flex items-center gap-1.5 px-4 py-3 rounded-[20px] rounded-bl-[4px] ${theme.bubbleReceived}`}>
+                    <span className="w-1.5 h-1.5 rounded-full bg-current opacity-60 animate-bounce [animation-delay:-0.32s]" />
+                    <span className="w-1.5 h-1.5 rounded-full bg-current opacity-60 animate-bounce [animation-delay:-0.16s]" />
+                    <span className="w-1.5 h-1.5 rounded-full bg-current opacity-60 animate-bounce" />
+                  </div>
+                </div>
               )}
             </div>
 
-            {showJumpToLatest && !sendingMedia && (
+            {showJumpToLatest && (
               <button
                 onClick={handleJumpToLatest}
                 className={`absolute bottom-24 right-6 z-30 w-10 h-10 rounded-full ${theme.accent} shadow-xl flex items-center justify-center`}
