@@ -3,13 +3,16 @@ import * as sfu from '../services/cloudflareRealtime';
 import { signalRService } from '../services/signalr';
 
 const PREFIX = '[call:';
-export const MAX_PARTICIPANTS = 5;
+
+/** SFU topology — safe to go higher than mesh. 10 keeps UI readable. */
+export const MAX_PARTICIPANTS = 10;
 
 type CallEvent =
   | { type: 'join'; userId: string; displayName: string; sessionId: string; muted: boolean }
   | { type: 'publish'; userId: string; displayName: string; sessionId: string; trackName: string; muted: boolean }
   | { type: 'mute'; userId: string; muted: boolean }
-  | { type: 'leave'; userId: string };
+  | { type: 'leave'; userId: string }
+  | { type: 'probe'; userId: string };
 
 export interface CallParticipant {
   userId: string;
@@ -18,9 +21,16 @@ export interface CallParticipant {
   muted: boolean;
 }
 
+export interface ActiveCaller {
+  userId: string;
+  displayName: string;
+}
+
 export interface UseGroupCallResult {
   inCall: boolean;
   participants: CallParticipant[];
+  /** Users currently in a call who are NOT me. Shows "X is in a call · Join" banner. */
+  activeCallers: ActiveCaller[];
   muted: boolean;
   error: string | null;
   join: () => Promise<void>;
@@ -38,6 +48,7 @@ export function useGroupCall(
 ): UseGroupCallResult {
   const [inCall, setInCall] = useState(false);
   const [participants, setParticipants] = useState<CallParticipant[]>([]);
+  const [activeCallers, setActiveCallers] = useState<ActiveCaller[]>([]);
   const [muted, setMuted] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -49,6 +60,19 @@ export function useGroupCall(
   const participantsRef = useRef<Map<string, CallParticipant>>(new Map());
   const pendingPullsRef = useRef<Array<{ userId: string; displayName: string }>>([]);
   const pullChainRef = useRef<Promise<void>>(Promise.resolve());
+  const activeCallersRef = useRef<Map<string, { displayName: string; lastSeen: number }>>(new Map());
+  const mutedRef = useRef(false);
+  const inCallRef = useRef(false);
+
+  useEffect(() => { mutedRef.current = muted; }, [muted]);
+  useEffect(() => { inCallRef.current = inCall; }, [inCall]);
+
+  const refreshActiveCallers = useCallback(() => {
+    const list = Array.from(activeCallersRef.current.entries())
+      .filter(([uid]) => uid !== me?.id)
+      .map(([userId, v]) => ({ userId, displayName: v.displayName }));
+    setActiveCallers(list);
+  }, [me?.id]);
 
   const send = useCallback(
     async (evt: CallEvent) => {
@@ -67,12 +91,27 @@ export function useGroupCall(
     [groupId],
   );
 
+  const sendPublish = useCallback(() => {
+    if (!me) return;
+    const sid = sessionIdRef.current;
+    const tid = localTrackRef.current?.id;
+    if (!sid || !tid) return;
+    void send({
+      type: 'publish',
+      userId: me.id,
+      displayName: me.displayName,
+      sessionId: sid,
+      trackName: tid,
+      muted: mutedRef.current,
+    }).catch(() => { /* silent */ });
+  }, [me, send]);
+
   const leave = useCallback(() => {
-    if (me) void send({ type: 'leave', userId: me.id });
+    if (me) void send({ type: 'leave', userId: me.id }).catch(() => {});
     try { pcRef.current?.close(); } catch { /* noop */ }
     pcRef.current = null;
     sessionIdRef.current = null;
-    localStreamRef.current?.getTracks().forEach((t) => t.stop());
+    try { localStreamRef.current?.getTracks().forEach((t) => t.stop()); } catch { /* noop */ }
     localStreamRef.current = null;
     localTrackRef.current = null;
     pulledKeysRef.current.clear();
@@ -87,8 +126,7 @@ export function useGroupCall(
     if (!groupId || !me || inCall) return;
     setError(null);
 
-    // Capacity check — we'd be the (size + 1)th person
-    if (participantsRef.current.size + 1 > MAX_PARTICIPANTS) {
+    if (activeCallersRef.current.size >= MAX_PARTICIPANTS) {
       setError(`This call is full (${MAX_PARTICIPANTS} participants max).`);
       return;
     }
@@ -100,6 +138,7 @@ export function useGroupCall(
       localStreamRef.current = stream;
       const track = stream.getAudioTracks()[0];
       localTrackRef.current = track;
+      track.enabled = !mutedRef.current;
 
       const pc = new RTCPeerConnection({
         iceServers: [{ urls: 'stun:stun.cloudflare.com:3478' }],
@@ -151,7 +190,7 @@ export function useGroupCall(
         userId: me.id,
         displayName: me.displayName,
         sessionId: created.sessionId,
-        muted: false,
+        muted: mutedRef.current,
       });
       await send({
         type: 'publish',
@@ -159,11 +198,26 @@ export function useGroupCall(
         displayName: me.displayName,
         sessionId: created.sessionId,
         trackName: track.id,
-        muted: false,
+        muted: mutedRef.current,
       });
+
+      // Nudge existing participants to re-announce (in case our join fired
+      // before their subscribers were ready).
+      window.setTimeout(() => {
+        if (inCallRef.current) {
+          void send({ type: 'probe', userId: me.id }).catch(() => {});
+        }
+      }, 500);
     } catch (err) {
       console.error('[call] join failed', err);
-      setError(err instanceof Error ? err.message : 'Could not join call');
+      const msg = err instanceof Error ? err.message : 'Could not join call';
+      if (/permission|denied/i.test(msg)) {
+        setError('Microphone permission denied. Enable it in browser settings.');
+      } else if (/timeout/i.test(msg)) {
+        setError('Connection timeout — check your network and try again.');
+      } else {
+        setError(msg);
+      }
       leave();
     }
   }, [groupId, me, inCall, send, leave]);
@@ -176,7 +230,6 @@ export function useGroupCall(
       if (!pcRef.current || !sessionIdRef.current) return;
       pulledKeysRef.current.add(key);
 
-      // Show them in the list immediately, before the track arrives
       if (!participantsRef.current.has(evt.userId)) {
         participantsRef.current.set(evt.userId, {
           userId: evt.userId,
@@ -212,14 +265,62 @@ export function useGroupCall(
   );
 
   const toggleMute = useCallback(() => {
-    const t = localTrackRef.current;
-    if (!t) return;
-    t.enabled = !t.enabled;
-    const nowMuted = !t.enabled;
-    setMuted(nowMuted);
-    if (me) void send({ type: 'mute', userId: me.id, muted: nowMuted });
+    try {
+      const t = localTrackRef.current;
+      if (!t) return;
+      const nextEnabled = !t.enabled;
+      t.enabled = nextEnabled;
+      const nowMuted = !nextEnabled;
+      setMuted(nowMuted);
+      mutedRef.current = nowMuted;
+      if (me) {
+        void send({ type: 'mute', userId: me.id, muted: nowMuted }).catch(() => { /* silent */ });
+      }
+    } catch (err) {
+      console.warn('[call] toggleMute failed', err);
+    }
   }, [me, send]);
 
+  // Heartbeat — keeps our presence alive for people who arrive later
+  useEffect(() => {
+    if (!inCall) return;
+    sendPublish();
+    const id = window.setInterval(sendPublish, 20000);
+    return () => window.clearInterval(id);
+  }, [inCall, sendPublish]);
+
+  // Probe existing callers on mount / group switch
+  useEffect(() => {
+    if (!groupId || !me) return;
+    const t = window.setTimeout(() => {
+      void send({ type: 'probe', userId: me.id }).catch(() => {});
+    }, 500);
+    return () => window.clearTimeout(t);
+  }, [groupId, me?.id, send]);
+
+  // Expiry sweep — drop stale callers who stopped heartbeating
+  useEffect(() => {
+    const id = window.setInterval(() => {
+      const now = Date.now();
+      let changed = false;
+      for (const [uid, v] of activeCallersRef.current) {
+        if (now - v.lastSeen > 45000) {
+          activeCallersRef.current.delete(uid);
+          changed = true;
+        }
+      }
+      if (changed) refreshActiveCallers();
+    }, 10000);
+    return () => window.clearInterval(id);
+  }, [refreshActiveCallers]);
+
+  // Reset when the group changes
+  useEffect(() => {
+    activeCallersRef.current.clear();
+    setActiveCallers([]);
+  }, [groupId]);
+
+  // Real-time handlers
   useEffect(() => {
     if (!groupId || !me) return;
     const unsub = signalRService.onReceiveGroupMessage((msg) => {
@@ -233,42 +334,48 @@ export function useGroupCall(
         return;
       }
 
-      if (evt.type === 'join' && evt.userId !== me.id && inCall) {
-        // Someone joined — re-announce our publish so they can pull us
-        const sid = sessionIdRef.current;
-        const tid = localTrackRef.current?.id;
-        if (sid && tid) {
-          void send({
-            type: 'publish',
-            userId: me.id,
-            displayName: me.displayName,
-            sessionId: sid,
-            trackName: tid,
-            muted,
-          });
-        }
-      } else if (evt.type === 'publish' && evt.userId !== me.id && inCall) {
-        pullFor(evt);
+      if ((evt.type === 'publish' || evt.type === 'join') && evt.userId !== me.id) {
+        activeCallersRef.current.set(evt.userId, {
+          displayName: evt.displayName,
+          lastSeen: Date.now(),
+        });
+        refreshActiveCallers();
+      } else if (evt.type === 'leave') {
+        activeCallersRef.current.delete(evt.userId);
+        participantsRef.current.delete(evt.userId);
+        setParticipants(Array.from(participantsRef.current.values()));
+        refreshActiveCallers();
       } else if (evt.type === 'mute') {
         const p = participantsRef.current.get(evt.userId);
         if (p) {
           p.muted = evt.muted;
           setParticipants(Array.from(participantsRef.current.values()));
         }
-      } else if (evt.type === 'leave') {
-        participantsRef.current.delete(evt.userId);
-        setParticipants(Array.from(participantsRef.current.values()));
+      } else if (evt.type === 'probe' && evt.userId !== me.id && inCallRef.current) {
+        sendPublish();
+      }
+
+      if (evt.type === 'publish' && evt.userId !== me.id && inCallRef.current) {
+        pullFor(evt);
+      }
+
+      if (evt.type === 'join' && evt.userId !== me.id && inCallRef.current) {
+        sendPublish();
       }
     });
     return () => unsub();
-  }, [groupId, me, inCall, send, pullFor, muted]);
+  }, [groupId, me, pullFor, refreshActiveCallers, sendPublish]);
 
+  // Cleanup on unmount
   useEffect(() => {
     return () => {
-      if (pcRef.current) leave();
+      if (pcRef.current) {
+        if (me) void send({ type: 'leave', userId: me.id }).catch(() => {});
+        try { pcRef.current.close(); } catch { /* noop */ }
+      }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  return { inCall, participants, muted, error, join, leave, toggleMute };
+  return { inCall, participants, activeCallers, muted, error, join, leave, toggleMute };
 }

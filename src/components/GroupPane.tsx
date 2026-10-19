@@ -400,6 +400,13 @@ function formatDuration(sec: number): string {
   return `${m}:${s.toString().padStart(2, '0')}`;
 }
 
+function safePlayReceive() {
+  try { playReceive(); } catch (err) { console.warn('[sounds] receive failed', err); }
+}
+function safePlaySend() {
+  try { playSend(); } catch (err) { console.warn('[sounds] send failed', err); }
+}
+
 /* ────────────────────────────────────────────────────────── */
 /* Local persistence: pin / mute / reactions / hidden         */
 /* ────────────────────────────────────────────────────────── */
@@ -501,8 +508,12 @@ function VoiceBubble({ url, isMe }: { url: string; isMe: boolean }) {
   const toggle = () => {
     const a = audioRef.current;
     if (!a) return;
-    if (playing) { a.pause(); setPlaying(false); }
-    else { void a.play(); setPlaying(true); }
+    try {
+      if (playing) { a.pause(); setPlaying(false); }
+      else { void a.play(); setPlaying(true); }
+    } catch (err) {
+      console.warn('[voice] playback failed', err);
+    }
   };
   const pct = duration > 0 ? Math.min(100, (progress / duration) * 100) : 0;
 
@@ -1956,40 +1967,6 @@ const GroupComposer = React.memo(function GroupComposer({
 });
 
 /* ────────────────────────────────────────────────────────── */
-/* Call participant row                                       */
-/* ────────────────────────────────────────────────────────── */
-
-function CallParticipantRow({
-  name,
-  avatarUrl,
-  muted,
-  isMe,
-}: {
-  name: string;
-  avatarUrl?: string | null;
-  muted: boolean;
-  isMe?: boolean;
-}) {
-  return (
-    <div className="px-2 py-1.5 flex items-center gap-2.5 rounded-md hover:bg-white/[0.02] transition-colors">
-      <Avatar name={name} src={avatarUrl} size="sm" />
-      <span
-        className={`flex-1 min-w-0 truncate text-[12px] ${
-          isMe ? 'font-semibold' : 'font-medium'
-        } text-[#EDE5D4]`}
-      >
-        {isMe ? 'You' : name}
-      </span>
-      {muted ? (
-        <MicOff className="w-3.5 h-3.5 text-[#F87171] shrink-0" />
-      ) : (
-        <Mic className="w-3.5 h-3.5 text-[#4ADE80] shrink-0" />
-      )}
-    </div>
-  );
-}
-
-/* ────────────────────────────────────────────────────────── */
 /* Main GroupPane                                             */
 /* ────────────────────────────────────────────────────────── */
 
@@ -1999,7 +1976,6 @@ export default function GroupPane(): React.JSX.Element {
   const navigate = useNavigate();
   const { user } = useAuth();
 
-  // ── Group voice call (Cloudflare Realtime SFU over SignalR signaling) ──
   const call = useGroupCall(
     activeGroupId,
     user ? { id: user.id, displayName: user.displayName ?? '' } : undefined,
@@ -2091,7 +2067,7 @@ export default function GroupPane(): React.JSX.Element {
 
   useEffect(() => {
     const unlock = () => {
-      unlockSounds();
+      try { unlockSounds(); } catch { /* silent */ }
       document.removeEventListener('click', unlock);
       document.removeEventListener('keydown', unlock);
       document.removeEventListener('touchstart', unlock);
@@ -2153,7 +2129,6 @@ export default function GroupPane(): React.JSX.Element {
           visible.push({ ...m, content: d.body, replyToId: d.replyToId } as GroupMessageDto & { replyToId?: number | null });
         }
 
-        // Filter out legacy [del:...] targets from old sentinel rows.
         const deletedSet = new Set(deleteEvents);
         const filtered = visible.filter((m) => !deletedSet.has(Number(m.id)));
 
@@ -2219,7 +2194,6 @@ export default function GroupPane(): React.JSX.Element {
 
   useEffect(() => {
     const unsub = signalRService.onReceiveGroupMessage(async (msg: GroupMessageDto) => {
-      // Voice call signaling — handled by useGroupCall's own subscription.
       if (isCallSignal(msg.content)) return;
 
       const d = decodeIncoming(msg.content ?? '');
@@ -2264,7 +2238,7 @@ export default function GroupPane(): React.JSX.Element {
 
         setMessages((prev) => mergeIncomingGroup(prev, decorated));
         if (msg.senderId !== user?.id) {
-          playReceive();
+          safePlayReceive();
           if (!stickRef.current) setUnreadWhileScrolled((c) => c + 1);
         }
       }
@@ -2355,7 +2329,7 @@ export default function GroupPane(): React.JSX.Element {
       mediaUrl: undefined,
       mediaType: undefined,
     });
-    playSend();
+    safePlaySend();
   }, [activeGroupId]);
 
   const handleSendFile = useCallback(async (file: File) => {
@@ -2393,7 +2367,7 @@ export default function GroupPane(): React.JSX.Element {
         mediaKey: presign.mediaKey,
         mediaType: validation.mediaType,
       });
-      playSend();
+      safePlaySend();
     } catch (err) {
       setMessages((prev) => prev.filter((m) => m.id !== (tempId as unknown as number)));
       URL.revokeObjectURL(blobUrl);
@@ -2445,7 +2419,7 @@ export default function GroupPane(): React.JSX.Element {
         mediaKey: presign.mediaKey,
         mediaType: MediaType.Audio,
       });
-      playSend();
+      safePlaySend();
     } catch (err) {
       setMessages((prev) => prev.filter((m) => m.id !== (tempId as unknown as number)));
       URL.revokeObjectURL(blobUrl);
@@ -2697,6 +2671,20 @@ export default function GroupPane(): React.JSX.Element {
     writeMuted(user?.id, next);
   };
 
+  /* ── Active call banner text ──────────────────────────────── */
+
+  const activeCallBanner = useMemo(() => {
+    if (call.activeCallers.length === 0) return null;
+    const names = call.activeCallers.map((a) => a.displayName);
+    if (names.length === 1) {
+      return { title: `${names[0]} is in a call`, sub: 'Tap to join' };
+    }
+    if (names.length === 2) {
+      return { title: `${names[0]} and ${names[1]} are in a call`, sub: 'Tap to join' };
+    }
+    return { title: `${names[0]} + ${names.length - 1} others are in a call`, sub: 'Tap to join' };
+  }, [call.activeCallers]);
+
   return (
     <div className="flex h-full w-full bg-[#0B0A08] text-[#EDE5D4] overflow-hidden">
       {/* LEFT: Groups list */}
@@ -2820,23 +2808,40 @@ export default function GroupPane(): React.JSX.Element {
               </div>
 
               <div className="flex items-center gap-0.5 shrink-0">
-                <button
-                  onClick={() => (call.inCall ? call.leave() : void call.join())}
-                  className={`relative w-9 h-9 rounded-xl flex items-center justify-center transition-colors shrink-0 ${
-                    call.inCall
-                      ? 'bg-[#B91C1C] text-white hover:bg-[#991B1B]'
-                      : 'text-[#A8A29E] hover:text-[#EDE5D4] hover:bg-white/[0.05]'
-                  }`}
-                  title={call.inCall ? 'Leave call' : 'Start group call'}
-                  aria-label={call.inCall ? 'Leave call' : 'Start group call'}
-                >
-                  {call.inCall ? <PhoneOff className="w-[17px] h-[17px]" /> : <Phone className="w-[17px] h-[17px]" />}
-                  {call.inCall && (
+                {call.inCall ? (
+                  <button
+                    onClick={call.leave}
+                    className="relative w-9 h-9 rounded-xl flex items-center justify-center bg-[#B91C1C] text-white hover:bg-[#991B1B] transition-colors shrink-0"
+                    title="Leave call"
+                    aria-label="Leave call"
+                  >
+                    <PhoneOff className="w-[17px] h-[17px]" />
                     <span className="absolute -top-1 -right-1 min-w-[16px] h-[16px] px-1 rounded-full bg-[#22C55E] text-[9px] font-bold text-white flex items-center justify-center ring-2 ring-[#0B0A08]">
                       {call.participants.length + 1}
                     </span>
-                  )}
-                </button>
+                  </button>
+                ) : call.activeCallers.length > 0 ? (
+                  <button
+                    onClick={() => void call.join()}
+                    className="relative w-9 h-9 rounded-xl flex items-center justify-center text-[#22C55E] bg-[#22C55E]/10 hover:bg-[#22C55E]/20 transition-colors shrink-0 ring-1 ring-inset ring-[#22C55E]/30"
+                    title="Join call"
+                    aria-label="Join call"
+                  >
+                    <Phone className="w-[17px] h-[17px]" />
+                    <span className="absolute -top-1 -right-1 min-w-[16px] h-[16px] px-1 rounded-full bg-[#22C55E] text-[9px] font-bold text-white flex items-center justify-center ring-2 ring-[#0B0A08]">
+                      {call.activeCallers.length + 1}
+                    </span>
+                  </button>
+                ) : (
+                  <button
+                    onClick={() => void call.join()}
+                    className="w-9 h-9 rounded-xl flex items-center justify-center text-[#A8A29E] hover:text-[#EDE5D4] hover:bg-white/[0.05] transition-colors shrink-0"
+                    title="Start call"
+                    aria-label="Start call"
+                  >
+                    <Phone className="w-[17px] h-[17px]" />
+                  </button>
+                )}
 
                 <button
                   onClick={() => setInfoOpen(true)}
@@ -2943,7 +2948,6 @@ export default function GroupPane(): React.JSX.Element {
                 <div ref={messagesEndRef} />
               </div>
 
-              {/* Drag-drop overlay */}
               {isDraggingFile && (
                 <div className="absolute inset-2 z-30 bg-[#D97706]/[0.08] border-2 border-dashed border-[#D97706]/60 rounded-2xl flex flex-col items-center justify-center pointer-events-none backdrop-blur-sm">
                   <div className="w-14 h-14 rounded-full bg-[#D97706]/20 flex items-center justify-center mb-2">
@@ -2993,46 +2997,113 @@ export default function GroupPane(): React.JSX.Element {
                 <div className="flex items-center gap-2 text-[11.5px] text-[#F87171]">
                   <AlertCircle className="w-3.5 h-3.5 shrink-0" />
                   <span className="truncate">{call.error}</span>
+                  <button
+                    type="button"
+                    onClick={() => void call.join()}
+                    className="ml-auto shrink-0 text-[11px] font-semibold underline hover:no-underline"
+                  >
+                    Retry
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {!call.inCall && activeCallBanner && (
+              <div className="border-t border-white/[0.05] bg-gradient-to-r from-[#22C55E]/[0.10] via-[#22C55E]/[0.04] to-transparent px-3 sm:px-5 py-3">
+                <div className="flex items-center gap-3">
+                  <div className="relative shrink-0">
+                    <span className="absolute inset-0 rounded-full bg-[#22C55E] animate-ping opacity-30" />
+                    <div className="relative w-10 h-10 rounded-full bg-[#22C55E]/20 ring-1 ring-[#22C55E]/40 flex items-center justify-center">
+                      <Phone className="w-[18px] h-[18px] text-[#22C55E]" />
+                    </div>
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-1.5 mb-0.5">
+                      {call.activeCallers.slice(0, 3).map((a) => (
+                        <div key={a.userId} className="-ml-1 first:ml-0">
+                          <Avatar name={a.displayName} size="sm" />
+                        </div>
+                      ))}
+                    </div>
+                    <p className="text-[13px] font-semibold text-[#EDE5D4] truncate">
+                      {activeCallBanner.title}
+                    </p>
+                    <p className="text-[11px] text-[#22C55E] mt-0.5 font-medium">
+                      {activeCallBanner.sub} · {call.activeCallers.length}/{MAX_PARTICIPANTS}
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => void call.join()}
+                    className="shrink-0 h-9 px-4 rounded-lg bg-[#22C55E] hover:bg-[#16A34A] text-white text-[12.5px] font-semibold transition-colors inline-flex items-center gap-1.5"
+                  >
+                    <Phone className="w-3.5 h-3.5" />
+                    Join
+                  </button>
                 </div>
               </div>
             )}
 
             {call.inCall && (
-              <div className="shrink-0 border-t border-white/[0.05] bg-[#131110]">
-                <div className="px-3 sm:px-5 py-2 flex items-center gap-2">
+              <div className="shrink-0 border-t border-white/[0.05] bg-gradient-to-b from-[#1A1816] to-[#131110]">
+                <div className="h-[2px] bg-gradient-to-r from-[#22C55E] via-[#22C55E]/50 to-transparent" />
+
+                <div className="px-3 sm:px-5 py-3 flex items-center gap-2.5">
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    <span className="relative flex w-2 h-2">
+                      <span className="absolute inset-0 rounded-full bg-[#22C55E] opacity-60 animate-ping" />
+                      <span className="relative inline-flex w-2 h-2 rounded-full bg-[#22C55E]" />
+                    </span>
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-[#22C55E]">
+                      Live
+                    </span>
+                  </div>
+
                   <button
                     type="button"
                     onClick={() => setCallExpanded((v) => !v)}
                     className="flex-1 min-w-0 flex items-center gap-2 text-left"
                   >
-                    <span className="relative flex w-2 h-2 shrink-0">
-                      <span className="absolute inset-0 rounded-full bg-[#22C55E] opacity-50 animate-ping" />
-                      <span className="relative inline-flex w-2 h-2 rounded-full bg-[#22C55E]" />
-                    </span>
-                    <span className="text-[11.5px] font-semibold text-[#EDE5D4] tracking-tight shrink-0">
-                      In call
-                    </span>
-                    <span
-                      className={`text-[10.5px] font-semibold tabular-nums shrink-0 ${
-                        call.participants.length + 1 >= MAX_PARTICIPANTS ? 'text-[#F59E0B]' : 'text-[#6B6259]'
-                      }`}
-                    >
-                      {call.participants.length + 1}/{MAX_PARTICIPANTS}
-                    </span>
-                    {call.participants.length > 0 && (
-                      <div className="flex -space-x-2 ml-1 min-w-0">
-                        {call.participants.slice(0, 3).map((p) => (
-                          <div key={p.userId} className="rounded-full ring-2 ring-[#131110]">
-                            <Avatar name={p.displayName} size="sm" />
+                    <div className="flex -space-x-3">
+                      <div className="relative shrink-0">
+                        <div className="w-9 h-9 rounded-full ring-2 ring-[#22C55E] bg-[#D97706] flex items-center justify-center text-white text-[11px] font-bold">
+                          {initialsOf(user?.displayName ?? 'You')}
+                        </div>
+                        {call.muted && (
+                          <div className="absolute -bottom-0.5 -right-0.5 w-4 h-4 rounded-full bg-[#B91C1C] ring-2 ring-[#131110] flex items-center justify-center">
+                            <MicOff className="w-2.5 h-2.5 text-white" />
                           </div>
-                        ))}
-                        {call.participants.length > 3 && (
-                          <span className="ml-2 text-[10.5px] text-[#6B6259] font-semibold self-center">
-                            +{call.participants.length - 3}
-                          </span>
                         )}
                       </div>
-                    )}
+                      {call.participants.slice(0, 4).map((p) => (
+                        <div key={p.userId} className="relative shrink-0">
+                          <div className="rounded-full ring-2 ring-[#131110]">
+                            <Avatar name={p.displayName} size="sm" />
+                          </div>
+                          {p.muted && (
+                            <div className="absolute -bottom-0.5 -right-0.5 w-4 h-4 rounded-full bg-[#B91C1C] ring-2 ring-[#131110] flex items-center justify-center">
+                              <MicOff className="w-2.5 h-2.5 text-white" />
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                      {call.participants.length > 4 && (
+                        <div className="w-9 h-9 rounded-full bg-[#1A1816] ring-2 ring-[#131110] flex items-center justify-center text-[#6B6259] text-[10px] font-bold">
+                          +{call.participants.length - 4}
+                        </div>
+                      )}
+                    </div>
+                    <div className="ml-2 flex flex-col items-start min-w-0">
+                      <span className="text-[12px] font-semibold text-[#EDE5D4] truncate">
+                        Voice Call
+                      </span>
+                      <span
+                        className={`text-[10px] tabular-nums ${
+                          call.participants.length + 1 >= MAX_PARTICIPANTS ? 'text-[#F59E0B] font-semibold' : 'text-[#6B6259]'
+                        }`}
+                      >
+                        {call.participants.length + 1} / {MAX_PARTICIPANTS}
+                      </span>
+                    </div>
                     <ChevronDown
                       className={`w-3.5 h-3.5 text-[#6B6259] shrink-0 ml-auto transition-transform duration-150 ${
                         callExpanded ? 'rotate-180' : ''
@@ -3042,41 +3113,53 @@ export default function GroupPane(): React.JSX.Element {
 
                   <button
                     onClick={call.toggleMute}
-                    className={`shrink-0 h-8 w-8 rounded-lg flex items-center justify-center transition-colors ${
+                    className={`shrink-0 w-10 h-10 rounded-full flex items-center justify-center transition-all ${
                       call.muted
-                        ? 'bg-[#B91C1C]/20 text-[#F87171] hover:bg-[#B91C1C]/30'
+                        ? 'bg-[#B91C1C]/20 text-[#F87171] ring-1 ring-[#B91C1C]/40 hover:bg-[#B91C1C]/30'
                         : 'bg-white/[0.05] text-[#EDE5D4] hover:bg-white/[0.1]'
                     }`}
                     title={call.muted ? 'Unmute' : 'Mute'}
                     aria-label={call.muted ? 'Unmute' : 'Mute'}
                   >
-                    {call.muted ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
+                    {call.muted ? <MicOff className="w-[18px] h-[18px]" /> : <Mic className="w-[18px] h-[18px]" />}
                   </button>
 
                   <button
                     onClick={call.leave}
-                    className="shrink-0 h-8 px-3 rounded-lg bg-[#B91C1C] hover:bg-[#991B1B] text-white text-[11.5px] font-semibold transition-colors inline-flex items-center gap-1.5"
+                    className="shrink-0 h-10 w-10 rounded-full bg-[#B91C1C] hover:bg-[#991B1B] text-white flex items-center justify-center transition-colors"
+                    title="Leave call"
+                    aria-label="Leave call"
                   >
-                    <PhoneOff className="w-3.5 h-3.5" />
-                    Leave
+                    <PhoneOff className="w-[18px] h-[18px]" />
                   </button>
                 </div>
 
                 {callExpanded && (
-                  <div className="border-t border-white/[0.04] px-2 py-1.5 max-h-[220px] overflow-y-auto space-y-0.5">
-                    <CallParticipantRow
-                      name={user?.displayName ?? 'You'}
-                      avatarUrl={user?.avatarUrl}
-                      muted={call.muted}
-                      isMe
-                    />
-                    {call.participants.map((p) => (
-                      <CallParticipantRow
-                        key={p.userId}
-                        name={p.displayName}
-                        muted={p.muted}
-                      />
-                    ))}
+                  <div className="border-t border-white/[0.04] px-3 pb-3 max-h-[240px] overflow-y-auto">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 pt-2">
+                      <div className="flex items-center gap-2 px-2.5 py-2 rounded-lg bg-white/[0.02]">
+                        <div className="w-8 h-8 rounded-full bg-[#D97706] flex items-center justify-center text-white text-[10px] font-bold shrink-0">
+                          {initialsOf(user?.displayName ?? 'You')}
+                        </div>
+                        <span className="flex-1 min-w-0 truncate text-[12px] font-medium text-[#EDE5D4]">
+                          You
+                        </span>
+                        {call.muted
+                          ? <MicOff className="w-3.5 h-3.5 text-[#F87171] shrink-0" />
+                          : <Mic className="w-3.5 h-3.5 text-[#4ADE80] shrink-0" />}
+                      </div>
+                      {call.participants.map((p) => (
+                        <div key={p.userId} className="flex items-center gap-2 px-2.5 py-2 rounded-lg bg-white/[0.02]">
+                          <Avatar name={p.displayName} size="sm" />
+                          <span className="flex-1 min-w-0 truncate text-[12px] font-medium text-[#EDE5D4]">
+                            {p.displayName}
+                          </span>
+                          {p.muted
+                            ? <MicOff className="w-3.5 h-3.5 text-[#F87171] shrink-0" />
+                            : <Mic className="w-3.5 h-3.5 text-[#4ADE80] shrink-0" />}
+                        </div>
+                      ))}
+                    </div>
                   </div>
                 )}
 
