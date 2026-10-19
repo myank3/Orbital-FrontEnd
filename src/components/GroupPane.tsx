@@ -13,7 +13,7 @@ import React, {
 } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'motion/react';
-import { apiService, extractErrorMessage } from '../services/api';
+import { apiService, extractErrorMessage, applyPresignedUrls } from '../services/api';
 import { signalRService } from '../services/signalr';
 import { useAuth } from '../context/AuthContext';
 import { presenceStore } from '../services/presenceStore';
@@ -2050,7 +2050,8 @@ export default function GroupPane(): React.JSX.Element {
 
         await signalRService.joinGroupChannel(activeGroupId);
 
-        const msgs = await apiService.getGroupMessages(activeGroupId, PAGE_SIZE);
+        const res = await apiService.getGroupMessages(activeGroupId, PAGE_SIZE);
+        const msgs = applyPresignedUrls(res.messages, res.presignedUrls);
         if (!active) return;
         const sorted = [...msgs].sort((a, b) => getMessageTime(a) - getMessageTime(b));
 
@@ -2096,7 +2097,8 @@ export default function GroupPane(): React.JSX.Element {
     const oldestId = messages[0].id;
     setLoadingMore(true);
     try {
-      const earlier = await apiService.getGroupMessages(activeGroupId, PAGE_SIZE, oldestId);
+      const res = await apiService.getGroupMessages(activeGroupId, PAGE_SIZE, oldestId);
+      const earlier = applyPresignedUrls(res.messages, res.presignedUrls);
       if (earlier.length > 0) {
         const sortedEarlier = [...earlier].sort((a, b) => getMessageTime(a) - getMessageTime(b));
         const reactionEvents: Array<{ messageId: number; emoji: string; action: 'add' | 'remove'; userId: string }> = [];

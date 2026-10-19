@@ -25,7 +25,7 @@ export enum CallSessionStatus {
 }
 
 export type CallStatus = 'Ringing' | 'Active' | 'Ended' | 'Missed' | 'Rejected';
-
+ 
 export interface UserProfileDto {
   id: string;
   userHandle: string;
@@ -73,6 +73,7 @@ export interface DirectMessageDto {
   nonce: string | null;
   content: string | null;
   mediaUrl?: string;
+  mediaKey?: string;
   mediaType?: number;
   isRead: boolean;
   sentAt: string;
@@ -109,7 +110,9 @@ export interface GroupMessageDto {
   senderId: string;
   senderDisplayName: string;
   content: string;
+  senderAvatarUrl?: string;
   mediaUrl?: string;
+  mediaKey?: string;
   mediaType: number;
   sentAt: string;
 }
@@ -215,6 +218,11 @@ export interface UserPresencePayload {
 export interface CallEndedPayload {
   sessionId: string;
   reason?: string;
+}
+
+export interface PresignedMessagesResponse<T> {
+  messages: T[];
+  presignedUrls: Record<string, string>;
 }
 
 const apiTypes = {

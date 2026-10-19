@@ -14,7 +14,7 @@ import React, {
 } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { toast, Toaster } from 'sonner';
-import { apiService, extractErrorMessage } from '../services/api';
+import { apiService, extractErrorMessage, applyPresignedUrls } from '../services/api';
 import { signalRService } from '../services/signalr';
 import { presenceStore } from '../services/presenceStore';
 import { useAuth } from '../context/AuthContext'; 
@@ -2930,7 +2930,8 @@ export function DirectMessagePane(): React.JSX.Element {
       const previews = await Promise.all(
         friendList.map(async (f) => {
           try {
-            const history = await apiService.getDmHistory(f.userId, 1);
+            const res = await apiService.getDmHistory(f.userId, 1);
+            const history = applyPresignedUrls(res.messages, res.presignedUrls);
             if (history.length === 0) return null;
             const decrypted = await decryptBatch(history, user.id);
             return { userId: f.userId, msg: decrypted[0] };
@@ -3143,7 +3144,8 @@ export function DirectMessagePane(): React.JSX.Element {
       setLoadingHistory(true);
       setHistoryError(null);
       try {
-        const history = await apiService.getDmHistory(userId, historyLimit);
+        const res = await apiService.getDmHistory(userId, historyLimit);
+        const history = applyPresignedUrls(res.messages, res.presignedUrls);
         if (!active) return;
         const sorted = [...history].sort((a, b) => getMessageTime(a) - getMessageTime(b));
         const seen = readV1Seen(user.id);
@@ -3182,7 +3184,8 @@ export function DirectMessagePane(): React.JSX.Element {
       if (cancelled || inFlight || document.hidden) return;
       inFlight = true;
       try {
-        const history = await apiService.getDmHistory(userId, POLL_LIMIT);
+        const res = await apiService.getDmHistory(userId, POLL_LIMIT);
+        const history = applyPresignedUrls(res.messages, res.presignedUrls);
         if (cancelled) return;
 
         const processed = processedIdsRef.current;
@@ -3582,7 +3585,8 @@ export function DirectMessagePane(): React.JSX.Element {
     catch (err) {
       if (userIdRef.current && currentUserIdRef.current) {
         try {
-          const history = await apiService.getDmHistory(userIdRef.current, historyLimit);
+          const res = await apiService.getDmHistory(userIdRef.current, historyLimit);
+          const history = applyPresignedUrls(res.messages, res.presignedUrls);
           const sorted = [...history].sort((a, b) => getMessageTime(a) - getMessageTime(b));
           const { msgs } = await decodeMessages(sorted, currentUserIdRef.current, readV1Seen(currentUserIdRef.current));
           processedIdsRef.current = new Set(sorted.map((h) => h.id));

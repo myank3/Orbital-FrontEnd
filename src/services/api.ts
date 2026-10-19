@@ -20,6 +20,7 @@ import {
   LoginDto,
   LoginResponseDto,
   PendingFriendRequestDto,
+  PresignedMessagesResponse,
   RegisterDto,
   ResendConfirmationDto,
   ResetPasswordDto,
@@ -138,6 +139,30 @@ export function formatFileSize(bytes: number): string {
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
   return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`;
+}
+
+/**
+ * Merge presigned R2 URLs into messages so that existing rendering code
+ * (which reads `message.mediaUrl`) keeps working without change.
+ * Messages that have no `mediaKey` (legacy base64 rows) are left alone.
+ * Returns the original array reference if nothing changed, preserving
+ * referential equality for React.memo.
+ */
+export function applyPresignedUrls<T extends { mediaKey?: string; mediaUrl?: string }>(
+  messages: T[],
+  presignedUrls: Record<string, string> | undefined | null,
+): T[] {
+  if (!messages) return [];
+  if (!presignedUrls || messages.length === 0) return messages;
+  let changed = false;
+  const next = messages.map((m) => {
+    if (m.mediaKey && presignedUrls[m.mediaKey]) {
+      changed = true;
+      return { ...m, mediaUrl: presignedUrls[m.mediaKey] };
+    }
+    return m;
+  });
+  return changed ? next : messages;
 }
 
 interface RequestConfig extends Omit<RequestInit, 'headers'> {
@@ -467,15 +492,20 @@ const apiService = {
     targetUserId: string,
     take = 50,
     beforeId?: number,
-  ): Promise<DirectMessageDto[]> {
+  ): Promise<PresignedMessagesResponse<DirectMessageDto>> {
     const params = new URLSearchParams({ take: take.toString() });
     if (typeof beforeId === 'number') {
       params.append('beforeId', beforeId.toString());
     }
-    return request<DirectMessageDto[]>(
+    const raw = await request<PresignedMessagesResponse<DirectMessageDto> | DirectMessageDto[]>(
       `/api/DirectMessage/history/${encodeURIComponent(targetUserId)}?${params.toString()}`,
       { method: 'GET' },
     );
+    // Legacy backends returned a bare array. Normalize to the wrapper shape
+    // so the frontend works before and after the backend deploy.
+    return Array.isArray(raw)
+      ? { messages: raw, presignedUrls: {} }
+      : raw;
   },
 
   async sendDm(dto: SendDirectMessageDto): Promise<DirectMessageDto> {
@@ -545,15 +575,20 @@ const apiService = {
     groupId: number,
     take = 50,
     beforeId?: number,
-  ): Promise<GroupMessageDto[]> {
+  ): Promise<PresignedMessagesResponse<GroupMessageDto>> {
     const params = new URLSearchParams({ take: take.toString() });
     if (typeof beforeId === 'number') {
       params.append('beforeId', beforeId.toString());
     }
-    return request<GroupMessageDto[]>(
+    const raw = await request<PresignedMessagesResponse<GroupMessageDto> | GroupMessageDto[]>(
       `/api/Group/${groupId}/messages?${params.toString()}`,
       { method: 'GET' },
     );
+    // Legacy backends returned a bare array. Normalize to the wrapper shape
+    // so the frontend works before and after the backend deploy.
+    return Array.isArray(raw)
+      ? { messages: raw, presignedUrls: {} }
+      : raw;
   },
 
   async sendGroupMessage(dto: SendGroupMessageDto): Promise<GroupMessageDto> {
