@@ -516,6 +516,14 @@ interface SendPayload {
   viewOnce: boolean;
 }
 
+/** In-chat loading state shared between Composer and the message area. */
+type SendingMediaState = {
+  kind: 'video' | 'image' | 'voice';
+  phase: 'compressing' | 'uploading' | 'sending';
+  progress: number;
+  targetName: string;
+} | null;
+
 const NO_MEDIA = null as unknown as DirectMessageDto['mediaUrl'];
 const EMPTY_REACTIONS: ReactionEntry[] = [];
 
@@ -850,19 +858,56 @@ function ImageViewer({
   onClose: () => void;
 }) {
   const [index, setIndex] = useState(startIndex);
+  const [scale, setScale] = useState(1);
+  const [position, setPosition] = useState({ x: 0, y: 0 });
+  const [animate, setAnimate] = useState(true);
+
+  const imgRef = useRef<HTMLImageElement | null>(null);
+  const lastTouchRef = useRef(0);
+  const lastClickTimeRef = useRef(0);
+  const lastTapTimeRef = useRef(0);
+
+  const pinchRef = useRef({ initialDist: 0, initialScale: 1 });
+  const panRef = useRef({
+    active: false,
+    startX: 0,
+    startY: 0,
+    startPosX: 0,
+    startPosY: 0,
+  });
+  const tapRef = useRef({ startTime: 0, startX: 0, startY: 0, moved: false });
+
   const current = images[index];
   const hasPrev = index > 0;
   const hasNext = index < images.length - 1;
 
+  // Reset zoom whenever the visible image changes
+  useEffect(() => {
+    setScale(1);
+    setPosition({ x: 0, y: 0 });
+    setAnimate(true);
+  }, [index]);
+
+  // Keyboard navigation — only at 1×
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
-      else if (e.key === 'ArrowLeft' && hasPrev) setIndex((i) => i - 1);
-      else if (e.key === 'ArrowRight' && hasNext) setIndex((i) => i + 1);
+      if (e.key === 'Escape') {
+        if (scale > 1) {
+          setAnimate(true);
+          setScale(1);
+          setPosition({ x: 0, y: 0 });
+        } else {
+          onClose();
+        }
+      } else if (e.key === 'ArrowLeft' && hasPrev && scale === 1) {
+        setIndex((i) => i - 1);
+      } else if (e.key === 'ArrowRight' && hasNext && scale === 1) {
+        setIndex((i) => i + 1);
+      }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [onClose, hasPrev, hasNext]);
+  }, [onClose, hasPrev, hasNext, scale]);
 
   useEffect(() => {
     const prev = document.body.style.overflow;
@@ -870,14 +915,199 @@ function ImageViewer({
     return () => { document.body.style.overflow = prev; };
   }, []);
 
+  const resetZoom = useCallback(() => {
+    setAnimate(true);
+    setScale(1);
+    setPosition({ x: 0, y: 0 });
+  }, []);
+
+  const toggleZoomAt = useCallback((clientX: number, clientY: number) => {
+    if (scale > 1) {
+      resetZoom();
+      return;
+    }
+    const img = imgRef.current;
+    if (!img) return;
+    const rect = img.getBoundingClientRect();
+    const cx = rect.left + rect.width / 2;
+    const cy = rect.top + rect.height / 2;
+    const dx = clientX - cx;
+    const dy = clientY - cy;
+    const ns = 2.5;
+    setAnimate(true);
+    setScale(ns);
+    setPosition({ x: dx * (1 - ns), y: dy * (1 - ns) });
+  }, [scale, resetZoom]);
+
+  const clampPosition = useCallback((x: number, y: number, s: number) => {
+    const img = imgRef.current;
+    if (!img || s <= 1) return { x: 0, y: 0 };
+    const maxX = (img.offsetWidth * (s - 1)) / 2;
+    const maxY = (img.offsetHeight * (s - 1)) / 2;
+    return {
+      x: Math.max(-maxX, Math.min(maxX, x)),
+      y: Math.max(-maxY, Math.min(maxY, y)),
+    };
+  }, []);
+
+  /* ── Touch handlers ─────────────────────────────────── */
+
+  const onTouchStart = (e: React.TouchEvent) => {
+    lastTouchRef.current = Date.now();
+    setAnimate(false);
+
+    if (e.touches.length === 2) {
+      const t1 = e.touches[0];
+      const t2 = e.touches[1];
+      pinchRef.current = {
+        initialDist: Math.hypot(t1.clientX - t2.clientX, t1.clientY - t2.clientY),
+        initialScale: scale,
+      };
+      tapRef.current.moved = true;
+    } else if (e.touches.length === 1) {
+      const t = e.touches[0];
+      tapRef.current = {
+        startTime: Date.now(),
+        startX: t.clientX,
+        startY: t.clientY,
+        moved: false,
+      };
+      panRef.current = {
+        active: scale > 1,
+        startX: t.clientX,
+        startY: t.clientY,
+        startPosX: position.x,
+        startPosY: position.y,
+      };
+    }
+  };
+
+  const onTouchMove = (e: React.TouchEvent) => {
+    lastTouchRef.current = Date.now();
+
+    if (e.touches.length === 2 && pinchRef.current.initialDist > 0) {
+      e.preventDefault();
+      const t1 = e.touches[0];
+      const t2 = e.touches[1];
+      const dist = Math.hypot(t1.clientX - t2.clientX, t1.clientY - t2.clientY);
+      const raw = (dist / pinchRef.current.initialDist) * pinchRef.current.initialScale;
+      const ns = Math.max(1, Math.min(4, raw));
+      setScale(ns);
+      if (ns === 1) {
+        setPosition({ x: 0, y: 0 });
+      } else {
+        setPosition((p) => clampPosition(p.x, p.y, ns));
+      }
+      tapRef.current.moved = true;
+    } else if (e.touches.length === 1 && panRef.current.active) {
+      e.preventDefault();
+      const t = e.touches[0];
+      const dx = t.clientX - panRef.current.startX;
+      const dy = t.clientY - panRef.current.startY;
+      if (Math.abs(dx) > 3 || Math.abs(dy) > 3) tapRef.current.moved = true;
+      const next = clampPosition(
+        panRef.current.startPosX + dx,
+        panRef.current.startPosY + dy,
+        scale,
+      );
+      setPosition(next);
+    } else if (e.touches.length === 1) {
+      const t = e.touches[0];
+      if (
+        Math.abs(t.clientX - tapRef.current.startX) > 10 ||
+        Math.abs(t.clientY - tapRef.current.startY) > 10
+      ) {
+        tapRef.current.moved = true;
+      }
+    }
+  };
+
+  const onTouchEnd = (e: React.TouchEvent) => {
+    lastTouchRef.current = Date.now();
+    const duration = Date.now() - tapRef.current.startTime;
+    const wasTap = !tapRef.current.moved && duration < 250;
+
+    if (wasTap && e.changedTouches.length > 0) {
+      const t = e.changedTouches[0];
+      const now = Date.now();
+      if (now - lastTapTimeRef.current < 300) {
+        // Double tap → toggle zoom
+        toggleZoomAt(t.clientX, t.clientY);
+        lastTapTimeRef.current = 0;
+      } else {
+        lastTapTimeRef.current = now;
+        const scaleAtTap = scale;
+        window.setTimeout(() => {
+          if (lastTapTimeRef.current === now) {
+            lastTapTimeRef.current = 0;
+            if (scaleAtTap === 1) onClose();
+          }
+        }, 300);
+      }
+    }
+
+    if (e.touches.length === 0) {
+      setAnimate(true);
+      pinchRef.current.initialDist = 0;
+      panRef.current.active = false;
+      if (scale <= 1) {
+        resetZoom();
+      } else {
+        setPosition((p) => clampPosition(p.x, p.y, scale));
+      }
+    }
+  };
+
+  /* ── Desktop handlers ────────────────────────────────── */
+
+  const onDoubleClick = (e: React.MouseEvent) => {
+    if (Date.now() - lastTouchRef.current < 500) return;
+    e.stopPropagation();
+    toggleZoomAt(e.clientX, e.clientY);
+  };
+
+  const handleContainerClick = (e: React.MouseEvent) => {
+    // Suppress synthetic click that browsers emit right after touch
+    if (Date.now() - lastTouchRef.current < 500) return;
+
+    const target = e.target as HTMLElement;
+
+    if (target.tagName === 'IMG') {
+      if (scale > 1) return; // tap on zoomed image does nothing
+      const now = Date.now();
+      if (now - lastClickTimeRef.current < 300) {
+        // Second click → onDoubleClick will handle it
+        lastClickTimeRef.current = 0;
+        return;
+      }
+      lastClickTimeRef.current = now;
+      window.setTimeout(() => {
+        if (lastClickTimeRef.current === now) {
+          lastClickTimeRef.current = 0;
+          if (scale === 1) onClose();
+        }
+      }, 300);
+      return;
+    }
+
+    // Backdrop or header whitespace click → close at 1×
+    if (scale === 1) {
+      lastClickTimeRef.current = 0;
+      onClose();
+    }
+  };
+
   if (!current) return null;
 
   return (
     <div
-      className="fixed inset-0 z-[200] bg-black flex items-center justify-center select-none"
-      onClick={onClose}
+      className="fixed inset-0 z-[200] bg-black flex items-center justify-center select-none overflow-hidden"
+      onClick={handleContainerClick}
     >
-      <div className="absolute top-0 left-0 right-0 flex items-center justify-between px-4 py-3.5 bg-gradient-to-b from-black/90 to-transparent z-10">
+      <div
+        className="absolute top-0 left-0 right-0 flex items-center justify-between px-4 py-3.5 bg-gradient-to-b from-black/90 to-transparent z-10"
+        onClick={(e) => e.stopPropagation()}
+      >
         <div className="min-w-0">
           <p className="text-[13.5px] font-semibold text-white truncate tracking-tight">{current.senderName}</p>
           <p className="text-[11px] text-white/50 tabular-nums mt-0.5">
@@ -904,7 +1134,7 @@ function ImageViewer({
         </div>
       </div>
 
-      {hasPrev && (
+      {hasPrev && scale === 1 && (
         <button
           type="button"
           onClick={(e) => { e.stopPropagation(); setIndex((i) => Math.max(0, i - 1)); }}
@@ -913,7 +1143,7 @@ function ImageViewer({
           <ChevronLeft className="w-6 h-6" />
         </button>
       )}
-      {hasNext && (
+      {hasNext && scale === 1 && (
         <button
           type="button"
           onClick={(e) => { e.stopPropagation(); setIndex((i) => Math.min(images.length - 1, i + 1)); }}
@@ -923,17 +1153,32 @@ function ImageViewer({
         </button>
       )}
 
-      <img
-        key={index}
-        src={current.url}
-        alt=""
-        onClick={(e) => e.stopPropagation()}
-        className="max-w-[95vw] max-h-[88vh] object-contain select-none rounded-xl"
-      />
+      <div
+        className="w-full h-full flex items-center justify-center"
+        onTouchStart={onTouchStart}
+        onTouchMove={onTouchMove}
+        onTouchEnd={onTouchEnd}
+        onTouchCancel={onTouchEnd}
+        style={{ touchAction: 'none' }}
+      >
+        <img
+          ref={imgRef}
+          key={index}
+          src={current.url}
+          alt=""
+          onDoubleClick={onDoubleClick}
+          draggable={false}
+          className="max-w-[95vw] max-h-[88vh] object-contain select-none rounded-xl"
+          style={{
+            transform: `translate(${position.x}px, ${position.y}px) scale(${scale})`,
+            transition: animate ? 'transform 200ms ease-out' : 'none',
+            willChange: 'transform',
+          }}
+        />
+      </div>
     </div>
   );
 }
-
 function ViewOnceViewerModal({
   url, senderName, sentAt, onClose,
 }: { url: string; senderName: string; sentAt: string; onClose: () => void }) {
@@ -2202,6 +2447,61 @@ function InfoModal({
 }
 
 /* ────────────────────────────────────────────────────────── */
+/* SendingOverlay — in-chat "Sending video…" screen           */
+/* ────────────────────────────────────────────────────────── */
+
+function SendingOverlay({
+  sending,
+  theme,
+}: {
+  sending: NonNullable<SendingMediaState>;
+  theme: ChatTheme;
+}) {
+  const label =
+    sending.phase === 'compressing'
+      ? `Compressing ${sending.kind}… ${sending.progress}%`
+      : sending.phase === 'uploading'
+      ? `Sending ${sending.kind}…`
+      : 'Sending…';
+
+  return (
+    <div className="h-full flex flex-col items-center justify-center text-center gap-5 select-none px-6">
+      <div
+        className={`w-20 h-20 rounded-3xl ${theme.subtleBg} border ${theme.subtleBorder} flex items-center justify-center`}
+      >
+        <Loader2 className={`w-8 h-8 animate-spin ${theme.accentText}`} />
+      </div>
+
+      <div>
+        <p className={`text-[16px] font-bold tracking-tight ${theme.textPrimary}`}>{label}</p>
+        <p className={`text-[12.5px] mt-1.5 ${theme.textSecondary}`}>
+          to <span className={`font-semibold ${theme.textPrimary}`}>{sending.targetName}</span>
+        </p>
+      </div>
+
+      <div className={`w-[220px] h-1.5 rounded-full ${theme.subtleBgStrong} overflow-hidden`}>
+        {sending.phase === 'compressing' ? (
+          <div
+            className={`h-full ${theme.accent} transition-[width] duration-200`}
+            style={{ width: `${sending.progress}%` }}
+          />
+        ) : (
+          <div className={`h-full w-1/3 ${theme.accent} rounded-full animate-pulse`} />
+        )}
+      </div>
+
+      <p className={`text-[11px] ${theme.textSecondary} opacity-70`}>
+        {sending.kind === 'video'
+          ? 'Keep this tab open until it finishes'
+          : sending.kind === 'voice'
+          ? 'Voice message is uploading'
+          : 'Image is uploading'}
+      </p>
+    </div>
+  );
+}
+
+/* ────────────────────────────────────────────────────────── */
 /* MediaPreview                                               */
 /* ────────────────────────────────────────────────────────── */
 
@@ -2445,10 +2745,13 @@ interface ComposerProps {
   onSendMedia: (file: File | Blob, type: number) => Promise<void>;
   onSendGif: (url: string) => void;
   onSendSticker: (url: string) => void;
+  /** Report in-chat loading state while a media send is in flight. */
+  onSendingStateChange: (state: SendingMediaState) => void;
 }
 
 const Composer = React.memo(function Composer({
   userId, targetName, theme, replyTo, onCancelReply, onSend, onSendMedia, onSendGif, onSendSticker,
+  onSendingStateChange,
 }: ComposerProps) {
   const { onType, stop: stopTyping } = useDmTypingEmitter(userId);
   const [text, setText] = useState('');
@@ -2521,16 +2824,21 @@ const Composer = React.memo(function Composer({
         return;
       }
       setCompressProgress(0);
+      onSendingStateChange({ kind: 'video', phase: 'compressing', progress: 0, targetName });
       try {
         file = await compressVideo(file, {
           maxBytes: MAX_FILE_SIZE,
-          maxWidth: 320,
-          onProgress: setCompressProgress,
+          maxWidth: 1280,
+          onProgress: (pct) => {
+            setCompressProgress(pct);
+            onSendingStateChange({ kind: 'video', phase: 'compressing', progress: pct, targetName });
+          },
         });
       } finally {
         setCompressProgress(null);
       }
       if (file.size > MAX_FILE_SIZE) {
+        onSendingStateChange(null);
         setFileError(
           `Couldn't shrink ${file.name} below ${formatFileSize(MAX_FILE_SIZE)} — try a shorter clip.`,
         );
@@ -2547,17 +2855,27 @@ const Composer = React.memo(function Composer({
     }
 
     setPanel('none');
+
+    const kind: 'video' | 'image' | 'voice' =
+      resolvedType === MediaType.Video ? 'video'
+      : resolvedType === MediaType.Audio ? 'voice'
+      : 'image';
+
+    onSendingStateChange({ kind, phase: 'uploading', progress: 0, targetName });
+
     try {
       await onSendMedia(file, resolvedType);
     } catch (err) {
       setFileError(extractErrorMessage(err));
     } finally {
+      onSendingStateChange(null);
       input.value = '';
     }
   };
 
-    const handleVoiceComplete = async (rec: VoiceRecording) => {
+  const handleVoiceComplete = async (rec: VoiceRecording) => {
     setVoiceOpen(false);
+    onSendingStateChange({ kind: 'voice', phase: 'uploading', progress: 0, targetName });
     try {
       // Strip ;codecs=... so the MIME matches the backend allowlist
       // and the R2 PUT signature.
@@ -2574,8 +2892,11 @@ const Composer = React.memo(function Composer({
       await onSendMedia(file, MediaType.Audio);
     } catch (err) {
       setFileError(extractErrorMessage(err));
+    } finally {
+      onSendingStateChange(null);
     }
   };
+
   const sendText = async () => {
     const t = text.trim();
     if (!t) return;
@@ -2594,15 +2915,20 @@ const Composer = React.memo(function Composer({
   const sendPreview = async (caption: string, viewOnce: boolean) => {
     const files = previewFiles;
     if (files.length === 0) return;
-    setPreviewFiles([]);
-    setText('');
     setFileError(null);
     stopTyping();
     if (textareaRef.current) textareaRef.current.style.height = 'auto';
+
+    onSendingStateChange({ kind: 'image', phase: 'uploading', progress: 0, targetName });
+
     try {
       await onSend({ text: caption.trim(), files, viewOnce });
+      setPreviewFiles([]);
+      setText('');
     } catch (err) {
       setFileError(extractErrorMessage(err));
+    } finally {
+      onSendingStateChange(null);
     }
   };
 
@@ -2822,6 +3148,9 @@ export function DirectMessagePane(): React.JSX.Element {
     url: string; senderName: string; sentAt: string; messageId: number;
   } | null>(null);
   const [chatMenuFriend, setChatMenuFriend] = useState<FriendDto | null>(null);
+
+  // ── In-chat sending state (drives the loading screen) ──
+  const [sendingMedia, setSendingMedia] = useState<SendingMediaState>(null);
 
   const [pinnedIds, setPinnedIds] = useState<Set<string>>(() => readPinned(user?.id));
   const [mutedIds, setMutedIds] = useState<Set<string>>(() => readMuted(user?.id));
@@ -3094,6 +3423,7 @@ export function DirectMessagePane(): React.JSX.Element {
     setHistoryLimit(INITIAL_HISTORY);
     setCanLoadMore(false);
     setShowJumpToLatest(false);
+    setSendingMedia(null);
     processedIdsRef.current = new Set();
     stickRef.current = true;
     anchorRef.current = null;
@@ -3959,101 +4289,107 @@ export function DirectMessagePane(): React.JSX.Element {
               className="flex-1 overflow-y-auto px-3 sm:px-6 py-3 sm:py-5 relative z-10"
               style={{ overscrollBehavior: 'contain' }}
             >
-              {loadingHistory && messages.length === 0 ? (
-                <MessageSkeleton />
-              ) : historyError && messages.length === 0 ? (
-                <div className="h-full flex flex-col items-center justify-center text-center gap-3 py-12">
-                  <div className="w-14 h-14 rounded-2xl bg-[#B91C1C]/[0.10] border border-[#B91C1C]/30 flex items-center justify-center">
-                    <AlertCircle className="w-6 h-6 text-[#F87171]" />
-                  </div>
-                  <div>
-                    <p className={`text-[14.5px] font-bold tracking-tight ${theme.textPrimary}`}>Couldn't load messages</p>
-                    <p className={`text-[12.5px] mt-1 max-w-[300px] ${theme.textSecondary}`}>{historyError}</p>
-                  </div>
-                  <button
-                    onClick={() => setReloadTick((t) => t + 1)}
-                    className={`h-9 px-4 rounded-xl ${theme.accent} text-[12.5px] font-semibold`}
-                  >Retry</button>
-                </div>
-              ) : messages.length === 0 ? (
-                <div className="h-full flex flex-col items-center justify-center text-center gap-3 py-12">
-                  <div className={`w-14 h-14 rounded-full ${theme.subtleBg} border ${theme.subtleBorder} flex items-center justify-center`}>
-                    <User className={`w-6 h-6 ${theme.textSecondary}`} />
-                  </div>
-                  <div>
-                    <p className={`text-[15.5px] font-bold tracking-tight ${theme.textPrimary}`}>No messages yet</p>
-                    <p className={`text-[13px] mt-1 ${theme.textSecondary}`}>Say hi to {targetUser.displayName}.</p>
-                  </div>
-                </div>
+              {sendingMedia ? (
+                <SendingOverlay sending={sendingMedia} theme={theme} />
               ) : (
                 <>
-                  {canLoadMore && (
-                    <div className="flex justify-center mb-2">
+                  {loadingHistory && messages.length === 0 ? (
+                    <MessageSkeleton />
+                  ) : historyError && messages.length === 0 ? (
+                    <div className="h-full flex flex-col items-center justify-center text-center gap-3 py-12">
+                      <div className="w-14 h-14 rounded-2xl bg-[#B91C1C]/[0.10] border border-[#B91C1C]/30 flex items-center justify-center">
+                        <AlertCircle className="w-6 h-6 text-[#F87171]" />
+                      </div>
+                      <div>
+                        <p className={`text-[14.5px] font-bold tracking-tight ${theme.textPrimary}`}>Couldn't load messages</p>
+                        <p className={`text-[12.5px] mt-1 max-w-[300px] ${theme.textSecondary}`}>{historyError}</p>
+                      </div>
                       <button
-                        onClick={handleLoadEarlier}
-                        disabled={loadingHistory}
-                        className={`h-8 px-4 rounded-full ${theme.subtleBg} border ${theme.subtleBorder} ${theme.textSecondary} text-[11.5px] font-semibold inline-flex items-center gap-1.5 disabled:opacity-60`}
-                      >
-                        {loadingHistory && <Loader2 className="w-3 h-3 animate-spin" />}
-                        Load earlier messages
-                      </button>
+                        onClick={() => setReloadTick((t) => t + 1)}
+                        className={`h-9 px-4 rounded-xl ${theme.accent} text-[12.5px] font-semibold`}
+                      >Retry</button>
+                    </div>
+                  ) : messages.length === 0 ? (
+                    <div className="h-full flex flex-col items-center justify-center text-center gap-3 py-12">
+                      <div className={`w-14 h-14 rounded-full ${theme.subtleBg} border ${theme.subtleBorder} flex items-center justify-center`}>
+                        <User className={`w-6 h-6 ${theme.textSecondary}`} />
+                      </div>
+                      <div>
+                        <p className={`text-[15.5px] font-bold tracking-tight ${theme.textPrimary}`}>No messages yet</p>
+                        <p className={`text-[13px] mt-1 ${theme.textSecondary}`}>Say hi to {targetUser.displayName}.</p>
+                      </div>
+                    </div>
+                  ) : (
+                    <>
+                      {canLoadMore && (
+                        <div className="flex justify-center mb-2">
+                          <button
+                            onClick={handleLoadEarlier}
+                            disabled={loadingHistory}
+                            className={`h-8 px-4 rounded-full ${theme.subtleBg} border ${theme.subtleBorder} ${theme.textSecondary} text-[11.5px] font-semibold inline-flex items-center gap-1.5 disabled:opacity-60`}
+                          >
+                            {loadingHistory && <Loader2 className="w-3 h-3 animate-spin" />}
+                            Load earlier messages
+                          </button>
+                        </div>
+                      )}
+                      {items.map((item) => {
+                        if (item.type === 'date') {
+                          return (
+                            <div key={item.key} className="flex justify-center my-5 select-none">
+                              <span className={`px-3.5 py-1 rounded-full ${theme.subtleBg} border ${theme.subtleBorder} text-[10.5px] uppercase tracking-[0.14em] ${theme.textSecondary} font-bold`}>
+                                {item.label}
+                              </span>
+                            </div>
+                          );
+                        }
+                        const m = item.message;
+                        const isMe = m.senderId === user?.id;
+                        const replyTarget = m.replyToId != null ? messagesById.get(m.replyToId) ?? null : null;
+                        return (
+                          <MessageRow
+                            key={item.key}
+                            message={m}
+                            isMe={isMe}
+                            senderName={isMe ? 'You' : targetUser.displayName}
+                            senderAvatar={isMe ? user?.avatarUrl : targetUser.avatarUrl}
+                            grouped={item.grouped}
+                            isLastOfGroup={item.last}
+                            theme={theme}
+                            reactions={reactions[String(m.id)] ?? EMPTY_REACTIONS}
+                            currentUserId={user?.id}
+                            replyTarget={replyTarget}
+                            highlighted={highlightedMessageId === m.id}
+                            onRequestProfile={setProfileModalUserId}
+                            onOpenImage={handleOpenImage}
+                            onReact={handleReact}
+                            onStartReply={handleStartReply}
+                            onOpenMenu={handleOpenMenu}
+                            onJumpToReply={jumpToMessage}
+                            onMediaLoad={handleMediaLoad}
+                          />
+                        );
+                      })}
+                    </>
+                  )}
+
+                  {isPeerTyping && (
+                    <div className="flex items-end gap-2.5 mt-3 justify-start">
+                      <div className="w-8 shrink-0">
+                        <Avatar name={targetUser.displayName} src={targetUser.avatarUrl} size="sm" />
+                      </div>
+                      <div className={`inline-flex items-center gap-1.5 px-4 py-3 rounded-[20px] rounded-bl-[4px] ${theme.bubbleReceived}`}>
+                        <span className="w-1.5 h-1.5 rounded-full bg-current opacity-60 animate-bounce [animation-delay:-0.32s]" />
+                        <span className="w-1.5 h-1.5 rounded-full bg-current opacity-60 animate-bounce [animation-delay:-0.16s]" />
+                        <span className="w-1.5 h-1.5 rounded-full bg-current opacity-60 animate-bounce" />
+                      </div>
                     </div>
                   )}
-                  {items.map((item) => {
-                    if (item.type === 'date') {
-                      return (
-                        <div key={item.key} className="flex justify-center my-5 select-none">
-                          <span className={`px-3.5 py-1 rounded-full ${theme.subtleBg} border ${theme.subtleBorder} text-[10.5px] uppercase tracking-[0.14em] ${theme.textSecondary} font-bold`}>
-                            {item.label}
-                          </span>
-                        </div>
-                      );
-                    }
-                    const m = item.message;
-                    const isMe = m.senderId === user?.id;
-                    const replyTarget = m.replyToId != null ? messagesById.get(m.replyToId) ?? null : null;
-                    return (
-                      <MessageRow
-                        key={item.key}
-                        message={m}
-                        isMe={isMe}
-                        senderName={isMe ? 'You' : targetUser.displayName}
-                        senderAvatar={isMe ? user?.avatarUrl : targetUser.avatarUrl}
-                        grouped={item.grouped}
-                        isLastOfGroup={item.last}
-                        theme={theme}
-                        reactions={reactions[String(m.id)] ?? EMPTY_REACTIONS}
-                        currentUserId={user?.id}
-                        replyTarget={replyTarget}
-                        highlighted={highlightedMessageId === m.id}
-                        onRequestProfile={setProfileModalUserId}
-                        onOpenImage={handleOpenImage}
-                        onReact={handleReact}
-                        onStartReply={handleStartReply}
-                        onOpenMenu={handleOpenMenu}
-                        onJumpToReply={jumpToMessage}
-                        onMediaLoad={handleMediaLoad}
-                      />
-                    );
-                  })}
                 </>
-              )}
-
-              {isPeerTyping && (
-                <div className="flex items-end gap-2.5 mt-3 justify-start">
-                  <div className="w-8 shrink-0">
-                    <Avatar name={targetUser.displayName} src={targetUser.avatarUrl} size="sm" />
-                  </div>
-                  <div className={`inline-flex items-center gap-1.5 px-4 py-3 rounded-[20px] rounded-bl-[4px] ${theme.bubbleReceived}`}>
-                    <span className="w-1.5 h-1.5 rounded-full bg-current opacity-60 animate-bounce [animation-delay:-0.32s]" />
-                    <span className="w-1.5 h-1.5 rounded-full bg-current opacity-60 animate-bounce [animation-delay:-0.16s]" />
-                    <span className="w-1.5 h-1.5 rounded-full bg-current opacity-60 animate-bounce" />
-                  </div>
-                </div>
               )}
             </div>
 
-            {showJumpToLatest && (
+            {showJumpToLatest && !sendingMedia && (
               <button
                 onClick={handleJumpToLatest}
                 className={`absolute bottom-24 right-6 z-30 w-10 h-10 rounded-full ${theme.accent} shadow-xl flex items-center justify-center`}
@@ -4074,6 +4410,7 @@ export function DirectMessagePane(): React.JSX.Element {
               onSendMedia={handleSendMedia}
               onSendGif={handleSendGif}
               onSendSticker={handleSendSticker}
+              onSendingStateChange={setSendingMedia}
             />
           </>
         ) : (
