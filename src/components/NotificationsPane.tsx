@@ -23,7 +23,7 @@ import {
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'motion/react';
-import { apiService } from '../services/api';
+import { apiService, applyPresignedUrls } from '../services/api';
 import { Avatar } from './Avatar';
 import {
   DirectMessageDto,
@@ -67,6 +67,24 @@ function mediaKindOf(mediaType: number): MediaKind | null {
     default:
       return null;
   }
+}
+
+/**
+ * Normalize whatever `getDmHistory` / `getGroupMessages` returns into
+ * a flat array with `mediaUrl` populated for both R2 rows and legacy
+ * external URLs.
+ *
+ * Accepts either:
+ *   - a bare `Message[]` (legacy backend shape), or
+ *   - `{ messages, presignedUrls }` (Phase 3 / R2 shape).
+ */
+function applyHistoryPresign(raw: any): any[] {
+  if (Array.isArray(raw)) return raw;
+  const messages = raw?.messages ?? [];
+  const presigned = raw?.presignedUrls ?? {};
+  if (messages.length === 0) return [];
+  if (!presigned || Object.keys(presigned).length === 0) return messages;
+  return applyPresignedUrls(messages, presigned);
 }
 
 /* ────────────────────────────────────────────────────────── */
@@ -114,13 +132,13 @@ function NotificationsPane(): React.JSX.Element {
           await Promise.all(
             friends.map(async (friend) => {
               try {
-                const msgs: DirectMessageDto[] = await apiService.getDmHistory(
-                  friend.userId,
-                  100,
-                );
+                const raw = await apiService.getDmHistory(friend.userId, 100);
+                const msgs: DirectMessageDto[] = applyHistoryPresign(raw);
                 for (const m of msgs) {
                   if (!m.mediaUrl) continue;
-                  const kind = mediaKindOf(m.mediaType);
+                  const mt = m.mediaType;
+                  if (typeof mt !== 'number') continue;
+                  const kind = mediaKindOf(mt);
                   if (!kind) continue;
                   const isMe = m.senderId !== friend.userId;
                   collected.push({
@@ -128,10 +146,10 @@ function NotificationsPane(): React.JSX.Element {
                     rawId: m.id,
                     url: m.mediaUrl,
                     kind,
-                    mediaType: m.mediaType,
+                    mediaType: mt,
                     senderId: m.senderId,
                     senderName: isMe ? 'You' : friend.displayName,
-                    senderAvatar: isMe ? null : friend.avatarUrl,
+                    senderAvatar: isMe ? null : friend.avatarUrl ?? null,
                     context: friend.displayName,
                     contextKind: 'dm',
                     contextId: friend.userId,
@@ -157,20 +175,20 @@ function NotificationsPane(): React.JSX.Element {
           await Promise.all(
             groups.map(async (group) => {
               try {
-                const msgs: GroupMessageDto[] = await apiService.getGroupMessages(
-                  group.id,
-                  100,
-                );
+                const raw = await apiService.getGroupMessages(group.id, 100);
+                const msgs: GroupMessageDto[] = applyHistoryPresign(raw);
                 for (const m of msgs) {
                   if (!m.mediaUrl) continue;
-                  const kind = mediaKindOf(m.mediaType);
+                  const mt = m.mediaType;
+                  if (typeof mt !== 'number') continue;
+                  const kind = mediaKindOf(mt);
                   if (!kind) continue;
                   collected.push({
                     id: `grp-${m.id}`,
                     rawId: m.id,
                     url: m.mediaUrl,
                     kind,
-                    mediaType: m.mediaType,
+                    mediaType: mt,
                     senderId: m.senderId,
                     senderName: m.senderDisplayName || 'User',
                     senderAvatar: m.senderAvatarUrl ?? null,
