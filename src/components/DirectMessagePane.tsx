@@ -2861,14 +2861,21 @@ const Composer = React.memo(function Composer({
       : resolvedType === MediaType.Audio ? 'voice'
       : 'image';
 
-    onSendingStateChange({ kind, phase: 'uploading', progress: 0, targetName });
+    // Images don't need the full-screen sending overlay — their optimistic
+    // bubble already appears in the chat with a spinner. Only videos and
+    // voice messages benefit from the dedicated "Sending…" screen.
+    const showOverlay = kind !== 'image';
+
+    if (showOverlay) {
+      onSendingStateChange({ kind, phase: 'uploading', progress: 0, targetName });
+    }
 
     try {
       await onSendMedia(file, resolvedType);
     } catch (err) {
       setFileError(extractErrorMessage(err));
     } finally {
-      onSendingStateChange(null);
+      if (showOverlay) onSendingStateChange(null);
       input.value = '';
     }
   };
@@ -2919,16 +2926,14 @@ const Composer = React.memo(function Composer({
     stopTyping();
     if (textareaRef.current) textareaRef.current.style.height = 'auto';
 
-    onSendingStateChange({ kind: 'image', phase: 'uploading', progress: 0, targetName });
-
+    // No sending overlay for photos — the optimistic bubble in the chat
+    // already shows the upload spinner. Keep the UI snappy.
     try {
       await onSend({ text: caption.trim(), files, viewOnce });
       setPreviewFiles([]);
       setText('');
     } catch (err) {
       setFileError(extractErrorMessage(err));
-    } finally {
-      onSendingStateChange(null);
     }
   };
 
