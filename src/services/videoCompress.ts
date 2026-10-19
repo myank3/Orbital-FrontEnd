@@ -7,6 +7,14 @@
  *   - Retries with tighter budgets if the encoder overshoots.
  *   - Refuses fast (returns original) when a clip can't fit.
  *   - Logs each attempt to the console so failures are diagnosable.
+ *
+ * Quality notes (vs. the old version):
+ *   - Default maxWidth is now 1280 (720p class), not 640.
+ *   - Resolution ladder is 426 / 640 / 854 (was 240 / 320 / 480).
+ *   - Preset is veryfast / faster (was veryfast / ultrafast).
+ *   - Video bitrate ceiling is 8000 kbps (was 2500).
+ *   - Starting budget is 90% of cap (was 75%), so first attempt
+ *     usually passes and the retry loop rarely degrades quality.
  */
 
 import type { FFmpeg } from '@ffmpeg/ffmpeg';
@@ -60,9 +68,9 @@ export async function compressVideo(
       `[compressVideo] file="${file.name}" size=${file.size}B duration=${duration.toFixed(2)}s cap=${opts.maxBytes}B`,
     );
 
-    // Start at 75% of the cap — leaves headroom for container + x264
-    // overshoot, so the first attempt usually passes.
-    let budgetBytes = Math.floor(opts.maxBytes * 0.75);
+    // Start at 90% of the cap — leaves just enough headroom for
+    // container + x264 overshoot, so the first attempt usually passes.
+    let budgetBytes = Math.floor(opts.maxBytes * 0.9);
 
     // Up to 3 attempts. Each retry shrinks the budget proportionally
     // to the previous overshoot, so convergence is fast.
@@ -78,14 +86,15 @@ export async function compressVideo(
         return file;
       }
 
-      // Adaptive resolution
-      let maxW = opts.maxWidth ?? 640;
-      if (videoKbps < 150) maxW = Math.min(maxW, 240);
-      else if (videoKbps < 300) maxW = Math.min(maxW, 320);
-      else if (videoKbps < 500) maxW = Math.min(maxW, 480);
+      // Adaptive resolution — keep 720p class by default.
+      let maxW = opts.maxWidth ?? 1280;
+      if (videoKbps < 150) maxW = Math.min(maxW, 426);
+      else if (videoKbps < 400) maxW = Math.min(maxW, 640);
+      else if (videoKbps < 900) maxW = Math.min(maxW, 854);
 
-      const targetKbps = Math.min(2500, videoKbps);
-      const preset = targetKbps < 400 ? 'veryfast' : 'ultrafast';
+      // Don't artificially cap below the bitrate the size budget allows.
+      const targetKbps = Math.min(8000, videoKbps);
+      const preset = targetKbps < 400 ? 'veryfast' : 'faster';
 
       console.log(
         `[compressVideo] attempt ${attempt}: budget=${budgetBytes}B target=${targetKbps}kbps audio=${audioKbps}kbps maxW=${maxW} preset=${preset}`,
@@ -160,12 +169,12 @@ export async function compressVideo(
         );
       }
 
-      // Overshoot — shrink budget proportionally and retry.
+      // Overshoot — shrink budget mildly and retry.
       if (attempt < 3) {
         const ratio = opts.maxBytes / blob.size;
         budgetBytes = Math.max(
           Math.floor(opts.maxBytes * 0.1),
-          Math.floor(budgetBytes * ratio * 0.9),
+          Math.floor(budgetBytes * ratio * 0.95),
         );
         console.warn(
           `[compressVideo] overshoot, retry ${attempt + 1} with budget ${budgetBytes}B`,
