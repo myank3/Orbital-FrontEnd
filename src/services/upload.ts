@@ -13,7 +13,7 @@ import { API_BASE_URL, extractErrorMessage, getAccessToken } from './api';
  * again in web.config + the upload endpoint, and the DB has a CHECK
  * constraint as the final backstop. None of these three is optional.
  */
-export const MAX_FILE_SIZE = 5 * 1024 * 1024; // 5 MB
+export const MAX_FILE_SIZE = 12 * 1024 * 1024; // 5 MB
 
 /**
  * Largest file we're willing to *try* to compress in-browser.
