@@ -2347,17 +2347,24 @@ export default function GroupPane(): React.JSX.Element {
     }
   }, [activeGroupId, user?.id, user?.displayName, user?.avatarUrl]);
 
-  const handleSendVoice = useCallback(async (blob: Blob, _durationMs: number) => {
+    const handleSendVoice = useCallback(async (blob: Blob, _durationMs: number) => {
     if (!activeGroupId || !user?.id) return;
     stickRef.current = true;
 
-    const ext = blob.type.includes('mp4') ? 'm4a' : 'webm';
+    // Strip ;codecs=... so the MIME matches the backend allowlist
+    // and the R2 PUT signature.
+    const raw = blob.type || 'audio/webm';
+    const baseType = raw.split(';')[0].trim() || 'audio/webm';
+    const ext = baseType.includes('mp4') ? 'm4a'
+              : baseType.includes('ogg') ? 'ogg'
+              : 'webm';
     const file = new File(
       [blob],
       `voice-${Date.now()}.${ext}`,
-      { type: blob.type || 'audio/webm' },
+      { type: baseType },
     );
-    const contentType = file.type || 'audio/webm';
+    const contentType = baseType;
+    // ...rest unchanged
 
     const presign = await apiService.presignUpload(
       file.name, contentType, file.size, 'group', activeGroupId,

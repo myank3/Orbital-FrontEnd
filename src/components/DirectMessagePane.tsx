@@ -2556,21 +2556,26 @@ const Composer = React.memo(function Composer({
     }
   };
 
-  const handleVoiceComplete = async (rec: VoiceRecording) => {
+    const handleVoiceComplete = async (rec: VoiceRecording) => {
     setVoiceOpen(false);
     try {
-      const ext = rec.blob.type.includes('mp4') ? 'm4a' : 'webm';
+      // Strip ;codecs=... so the MIME matches the backend allowlist
+      // and the R2 PUT signature.
+      const raw = rec.blob.type || 'audio/webm';
+      const baseType = raw.split(';')[0].trim() || 'audio/webm';
+      const ext = baseType.includes('mp4') ? 'm4a'
+                : baseType.includes('ogg') ? 'ogg'
+                : 'webm';
       const file = new File(
         [rec.blob],
         `voice-${Date.now()}.${ext}`,
-        { type: rec.blob.type || 'audio/webm' },
+        { type: baseType },
       );
       await onSendMedia(file, MediaType.Audio);
     } catch (err) {
       setFileError(extractErrorMessage(err));
     }
   };
-
   const sendText = async () => {
     const t = text.trim();
     if (!t) return;
