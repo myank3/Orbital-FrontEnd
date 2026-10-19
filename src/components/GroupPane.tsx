@@ -1,4 +1,4 @@
-/**
+ /**
  * @license
  * SPDX-License-Identifier: Apache-2.0
  */
@@ -17,6 +17,8 @@ import { apiService, extractErrorMessage, applyPresignedUrls } from '../services
 import { signalRService } from '../services/signalr';
 import { useAuth } from '../context/AuthContext';
 import { presenceStore } from '../services/presenceStore';
+import { useGroupCall, isCallSignal } from '../hooks/useGroupCall';
+import { Phone, PhoneOff, MicOff } from 'lucide-react';
 import {
   playReceive,
   playSend,
@@ -1949,6 +1951,12 @@ export default function GroupPane(): React.JSX.Element {
   const navigate = useNavigate();
   const { user } = useAuth();
 
+  // ── Group voice call (Cloudflare Realtime SFU over SignalR signaling) ──
+  const call = useGroupCall(
+    activeGroupId,
+    user ? { id: user.id, displayName: user.displayName ?? '' } : undefined,
+  );
+
   const [groups, setGroups] = useState<GroupDto[]>([]);
   const [activeGroup, setActiveGroup] = useState<GroupDetailDto | null>(null);
   const [messages, setMessages] = useState<GroupMessageDto[]>([]);
@@ -2077,6 +2085,7 @@ export default function GroupPane(): React.JSX.Element {
         const deleteEvents: number[] = [];
         const visible: GroupMessageDto[] = [];
         for (const m of sorted) {
+          if (isCallSignal(m.content)) continue;
           const d = decodeIncoming(m.content ?? '');
           if (d.isReaction) {
             reactionEvents.push({ messageId: d.messageId, emoji: d.emoji, action: d.action, userId: m.senderId });
@@ -2123,6 +2132,7 @@ export default function GroupPane(): React.JSX.Element {
         const deleteEvents: number[] = [];
         const visible: GroupMessageDto[] = [];
         for (const m of sortedEarlier) {
+          if (isCallSignal(m.content)) continue;
           const d = decodeIncoming(m.content ?? '');
           if (d.isReaction) {
             reactionEvents.push({ messageId: d.messageId, emoji: d.emoji, action: d.action, userId: m.senderId });
@@ -2151,6 +2161,10 @@ export default function GroupPane(): React.JSX.Element {
 
   useEffect(() => {
     const unsub = signalRService.onReceiveGroupMessage(async (msg: GroupMessageDto) => {
+      // Voice call signaling — handled by useGroupCall's own subscription.
+      // Must skip here so they never become visible chat messages.
+      if (isCallSignal(msg.content)) return;
+
       const d = decodeIncoming(msg.content ?? '');
 
       if (d.isReaction) {
@@ -2734,14 +2748,29 @@ export default function GroupPane(): React.JSX.Element {
                 </div>
               </div>
 
-              <button
-                onClick={() => setInfoOpen(true)}
-                className="w-9 h-9 rounded-xl flex items-center justify-center text-[#A8A29E] hover:text-[#EDE5D4] hover:bg-white/[0.05] transition-colors shrink-0"
-                title="Group info"
-                aria-label="Group info"
-              >
-                <Info className="w-[17px] h-[17px]" />
-              </button>
+              <div className="flex items-center gap-0.5 shrink-0">
+                <button
+                  onClick={() => (call.inCall ? call.leave() : void call.join())}
+                  className={`w-9 h-9 rounded-xl flex items-center justify-center transition-colors shrink-0 ${
+                    call.inCall
+                      ? 'bg-[#B91C1C] text-white hover:bg-[#991B1B]'
+                      : 'text-[#A8A29E] hover:text-[#EDE5D4] hover:bg-white/[0.05]'
+                  }`}
+                  title={call.inCall ? 'Leave call' : 'Start group call'}
+                  aria-label={call.inCall ? 'Leave call' : 'Start group call'}
+                >
+                  {call.inCall ? <PhoneOff className="w-[17px] h-[17px]" /> : <Phone className="w-[17px] h-[17px]" />}
+                </button>
+
+                <button
+                  onClick={() => setInfoOpen(true)}
+                  className="w-9 h-9 rounded-xl flex items-center justify-center text-[#A8A29E] hover:text-[#EDE5D4] hover:bg-white/[0.05] transition-colors shrink-0"
+                  title="Group info"
+                  aria-label="Group info"
+                >
+                  <Info className="w-[17px] h-[17px]" />
+                </button>
+              </div>
             </div>
 
             <div
@@ -2846,6 +2875,61 @@ export default function GroupPane(): React.JSX.Element {
             {typingLabel && (
               <div className="px-4 sm:px-6 pb-1">
                 <span className="text-[11.5px] text-[#6B6259] italic">{typingLabel}</span>
+              </div>
+            )}
+
+            {call.error && !call.inCall && (
+              <div className="px-3 sm:px-5 py-2 border-t border-white/[0.05] bg-[#131110]">
+                <div className="flex items-center gap-2 text-[11.5px] text-[#F87171]">
+                  <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+                  <span className="truncate">{call.error}</span>
+                </div>
+              </div>
+            )}
+
+            {call.inCall && (
+              <div className="px-3 sm:px-5 py-2 border-t border-white/[0.05] bg-[#131110] flex items-center gap-3">
+                <span className="text-[11.5px] font-semibold text-[#EDE5D4] shrink-0">
+                  {call.participants.length + 1} in call
+                </span>
+                <div className="flex-1 min-w-0 flex items-center gap-1.5 overflow-x-auto">
+                  <span className="text-[11px] px-2 py-0.5 rounded-full bg-[#22C55E]/15 text-[#22C55E] shrink-0">
+                    You
+                  </span>
+                  {call.participants.map((p) => (
+                    <span
+                      key={p.userId}
+                      className="text-[11px] px-2 py-0.5 rounded-full bg-white/[0.06] text-[#A8A29E] shrink-0"
+                    >
+                      {p.displayName}
+                    </span>
+                  ))}
+                </div>
+                <button
+                  onClick={call.toggleMute}
+                  className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 transition-colors ${
+                    call.muted
+                      ? 'bg-[#B91C1C]/20 text-[#F87171]'
+                      : 'bg-white/[0.04] text-[#A8A29E] hover:bg-white/[0.08]'
+                  }`}
+                  title={call.muted ? 'Unmute' : 'Mute'}
+                  aria-label={call.muted ? 'Unmute' : 'Mute'}
+                >
+                  {call.muted ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
+                </button>
+                <button
+                  onClick={call.leave}
+                  className="h-8 px-3 rounded-lg bg-[#B91C1C] hover:bg-[#991B1B] text-white text-[11.5px] font-semibold shrink-0 transition-colors"
+                >
+                  Leave
+                </button>
+                {call.participants.map((p) => (
+                  <audio
+                    key={p.userId}
+                    autoPlay
+                    ref={(el) => { if (el) el.srcObject = p.stream; }}
+                  />
+                ))}
               </div>
             )}
 
