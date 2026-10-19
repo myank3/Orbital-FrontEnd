@@ -85,12 +85,6 @@ const MAX_RECORD_MS = 5 * 60 * 1000;
 
 /* ────────────────────────────────────────────────────────── */
 /* Codec                                                      */
-/*                                                            */
-/* Legacy wire markers. Delete-for-everyone now uses a real   */
-/* server endpoint (DELETE /api/Group/messages/{id}) and a    */
-/* SignalR `GroupMessageDeleted` event, but we still decode   */
-/* these to hide any old sentinel rows persisted before the   */
-/* server-side implementation shipped.                        */
 /* ────────────────────────────────────────────────────────── */
 
 const REACT_RE = /^\[react:(-?\d+):([^:\]]+)(?::(add|remove))?\]$/;
@@ -142,6 +136,39 @@ function encodeReaction(messageId: number, emoji: string, action: 'add' | 'remov
 }
 function encodeReply(replyToId: number, text: string) {
   return `[reply:${replyToId}]${text}`;
+}
+
+/**
+ * Merge a server-echoed group message into the local list.
+ *
+ * Phase 3: temp messages carry both `mediaKey` (from presign) and `mediaUrl`
+ * (a local `blob:` URL for optimistic render). The server echo carries
+ * `mediaKey` but no `mediaUrl`. Match on `mediaKey` first (authoritative),
+ * and preserve the temp's local `blob:` URL if the echo lacks one.
+ */
+function mergeIncomingGroup(
+  prev: GroupMessageDto[],
+  local: GroupMessageDto,
+): GroupMessageDto[] {
+  if (prev.some((m) => m.id === local.id)) return prev;
+  const newKey = local.mediaKey ?? '';
+  const newContent = local.content ?? '';
+  const tempIdx = prev.findIndex((m) => {
+    if (typeof m.id !== 'number' || m.id >= 0) return false;
+    if (m.senderId !== local.senderId) return false;
+    if (newKey && m.mediaKey === newKey) return true;
+    return (m.content ?? '') === newContent;
+  });
+  if (tempIdx >= 0) {
+    const next = [...prev];
+    const merged = { ...local };
+    if (!merged.mediaUrl && prev[tempIdx].mediaUrl) {
+      merged.mediaUrl = prev[tempIdx].mediaUrl;
+    }
+    next[tempIdx] = merged;
+    return next;
+  }
+  return [...prev, local];
 }
 
 /* ────────────────────────────────────────────────────────── */
@@ -360,15 +387,6 @@ function getMessageTime(m: GroupMessageDto): number { return parseUtc(m.sentAt).
 function autoGrow(el: HTMLTextAreaElement, max = 140) {
   el.style.height = 'auto';
   el.style.height = Math.min(el.scrollHeight, max) + 'px';
-}
-
-function readAsDataUrl(blob: Blob): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(reader.result as string);
-    reader.onerror = () => reject(new Error('Could not read file'));
-    reader.readAsDataURL(blob);
-  });
 }
 
 function messageSnippet(m: GroupMessageDto): string {
@@ -2132,7 +2150,7 @@ export default function GroupPane(): React.JSX.Element {
   };
 
   useEffect(() => {
-    const unsub = signalRService.onReceiveGroupMessage((msg: GroupMessageDto) => {
+    const unsub = signalRService.onReceiveGroupMessage(async (msg: GroupMessageDto) => {
       const d = decodeIncoming(msg.content ?? '');
 
       if (d.isReaction) {
@@ -2160,11 +2178,28 @@ export default function GroupPane(): React.JSX.Element {
       if (activeGroupId && msg.groupId === activeGroupId) {
         if (processedIdsRef.current.has(msg.id)) return;
         processedIdsRef.current.add(msg.id);
-        const decorated = { ...msg, content: d.body, replyToId: d.replyToId } as GroupMessageDto & { replyToId?: number | null };
-        setMessages((prev) => {
-          if (prev.some((m) => m.id === msg.id)) return prev;
-          return [...prev, decorated];
-        });
+
+        // Phase 3: incoming media arrives with mediaKey but no mediaUrl.
+        // Presign it here unless it's our own echo (temp already has a blob: URL).
+        const isOwnEcho = msg.senderId === user?.id;
+        let mediaUrl = msg.mediaUrl;
+        if (msg.mediaKey && !mediaUrl && !isOwnEcho) {
+          try {
+            const urls = await apiService.presignDownload([msg.mediaKey]);
+            if (urls[msg.mediaKey]) mediaUrl = urls[msg.mediaKey];
+          } catch {
+            /* silent — next poll will pick it up */
+          }
+        }
+
+        const decorated = {
+          ...msg,
+          content: d.body,
+          mediaUrl,
+          replyToId: d.replyToId,
+        } as GroupMessageDto & { replyToId?: number | null };
+
+        setMessages((prev) => mergeIncomingGroup(prev, decorated));
         if (msg.senderId !== user?.id) playReceive();
       }
     });
@@ -2268,31 +2303,97 @@ export default function GroupPane(): React.JSX.Element {
   }, [activeGroupId]);
 
   const handleSendFile = useCallback(async (file: File) => {
-    if (!activeGroupId) return;
+    if (!activeGroupId || !user?.id) return;
     stickRef.current = true;
-    const mediaUrl = await readAsDataUrl(file);
+
     const validation = validateFileSize(file);
-    await signalRService.sendGroupMessage({
+    const contentType = file.type || 'application/octet-stream';
+
+    // Presign + PUT to R2
+    const presign = await apiService.presignUpload(
+      file.name, contentType, file.size, 'group', activeGroupId,
+    );
+    await apiService.uploadToR2(presign.uploadUrl, file, contentType);
+
+    // Optimistic local render via blob URL
+    const blobUrl = URL.createObjectURL(file);
+    const tempId = -Date.now();
+    setMessages((prev) => [...prev, {
+      id: tempId as unknown as number,
       groupId: activeGroupId,
+      senderId: user.id,
+      senderDisplayName: user.displayName ?? '',
+      senderAvatarUrl: user.avatarUrl ?? undefined,
       content: '',
-      mediaUrl,
+      mediaUrl: blobUrl,
+      mediaKey: presign.mediaKey,
       mediaType: validation.mediaType,
-    });
-    playSend();
-  }, [activeGroupId]);
+      sentAt: new Date().toISOString(),
+    }]);
+
+    try {
+      await signalRService.sendGroupMessage({
+        groupId: activeGroupId,
+        content: '',
+        mediaUrl: undefined,
+        mediaKey: presign.mediaKey,
+        mediaType: validation.mediaType,
+      });
+      playSend();
+    } catch (err) {
+      setMessages((prev) => prev.filter((m) => m.id !== (tempId as unknown as number)));
+      URL.revokeObjectURL(blobUrl);
+      throw err;
+    }
+  }, [activeGroupId, user?.id, user?.displayName, user?.avatarUrl]);
 
   const handleSendVoice = useCallback(async (blob: Blob, _durationMs: number) => {
-    if (!activeGroupId) return;
+    if (!activeGroupId || !user?.id) return;
     stickRef.current = true;
-    const mediaUrl = await readAsDataUrl(blob);
-    await signalRService.sendGroupMessage({
+
+    const ext = blob.type.includes('mp4') ? 'm4a' : 'webm';
+    const file = new File(
+      [blob],
+      `voice-${Date.now()}.${ext}`,
+      { type: blob.type || 'audio/webm' },
+    );
+    const contentType = file.type || 'audio/webm';
+
+    const presign = await apiService.presignUpload(
+      file.name, contentType, file.size, 'group', activeGroupId,
+    );
+    await apiService.uploadToR2(presign.uploadUrl, file, contentType);
+
+    const blobUrl = URL.createObjectURL(file);
+    const tempId = -Date.now();
+    setMessages((prev) => [...prev, {
+      id: tempId as unknown as number,
       groupId: activeGroupId,
+      senderId: user.id,
+      senderDisplayName: user.displayName ?? '',
+      senderAvatarUrl: user.avatarUrl ?? undefined,
       content: '',
-      mediaUrl,
+      mediaUrl: blobUrl,
+      mediaKey: presign.mediaKey,
       mediaType: MediaType.Audio,
-    });
-    playSend();
-  }, [activeGroupId]);
+      sentAt: new Date().toISOString(),
+    }]);
+
+    try {
+      await signalRService.sendGroupMessage({
+        groupId: activeGroupId,
+        content: '',
+        mediaUrl: undefined,
+        mediaKey: presign.mediaKey,
+        mediaType: MediaType.Audio,
+      });
+      playSend();
+    } catch (err) {
+      setMessages((prev) => prev.filter((m) => m.id !== (tempId as unknown as number)));
+      URL.revokeObjectURL(blobUrl);
+      throw err;
+    }
+  }, [activeGroupId, user?.id, user?.displayName, user?.avatarUrl]);
 
   /* ── Group actions ───────────────────────────────────────── */
 

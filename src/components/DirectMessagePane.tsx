@@ -96,6 +96,7 @@ import {
   VoiceRecorder,
   type VoiceRecording,
 } from './dm/ComposerToolkit';
+
 /* ────────────────────────────────────────────────────────── */
 /* WhatsApp-style call timer pill                             */
 /* ────────────────────────────────────────────────────────── */
@@ -111,6 +112,7 @@ function CallTimerPill({ callState, duration }: { callState: CallState; duration
     </div>
   );
 }
+
 /* ────────────────────────────────────────────────────────── */
 /* Custom toast: offline call warning                         */
 /* ────────────────────────────────────────────────────────── */
@@ -581,20 +583,34 @@ function applyReactionEvents(
   return next;
 }
 
+/**
+ * Merge a server-echoed message into the local list.
+ *
+ * Phase 3: temp messages carry both `mediaKey` (from presign) and `mediaUrl`
+ * (a local `blob:` URL for optimistic render). The server echo carries
+ * `mediaKey` but no `mediaUrl`. Match on `mediaKey` first (authoritative),
+ * and preserve the temp's local `blob:` URL if the echo lacks one.
+ */
 function mergeIncoming(prev: LocalMessage[], local: LocalMessage): LocalMessage[] {
   if (prev.some((m) => m.id === local.id)) return prev;
   const newText = local.plaintext ?? local.content ?? '';
   const newMedia = local.mediaUrl ?? '';
-  const tempIdx = prev.findIndex(
-    (m) =>
-      typeof m.id === 'number' && m.id < 0 &&
-      m.senderId === local.senderId &&
-      (m.plaintext ?? m.content ?? '') === newText &&
-      (m.mediaUrl ?? '') === newMedia,
-  );
+  const newKey = local.mediaKey ?? '';
+  const tempIdx = prev.findIndex((m) => {
+    if (typeof m.id !== 'number' || m.id >= 0) return false;
+    if (m.senderId !== local.senderId) return false;
+    // Match on mediaKey first (Phase 3 path).
+    if (newKey && m.mediaKey === newKey) return true;
+    // Fall back to legacy text + mediaUrl match (base64 / external URL / text).
+    return (m.plaintext ?? m.content ?? '') === newText && (m.mediaUrl ?? '') === newMedia;
+  });
   if (tempIdx >= 0) {
     const next = [...prev];
-    next[tempIdx] = local;
+    const merged = { ...local };
+    if (!merged.mediaUrl && prev[tempIdx].mediaUrl) {
+      merged.mediaUrl = prev[tempIdx].mediaUrl;
+    }
+    next[tempIdx] = merged;
     return next;
   }
   return [...prev, local];
@@ -651,15 +667,6 @@ function formatDuration(sec: number): string {
 function autoGrow(el: HTMLTextAreaElement, max = 140) {
   el.style.height = 'auto';
   el.style.height = Math.min(el.scrollHeight, max) + 'px';
-}
-
-function readAsDataUrl(blob: Blob): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(reader.result as string);
-    reader.onerror = () => reject(new Error('Could not read file'));
-    reader.readAsDataURL(blob);
-  });
 }
 
 async function prepareImage(file: File): Promise<{ file?: File; error?: string }> {
@@ -1523,14 +1530,9 @@ function VideoBubble({ url }: { url: string }) {
     if (document.fullscreenElement) {
       void document.exitFullscreen().catch(() => {});
     } else {
-      // Fullscreen the <video> element directly — NOT the container.
-      // The container has border-radius + overflow-hidden + max-w constraints
-      // that clip the video in fullscreen on Chromium/Safari.
       const p = v.requestFullscreen?.();
       if (p && typeof p.catch === 'function') {
         p.catch(() => {
-          // iOS Safari doesn't implement requestFullscreen on <video>;
-          // it only has webkitEnterFullscreen.
           // @ts-expect-error non-standard
           v.webkitEnterFullscreen?.();
         });
@@ -1564,7 +1566,6 @@ function VideoBubble({ url }: { url: string }) {
         onClick={togglePlay}
       />
 
-      {/* Big center play button — only before the video has started */}
       {showBigPlay && (
         <button
           type="button"
@@ -1578,7 +1579,6 @@ function VideoBubble({ url }: { url: string }) {
         </button>
       )}
 
-      {/* Top-right action buttons */}
       <div
         className={`absolute top-2 right-2 flex items-center gap-1.5 transition-opacity duration-150 ${
           showControls ? 'opacity-100' : 'opacity-0 pointer-events-none'
@@ -1603,7 +1603,6 @@ function VideoBubble({ url }: { url: string }) {
         </a>
       </div>
 
-      {/* Bottom controls bar */}
       <div
         className={`absolute inset-x-0 bottom-0 px-3 py-2 bg-gradient-to-t from-black/85 via-black/40 to-transparent transition-opacity duration-150 ${
           showControls ? 'opacity-100' : 'opacity-0 pointer-events-none'
@@ -2419,11 +2418,9 @@ function AttachPanel({
   return (
     <div className={`${PANEL_HEIGHT} border-t ${theme.subtleBorder} overflow-y-auto flex flex-col justify-center`}>
       <div className="flex flex-col gap-4 px-4 py-5">
-        {/* Row 1: Gallery, Camera, Video */}
         <div className="flex justify-center gap-4 sm:gap-6">
           {items.slice(0, 3).map(renderItem)}
         </div>
-        {/* Row 2: Document, Audio — centered */}
         <div className="flex justify-center gap-4 sm:gap-6">
           {items.slice(3).map(renderItem)}
         </div>
@@ -2445,7 +2442,7 @@ interface ComposerProps {
   replyTo: LocalMessage | null;
   onCancelReply: () => void;
   onSend: (payload: SendPayload) => Promise<void>;
-  onSendMedia: (url: string, type: number) => Promise<void>;
+  onSendMedia: (file: File | Blob, type: number) => Promise<void>;
   onSendGif: (url: string) => void;
   onSendSticker: (url: string) => void;
 }
@@ -2498,73 +2495,77 @@ const Composer = React.memo(function Composer({
     input.value = '';
   };
 
-   const sendRawFile = async (
-  e: React.ChangeEvent<HTMLInputElement>,
-  type: number,
-) => {
-  const input = e.target;
-  let file = input.files?.[0];
-  if (!file) return;
-  setFileError(null);
+  const sendRawFile = async (
+    e: React.ChangeEvent<HTMLInputElement>,
+    type: number,
+  ) => {
+    const input = e.target;
+    let file = input.files?.[0];
+    if (!file) return;
+    setFileError(null);
 
-  // Auto-detect from MIME so a video picked via Document still
-  // renders as a <video> player instead of a download link.
-  let resolvedType = type;
-  if (file.type.startsWith('video/')) resolvedType = MediaType.Video;
-  else if (file.type.startsWith('image/')) resolvedType = MediaType.Image;
-  else if (file.type.startsWith('audio/')) resolvedType = MediaType.Audio;
+    // Auto-detect from MIME so a video picked via Document still
+    // renders as a <video> player instead of a download link.
+    let resolvedType = type;
+    if (file.type.startsWith('video/')) resolvedType = MediaType.Video;
+    else if (file.type.startsWith('image/')) resolvedType = MediaType.Image;
+    else if (file.type.startsWith('audio/')) resolvedType = MediaType.Audio;
 
-  // ── Video: re-encode if over the server cap ──────────────
-  // Must run BEFORE the generic size check below, otherwise
-  // >5 MB videos are rejected before they ever get compressed.
-  if (resolvedType === MediaType.Video && file.size > MAX_FILE_SIZE) {
-    if (file.size > MAX_TRANSCODE_INPUT) {
-      setFileError(
-        `${file.name}: ${formatFileSize(file.size)} is too large to compress in-browser (limit ${formatFileSize(MAX_TRANSCODE_INPUT)}).`,
-      );
-      input.value = '';
-      return;
+    // ── Video: re-encode if over the size cap ────────────────
+    if (resolvedType === MediaType.Video && file.size > MAX_FILE_SIZE) {
+      if (file.size > MAX_TRANSCODE_INPUT) {
+        setFileError(
+          `${file.name}: ${formatFileSize(file.size)} is too large to compress in-browser (limit ${formatFileSize(MAX_TRANSCODE_INPUT)}).`,
+        );
+        input.value = '';
+        return;
+      }
+      setCompressProgress(0);
+      try {
+        file = await compressVideo(file, {
+          maxBytes: MAX_FILE_SIZE,
+          maxWidth: 320,
+          onProgress: setCompressProgress,
+        });
+      } finally {
+        setCompressProgress(null);
+      }
+      if (file.size > MAX_FILE_SIZE) {
+        setFileError(
+          `Couldn't shrink ${file.name} below ${formatFileSize(MAX_FILE_SIZE)} — try a shorter clip.`,
+        );
+        input.value = '';
+        return;
+      }
     }
-    setCompressProgress(0);
-    try {
-      file = await compressVideo(file, {
-        maxBytes: MAX_FILE_SIZE,
-        maxWidth: 320,
-        onProgress: setCompressProgress,
-      });
-    } finally {
-      setCompressProgress(null);
-    }
+
+    // ── Generic size check (post-compression) ────────────────
     if (file.size > MAX_FILE_SIZE) {
-      setFileError(
-        `Couldn't shrink ${file.name} below ${formatFileSize(MAX_FILE_SIZE)} — try a shorter clip.`,
-      );
+      setFileError(`${file.name}: ${formatFileSize(file.size)} — max is ${formatFileSize(MAX_FILE_SIZE)}.`);
       input.value = '';
       return;
     }
-  }
 
-  // ── Generic size check (post-compression) ────────────────
-  if (file.size > MAX_FILE_SIZE) {
-    setFileError(`${file.name}: ${formatFileSize(file.size)} — max is ${formatFileSize(MAX_FILE_SIZE)}.`);
-    input.value = '';
-    return;
-  }
-
-  setPanel('none');
-  try {
-    await onSendMedia(await readAsDataUrl(file), resolvedType);
-  } catch (err) {
-    setFileError(extractErrorMessage(err));
-  } finally {
-    input.value = '';
-  }
-};
+    setPanel('none');
+    try {
+      await onSendMedia(file, resolvedType);
+    } catch (err) {
+      setFileError(extractErrorMessage(err));
+    } finally {
+      input.value = '';
+    }
+  };
 
   const handleVoiceComplete = async (rec: VoiceRecording) => {
     setVoiceOpen(false);
     try {
-      await onSendMedia(await readAsDataUrl(rec.blob), MediaType.Audio);
+      const ext = rec.blob.type.includes('mp4') ? 'm4a' : 'webm';
+      const file = new File(
+        [rec.blob],
+        `voice-${Date.now()}.${ext}`,
+        { type: rec.blob.type || 'audio/webm' },
+      );
+      await onSendMedia(file, MediaType.Audio);
     } catch (err) {
       setFileError(extractErrorMessage(err));
     }
@@ -2636,7 +2637,7 @@ const Composer = React.memo(function Composer({
                   <span className="truncate">{fileError}</span>
                 </div>
               )}
-                            {compressProgress !== null && (
+              {compressProgress !== null && (
                 <div className="flex items-center gap-1.5 text-[11.5px] font-medium text-[#F59E0B] px-1">
                   <Loader2 className="w-3.5 h-3.5 shrink-0 animate-spin" />
                   <span>Compressing video… {compressProgress}%</span>
@@ -2913,10 +2914,6 @@ export function DirectMessagePane(): React.JSX.Element {
     if (el) el.scrollTop = el.scrollHeight;
   }, []);
 
-  // ── Batched load: friends + previews in one state update ──
-  // Fetching both together and setting both in the same tick means the
-  // first render of the sidebar is already sorted by most recent message.
-  // No "unsorted → sorted" flip that would reshuffle rows on load.
   const loadFriends = useCallback(async () => {
     try {
       const friendList = await apiService.getFriends();
@@ -2946,7 +2943,6 @@ export function DirectMessagePane(): React.JSX.Element {
         if (p) lastMap[p.userId] = p.msg;
       }
 
-      // Both updates in the same tick → React batches into one render.
       setFriends(friendList);
       setLastMessages(lastMap);
       setFriendsLoaded(true);  
@@ -2978,8 +2974,6 @@ export function DirectMessagePane(): React.JSX.Element {
         )
       : base;
 
-    // Sort: pinned first → most recent message → stable tiebreaker on
-    // friendshipId so rows with equal timestamps never flip-flop.
     list.sort((a, b) => {
       const aP = pinnedIds.has(a.userId) ? 1 : 0;
       const bP = pinnedIds.has(b.userId) ? 1 : 0;
@@ -2991,7 +2985,6 @@ export function DirectMessagePane(): React.JSX.Element {
       const tb = mb ? getMessageTime(mb) : 0;
       if (tb !== ta) return tb - ta;
 
-      // No message on either side, or equal timestamps → stable order.
       return a.friendshipId - b.friendshipId;
     });
 
@@ -3282,9 +3275,22 @@ export function DirectMessagePane(): React.JSX.Element {
           call: decoded.call ?? null,
         };
 
+        // Phase 3: incoming media arrives with mediaKey but no mediaUrl.
+        // Presign it here unless it's our own echo (temp already has a blob: URL).
+        const isOwnEcho = msg.senderId === user?.id;
+        if (local.mediaKey && !local.mediaUrl && !isOwnEcho) {
+          try {
+            const urls = await apiService.presignDownload([local.mediaKey]);
+            if (urls[local.mediaKey]) {
+              local.mediaUrl = urls[local.mediaKey];
+            }
+          } catch {
+            /* silent — image will render as soon as next poll presigns it */
+          }
+        }
+
         const otherId = msg.senderId === user?.id ? msg.recipientId : msg.senderId;
         if (otherId) {
-          // Re-surface a hidden conversation when a message goes in or out.
           unhideDm(otherId);
           setLastMessages((prev) => {
             const existing = prev[otherId];
@@ -3332,9 +3338,92 @@ export function DirectMessagePane(): React.JSX.Element {
 
   /* ── Sending ─────────────────────────────────────────────── */
 
-  const sendImageOrMedia = useCallback(
+  /**
+   * Upload a file to R2 (presign → PUT), then send the message via SignalR
+   * with only the `mediaKey`. The blob: URL provides optimistic render.
+   *
+   * For external URLs (GIFs, stickers from Tenor/Giphy), use `sendExternalUrl`.
+   */
+  const sendMediaFile = useCallback(
     async (
-      mediaUrl: string,
+      file: File | Blob,
+      mediaType: number,
+      extraText = '',
+    ): Promise<void> => {
+      if (!userId || !user?.id) return;
+      stickRef.current = true;
+
+      const contentType = file.type || 'application/octet-stream';
+      const fileName =
+        file instanceof File
+          ? file.name
+          : `upload-${Date.now()}.${contentType.split('/')[1] ?? 'bin'}`;
+
+      // 1. Presign + PUT to R2
+      const presign = await apiService.presignUpload(
+        fileName,
+        contentType,
+        file.size,
+        'dm',
+      );
+      await apiService.uploadToR2(presign.uploadUrl, file, contentType);
+
+      // 2. Optimistic local render via blob URL
+      const blobUrl = URL.createObjectURL(file);
+      const tempId = -Date.now();
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: tempId, senderId: user.id, recipientId: userId,
+          ciphertext: null, nonce: null,
+          content: extraText || null, plaintext: extraText || undefined,
+          mediaUrl: blobUrl,
+          mediaKey: presign.mediaKey,
+          mediaType,
+          isRead: false, sentAt: new Date().toISOString(),
+          viewOnce: false, sticker: false, viewed: false, replyToId: null,
+        },
+      ]);
+
+      // 3. Encrypt the caption/payload
+      try {
+        let ciphertext = '';
+        let nonce = '';
+        if (extraText) {
+          const pub = await getPublicKeyFor(userId);
+          const enc = await encryptFor(pub, extraText);
+          ciphertext = enc.ciphertext;
+          nonce = enc.nonce;
+        }
+
+        // 4. Send
+        await signalRService.sendDirectMessage({
+          recipientId: userId,
+          ciphertext,
+          nonce,
+          mediaUrl: undefined,
+          mediaKey: presign.mediaKey,
+          mediaType,
+        });
+        playSend();
+        unhideDm(userId);
+      } catch (err) {
+        setMessages((prev) => prev.filter((m) => m.id !== tempId));
+        URL.revokeObjectURL(blobUrl);
+        throw err;
+      }
+    },
+    [userId, user?.id, unhideDm],
+  );
+
+  /**
+   * External URL path — GIFs and stickers from third-party services (Tenor,
+   * Giphy). Those are already URLs on someone else's CDN; we just pass them
+   * through as `mediaUrl`, no R2 involvement.
+   */
+  const sendExternalUrl = useCallback(
+    async (
+      url: string,
       mediaType: number,
       extraText = '',
       sticker = false,
@@ -3348,7 +3437,7 @@ export function DirectMessagePane(): React.JSX.Element {
           id: tempId, senderId: user.id, recipientId: userId,
           ciphertext: null, nonce: null,
           content: extraText || null, plaintext: extraText || undefined,
-          mediaUrl, mediaType, isRead: false, sentAt: new Date().toISOString(),
+          mediaUrl: url, mediaType, isRead: false, sentAt: new Date().toISOString(),
           viewOnce: false, sticker, viewed: false, replyToId: null,
         },
       ]);
@@ -3363,7 +3452,9 @@ export function DirectMessagePane(): React.JSX.Element {
           ciphertext = enc.ciphertext;
           nonce = enc.nonce;
         }
-        await signalRService.sendDirectMessage({ recipientId: userId, ciphertext, nonce, mediaUrl, mediaType });
+        await signalRService.sendDirectMessage({
+          recipientId: userId, ciphertext, nonce, mediaUrl: url, mediaType,
+        });
         playSend();
         unhideDm(userId);
       } catch (err) {
@@ -3375,13 +3466,16 @@ export function DirectMessagePane(): React.JSX.Element {
   );
 
   const handleSendMedia = useCallback(
-    (url: string, type: number) => sendImageOrMedia(url, type),
-    [sendImageOrMedia],
+    (file: File | Blob, type: number) => sendMediaFile(file, type),
+    [sendMediaFile],
   );
-  const handleSendGif = useCallback((url: string) => { void sendImageOrMedia(url, MediaType.Image).catch(() => {}); }, [sendImageOrMedia]);
+  const handleSendGif = useCallback(
+    (url: string) => { void sendExternalUrl(url, MediaType.Image).catch(() => {}); },
+    [sendExternalUrl],
+  );
   const handleSendSticker = useCallback(
-    (url: string) => { void sendImageOrMedia(url, MediaType.Image, '', true).catch(() => {}); },
-    [sendImageOrMedia],
+    (url: string) => { void sendExternalUrl(url, MediaType.Image, '', true).catch(() => {}); },
+    [sendExternalUrl],
   );
 
   const handleComposerSend = useCallback(
@@ -3394,14 +3488,24 @@ export function DirectMessagePane(): React.JSX.Element {
       stickRef.current = true;
 
       const tempIds: number[] = [];
+      const blobUrls: string[] = [];
       try {
         const recipientPub = await getPublicKeyFor(userId);
 
         if (files.length > 0) {
           for (let i = 0; i < files.length; i++) {
             const file = files[i];
-            const mediaUrl = await readAsDataUrl(file);
             const caption = i === 0 ? text : '';
+
+            // Presign + PUT
+            const contentType = file.type || 'application/octet-stream';
+            const presign = await apiService.presignUpload(
+              file.name, contentType, file.size, 'dm',
+            );
+            await apiService.uploadToR2(presign.uploadUrl, file, contentType);
+
+            const blobUrl = URL.createObjectURL(file);
+            blobUrls.push(blobUrl);
 
             let payload = caption;
             if (i === 0 && replyId != null) payload = encodeReply(replyId, payload);
@@ -3416,7 +3520,9 @@ export function DirectMessagePane(): React.JSX.Element {
                 ciphertext: null, nonce: null,
                 content: caption || null,
                 plaintext: caption || undefined,
-                mediaUrl, mediaType: MediaType.Image, isRead: false,
+                mediaUrl: blobUrl,
+                mediaKey: presign.mediaKey,
+                mediaType: MediaType.Image, isRead: false,
                 sentAt: new Date().toISOString(),
                 viewOnce, viewed: false,
                 replyToId: i === 0 ? replyId : null,
@@ -3431,7 +3537,12 @@ export function DirectMessagePane(): React.JSX.Element {
               nonce = enc.nonce;
             }
             await signalRService.sendDirectMessage({
-              recipientId: userId, ciphertext, nonce, mediaUrl, mediaType: MediaType.Image,
+              recipientId: userId,
+              ciphertext,
+              nonce,
+              mediaUrl: undefined,
+              mediaKey: presign.mediaKey,
+              mediaType: MediaType.Image,
             });
             playSend();
           }
@@ -3463,6 +3574,9 @@ export function DirectMessagePane(): React.JSX.Element {
         }
       } catch (err) {
         setMessages((prev) => prev.filter((m) => !tempIds.includes(m.id as number)));
+        for (const url of blobUrls) {
+          try { URL.revokeObjectURL(url); } catch { /* noop */ }
+        }
         throw err;
       }
     },
@@ -4040,14 +4154,10 @@ export function DirectMessagePane(): React.JSX.Element {
           }}
           onDeleteFromHere={() => {
             const peerId = chatMenuFriend.userId;
-            // Clear messages on the server (WhatsApp "delete chat" semantics)
             void apiService.clearConversation(peerId).catch(() => {});
-            // Hide from sidebar
             hideDm(peerId);
-            // Wipe local previews + unread
             setLastMessages((prev) => { const next = { ...prev }; delete next[peerId]; return next; });
             setUnreadCounts((prev) => { const next = { ...prev }; delete next[peerId]; return next; });
-            // If currently viewing that chat, drop messages and navigate away
             if (peerId === userId) {
               setMessages([]);
               setReactions({});
@@ -4098,8 +4208,6 @@ export function DirectMessagePane(): React.JSX.Element {
           onClose={handleCloseViewOnce}
         />
       )}
-
-      {/* <Toaster position="top-right" richColors closeButton /> */}
     </div>
   );
 }

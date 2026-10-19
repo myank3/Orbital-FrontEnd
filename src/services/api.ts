@@ -287,12 +287,48 @@ async function request<T>(endpoint: string, config: RequestConfig = {}): Promise
   return raw as unknown as T;
 }
 
+/**
+ * Upload a file directly to R2 using a presigned PUT URL.
+ *
+ * This bypasses `request()` intentionally:
+ *  - The URL is already signed for PUT against R2 — adding an Authorization
+ *    header or cookies would invalidate the signature.
+ *  - R2 rejects any header that wasn't included at signing time; we only
+ *    send the exact `Content-Type` that was signed into the URL.
+ *
+ * The caller MUST send the same `contentType` that was passed to
+ * `presignUpload`, or R2 returns 403 SignatureDoesNotMatch.
+ */
+export async function uploadToR2(
+  uploadUrl: string,
+  file: File | Blob,
+  contentType: string,
+): Promise<void> {
+  const response = await fetch(uploadUrl, {
+    method: 'PUT',
+    headers: { 'Content-Type': contentType },
+    body: file,
+    // Deliberately NO `credentials: 'include'` — R2 would reject the request
+    // with a CORS error if cookies were sent against a signed URL.
+  });
+
+  if (!response.ok) {
+    // R2 returns 403 with a small XML body on signature mismatch. Don't
+    // try to parse it — just surface a useful message.
+    throw new Error(
+      `R2 upload failed (${response.status}). ` +
+      `This usually means the Content-Type doesn't match what was signed.`,
+    );
+  }
+}
+
 const apiService = {
   getAccessToken,
   setAccessToken,
   extractErrorMessage,
   validateFileSize,
   formatFileSize,
+  uploadToR2,
 
   async register(dto: RegisterDto): Promise<void> {
     await request<void>('/api/Auth/register', {
@@ -484,6 +520,48 @@ const apiService = {
       { method: 'GET' },
     );
     return res.publicKey;
+  },
+
+  /* ── Media (R2 presigns) ─────────────────────────────── */
+
+  /**
+   * Ask the backend for a presigned PUT URL. The returned `mediaKey`
+   * is what gets stored on the message; `uploadUrl` is where the file
+   * bytes go directly (browser → R2, never through MonsterASP).
+   *
+   * For DM media, the server generates keys prefixed with `dm/{senderId}/`.
+   * For group media, pass `kind: 'group'` and the target `groupId` — the
+   * server verifies membership before issuing the key.
+   */
+  async presignUpload(
+    fileName: string,
+    contentType: string,
+    sizeBytes: number,
+    kind: 'dm' | 'group' | 'avatar' = 'dm',
+    groupId?: number,
+  ): Promise<{ mediaKey: string; uploadUrl: string; expiresAt: string }> {
+    return request<{ mediaKey: string; uploadUrl: string; expiresAt: string }>(
+      '/api/media/presign-upload',
+      {
+        method: 'POST',
+        body: JSON.stringify({ fileName, contentType, sizeBytes, kind, groupId }),
+      },
+    );
+  },
+
+  /**
+   * Ask the backend for presigned GET URLs for a batch of keys.
+   * Returns a map of `{ mediaKey: presignedUrl }`. Max 100 keys per call.
+   * Used when:
+   *  - Rendering history (already handled by `getDmHistory`/`getGroupMessages`)
+   *  - A message arrives over SignalR carrying `mediaKey` but no `mediaUrl`
+   */
+  async presignDownload(keys: string[]): Promise<Record<string, string>> {
+    if (!keys || keys.length === 0) return {};
+    return request<Record<string, string>>('/api/media/presign-download', {
+      method: 'POST',
+      body: JSON.stringify({ keys }),
+    });
   },
 
   /* ── Direct messages ─────────────────────────────────── */

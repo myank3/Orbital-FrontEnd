@@ -87,6 +87,8 @@ export interface SendDirectMessageDto {
   ciphertext: string;
   nonce: string;
   mediaUrl?: string;
+  mediaKey?: string;
+
   mediaType?: number;
 }
 
@@ -121,6 +123,7 @@ export interface SendGroupMessageDto {
   groupId: number;
   content: string;
   mediaUrl?: string;
+  mediaKey?: string;
   mediaType?: number;
 }
 
