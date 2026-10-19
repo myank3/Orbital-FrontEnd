@@ -2919,24 +2919,27 @@ const Composer = React.memo(function Composer({
     }
   };
 
-  const sendPreview = async (caption: string, viewOnce: boolean) => {
+    const sendPreview = async (caption: string, viewOnce: boolean) => {
     const files = previewFiles;
     if (files.length === 0) return;
+    const trimmed = caption.trim();
+
+    // Snapshot the files, then close the modal IMMEDIATELY so the user
+    // sees the optimistic bubble in the chat while the upload runs.
+    // If the upload fails, the error surfaces in the composer instead
+    // of trapping the user inside the preview modal.
+    setPreviewFiles([]);
+    setText('');
     setFileError(null);
     stopTyping();
     if (textareaRef.current) textareaRef.current.style.height = 'auto';
 
-    // No sending overlay for photos — the optimistic bubble in the chat
-    // already shows the upload spinner. Keep the UI snappy.
     try {
-      await onSend({ text: caption.trim(), files, viewOnce });
-      setPreviewFiles([]);
-      setText('');
+      await onSend({ text: trimmed, files, viewOnce });
     } catch (err) {
       setFileError(extractErrorMessage(err));
     }
   };
-
   const canSend = text.trim().length > 0;
 
   return (
