@@ -1,4 +1,4 @@
- /**
+/**
  * @license
  * SPDX-License-Identifier: Apache-2.0
  */
@@ -17,7 +17,7 @@ import { apiService, extractErrorMessage, applyPresignedUrls } from '../services
 import { signalRService } from '../services/signalr';
 import { useAuth } from '../context/AuthContext';
 import { presenceStore } from '../services/presenceStore';
-import { useGroupCall, isCallSignal } from '../hooks/useGroupCall';
+import { useGroupCall, isCallSignal, MAX_PARTICIPANTS } from '../hooks/useGroupCall';
 import { Phone, PhoneOff, MicOff } from 'lucide-react';
 import {
   playReceive,
@@ -84,6 +84,7 @@ import { EmojiPanel } from './dm/ComposerToolkit';
 const PAGE_SIZE = 50;
 const PANEL_HEIGHT = 'h-[300px]';
 const MAX_RECORD_MS = 5 * 60 * 1000;
+const QUICK_REACT_EMOJIS = ['👍', '❤️', '😂'];
 
 /* ────────────────────────────────────────────────────────── */
 /* Codec                                                      */
@@ -140,14 +141,6 @@ function encodeReply(replyToId: number, text: string) {
   return `[reply:${replyToId}]${text}`;
 }
 
-/**
- * Merge a server-echoed group message into the local list.
- *
- * Phase 3: temp messages carry both `mediaKey` (from presign) and `mediaUrl`
- * (a local `blob:` URL for optimistic render). The server echo carries
- * `mediaKey` but no `mediaUrl`. Match on `mediaKey` first (authoritative),
- * and preserve the temp's local `blob:` URL if the echo lacks one.
- */
 function mergeIncomingGroup(
   prev: GroupMessageDto[],
   local: GroupMessageDto,
@@ -926,10 +919,15 @@ const GroupMessageItem = React.memo(function GroupMessageItem({
     return Array.from(map.entries());
   }, [reactions]);
 
+  const myReactions = useMemo(
+    () => new Set(reactions.filter((r) => r.userId === currentUserId).map((r) => r.emoji)),
+    [reactions, currentUserId],
+  );
+
   return (
     <div
       className={`group/row relative flex gap-3 px-1 ${
-        grouped ? 'mt-0.5' : 'mt-4'
+        grouped ? 'mt-0.5' : 'mt-5'
       } ${isMe ? 'flex-row-reverse' : 'flex-row'} ${
         highlighted ? 'ring-2 ring-[#D97706]/60 rounded-2xl' : ''
       }`}
@@ -985,26 +983,42 @@ const GroupMessageItem = React.memo(function GroupMessageItem({
 
         {canAct && (
           <div
-            className={`hidden sm:flex absolute top-1 ${
-              isMe ? 'right-full mr-1.5' : 'left-full ml-1.5'
-            } items-center gap-0.5 opacity-0 group-hover/row:opacity-100`}
+            className={`hidden sm:flex absolute -top-3 ${
+              isMe ? 'right-0' : 'left-0'
+            } items-center gap-0.5 opacity-0 group-hover/row:opacity-100 transition-opacity z-10`}
           >
-            <button
-              type="button"
-              onClick={() => onStartReply(message)}
-              title="Reply"
-              className="w-7 h-7 rounded-full flex items-center justify-center text-[#A8A29E] hover:bg-white/[0.06]"
-            >
-              <Reply className="w-4 h-4" />
-            </button>
-            <button
-              type="button"
-              onClick={() => onOpenMenu(message)}
-              title="More"
-              className="w-7 h-7 rounded-full flex items-center justify-center text-[#A8A29E] hover:bg-white/[0.06]"
-            >
-              <MoreHorizontal className="w-4 h-4" />
-            </button>
+            <div className="flex items-center gap-0.5 rounded-full bg-[#1C1A17] border border-white/[0.08] shadow-[0_4px_14px_-2px_rgba(0,0,0,0.6)] px-1 py-0.5">
+              {QUICK_REACT_EMOJIS.map((e) => (
+                <button
+                  key={e}
+                  type="button"
+                  onClick={() => onReact(message.id as number, e)}
+                  title={`React ${e}`}
+                  className={`w-7 h-7 rounded-full flex items-center justify-center text-[15px] leading-none transition-colors ${
+                    myReactions.has(e) ? 'bg-[#D97706]/[0.18]' : 'hover:bg-white/[0.08]'
+                  }`}
+                >
+                  {e}
+                </button>
+              ))}
+              <span className="w-px h-4 bg-white/[0.08] mx-0.5" aria-hidden />
+              <button
+                type="button"
+                onClick={() => onStartReply(message)}
+                title="Reply"
+                className="w-7 h-7 rounded-full flex items-center justify-center text-[#A8A29E] hover:bg-white/[0.08] transition-colors"
+              >
+                <Reply className="w-3.5 h-3.5" />
+              </button>
+              <button
+                type="button"
+                onClick={() => onOpenMenu(message)}
+                title="More"
+                className="w-7 h-7 rounded-full flex items-center justify-center text-[#A8A29E] hover:bg-white/[0.08] transition-colors"
+              >
+                <MoreHorizontal className="w-3.5 h-3.5" />
+              </button>
+            </div>
           </div>
         )}
 
@@ -1025,7 +1039,7 @@ const GroupMessageItem = React.memo(function GroupMessageItem({
                   onJumpToReply(replyTarget.id);
                 }
               }}
-              className={`w-full text-left mb-2 rounded-lg border-l-[3px] pl-2 pr-2 py-1 text-[11.5px] ${
+              className={`w-full text-left mb-2 rounded-lg border-l-[3px] pl-2 pr-2 py-1 text-[11.5px] transition-opacity hover:opacity-80 ${
                 isMe
                   ? 'bg-black/[0.15] border-black/40 text-[#0F0D0A]/80'
                   : 'bg-white/[0.05] border-[#D97706] text-[#EDE5D4]/80'
@@ -1087,10 +1101,10 @@ const GroupMessageItem = React.memo(function GroupMessageItem({
                 <button
                   key={emoji}
                   onClick={() => { if (canAct) onReact(message.id as number, emoji); }}
-                  className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[12px] font-medium border ${
+                  className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[12px] font-medium border transition-colors ${
                     mine
                       ? 'bg-[#D97706]/[0.18] border-[#D97706]/50 text-[#F59E0B]'
-                      : 'bg-white/[0.06] border-white/[0.10] text-[#EDE5D4]'
+                      : 'bg-white/[0.06] border-white/[0.10] text-[#EDE5D4] hover:bg-white/[0.1]'
                   }`}
                 >
                   <span className="text-[13px] leading-none">{emoji}</span>
@@ -1174,7 +1188,7 @@ function MessageMenu({
               <button
                 key={e}
                 onClick={run(() => onReact(e))}
-                className={`w-10 h-10 rounded-full flex items-center justify-center text-[22px] hover:bg-white/[0.1] active:bg-white/[0.16] ${
+                className={`w-10 h-10 rounded-full flex items-center justify-center text-[22px] hover:bg-white/[0.1] active:bg-white/[0.16] transition-colors ${
                   mine.has(e) ? 'bg-white/[0.14]' : ''
                 }`}
               >
@@ -1279,7 +1293,7 @@ function GroupContextMenu({
             <button
               key={a.key}
               onClick={() => { a.onClick(); onClose(); }}
-              className={`w-full flex items-center gap-3 px-5 py-3 text-[13px] font-medium text-left ${
+              className={`w-full flex items-center gap-3 px-5 py-3 text-[13px] font-medium text-left transition-colors ${
                 a.danger ? 'text-[#F87171] hover:bg-[#B91C1C]/[0.10]' : 'text-[#EDE5D4] hover:bg-white/[0.04]'
               }`}
             >
@@ -1662,9 +1676,9 @@ function GroupAttachPanel({
             key={it.key}
             type="button"
             onClick={it.onClick}
-            className="flex flex-col items-center gap-2"
+            className="flex flex-col items-center gap-2 rounded-2xl py-1 hover:bg-white/[0.03] transition-colors"
           >
-            <span className={`w-14 h-14 rounded-full bg-gradient-to-br ${it.color} text-white flex items-center justify-center`}>
+            <span className={`w-14 h-14 rounded-full bg-gradient-to-br ${it.color} text-white flex items-center justify-center shadow-[0_4px_14px_-4px_rgba(0,0,0,0.5)]`}>
               {it.icon}
             </span>
             <span className="text-[11.5px] font-medium text-[#A8A29E]">{it.label}</span>
@@ -1853,7 +1867,7 @@ const GroupComposer = React.memo(function GroupComposer({
                   <Paperclip className="w-[19px] h-[19px]" />
                 </button>
 
-                <div className="flex-1 min-w-0 flex items-end rounded-[22px] bg-white/[0.06] border border-white/[0.08] px-3 py-1.5 min-h-[44px]">
+                <div className="flex-1 min-w-0 flex items-end rounded-[22px] bg-white/[0.06] border border-white/[0.08] px-3 py-1.5 min-h-[44px] focus-within:border-[#D97706]/40 transition-colors">
                   <textarea
                     ref={textareaRef}
                     value={text}
@@ -1887,7 +1901,7 @@ const GroupComposer = React.memo(function GroupComposer({
                     type="button"
                     onClick={() => void submitText()}
                     disabled={isSending}
-                    className="shrink-0 w-10 h-10 rounded-full bg-[#D97706] hover:bg-[#B45309] disabled:opacity-50 text-[#0F0D0A] flex items-center justify-center"
+                    className="shrink-0 w-10 h-10 rounded-full bg-[#D97706] hover:bg-[#B45309] disabled:opacity-50 text-[#0F0D0A] flex items-center justify-center transition-colors"
                     aria-label="Send"
                   >
                     {isSending
@@ -1899,7 +1913,7 @@ const GroupComposer = React.memo(function GroupComposer({
                     key="mic-btn"
                     type="button"
                     onClick={() => { setPanel('none'); setVoiceOpen(true); }}
-                    className="shrink-0 w-10 h-10 rounded-full bg-[#D97706] hover:bg-[#B45309] text-[#0F0D0A] flex items-center justify-center"
+                    className="shrink-0 w-10 h-10 rounded-full bg-[#D97706] hover:bg-[#B45309] text-[#0F0D0A] flex items-center justify-center transition-colors"
                     aria-label="Record voice message"
                   >
                     <Mic className="w-[19px] h-[19px]" />
@@ -1942,6 +1956,40 @@ const GroupComposer = React.memo(function GroupComposer({
 });
 
 /* ────────────────────────────────────────────────────────── */
+/* Call participant row                                       */
+/* ────────────────────────────────────────────────────────── */
+
+function CallParticipantRow({
+  name,
+  avatarUrl,
+  muted,
+  isMe,
+}: {
+  name: string;
+  avatarUrl?: string | null;
+  muted: boolean;
+  isMe?: boolean;
+}) {
+  return (
+    <div className="px-2 py-1.5 flex items-center gap-2.5 rounded-md hover:bg-white/[0.02] transition-colors">
+      <Avatar name={name} src={avatarUrl} size="sm" />
+      <span
+        className={`flex-1 min-w-0 truncate text-[12px] ${
+          isMe ? 'font-semibold' : 'font-medium'
+        } text-[#EDE5D4]`}
+      >
+        {isMe ? 'You' : name}
+      </span>
+      {muted ? (
+        <MicOff className="w-3.5 h-3.5 text-[#F87171] shrink-0" />
+      ) : (
+        <Mic className="w-3.5 h-3.5 text-[#4ADE80] shrink-0" />
+      )}
+    </div>
+  );
+}
+
+/* ────────────────────────────────────────────────────────── */
 /* Main GroupPane                                             */
 /* ────────────────────────────────────────────────────────── */
 
@@ -1956,6 +2004,11 @@ export default function GroupPane(): React.JSX.Element {
     activeGroupId,
     user ? { id: user.id, displayName: user.displayName ?? '' } : undefined,
   );
+
+  const [callExpanded, setCallExpanded] = useState(false);
+  useEffect(() => {
+    if (!call.inCall) setCallExpanded(false);
+  }, [call.inCall]);
 
   const [groups, setGroups] = useState<GroupDto[]>([]);
   const [activeGroup, setActiveGroup] = useState<GroupDetailDto | null>(null);
@@ -1980,6 +2033,10 @@ export default function GroupPane(): React.JSX.Element {
   const [searchQuery, setSearchQuery] = useState('');
   const [highlightedMessageId, setHighlightedMessageId] = useState<number | null>(null);
   const [showJumpToLatest, setShowJumpToLatest] = useState(false);
+  const [unreadWhileScrolled, setUnreadWhileScrolled] = useState(0);
+
+  const [isDraggingFile, setIsDraggingFile] = useState(false);
+  const dragCounterRef = useRef(0);
 
   const [pendingDeleteEveryoneId, setPendingDeleteEveryoneId] =
     useState<number | null>(null);
@@ -2026,6 +2083,7 @@ export default function GroupPane(): React.JSX.Element {
     setHasMore(true);
     setHistoryError(null);
     setShowJumpToLatest(false);
+    setUnreadWhileScrolled(0);
     processedIdsRef.current = new Set();
     stickRef.current = true;
     anchorRef.current = null;
@@ -2162,7 +2220,6 @@ export default function GroupPane(): React.JSX.Element {
   useEffect(() => {
     const unsub = signalRService.onReceiveGroupMessage(async (msg: GroupMessageDto) => {
       // Voice call signaling — handled by useGroupCall's own subscription.
-      // Must skip here so they never become visible chat messages.
       if (isCallSignal(msg.content)) return;
 
       const d = decodeIncoming(msg.content ?? '');
@@ -2174,10 +2231,6 @@ export default function GroupPane(): React.JSX.Element {
         return;
       }
 
-      // Legacy [del:...] sentinel handling. Kept for one release cycle to
-      // hide any sentinel rows persisted in the DB before the server-side
-      // delete endpoint shipped. New deletes go through GroupMessageDeleted
-      // (bound below) instead of this codec.
       if (d.isDelete) {
         const targetId = d.messageId;
         setMessages((prev) => prev.filter((m) => Number(m.id) !== targetId));
@@ -2193,17 +2246,13 @@ export default function GroupPane(): React.JSX.Element {
         if (processedIdsRef.current.has(msg.id)) return;
         processedIdsRef.current.add(msg.id);
 
-        // Phase 3: incoming media arrives with mediaKey but no mediaUrl.
-        // Presign it here unless it's our own echo (temp already has a blob: URL).
         const isOwnEcho = msg.senderId === user?.id;
         let mediaUrl = msg.mediaUrl;
         if (msg.mediaKey && !mediaUrl && !isOwnEcho) {
           try {
             const urls = await apiService.presignDownload([msg.mediaKey]);
             if (urls[msg.mediaKey]) mediaUrl = urls[msg.mediaKey];
-          } catch {
-            /* silent — next poll will pick it up */
-          }
+          } catch { /* silent */ }
         }
 
         const decorated = {
@@ -2214,19 +2263,15 @@ export default function GroupPane(): React.JSX.Element {
         } as GroupMessageDto & { replyToId?: number | null };
 
         setMessages((prev) => mergeIncomingGroup(prev, decorated));
-        if (msg.senderId !== user?.id) playReceive();
+        if (msg.senderId !== user?.id) {
+          playReceive();
+          if (!stickRef.current) setUnreadWhileScrolled((c) => c + 1);
+        }
       }
     });
     return () => { unsub(); };
   }, [activeGroupId, user?.id]);
 
-  /* ── Real-time delete-for-everyone ───────────────────────
-   *
-   * The signalRService wrapper doesn't expose an onGroupMessageDeleted
-   * subscription yet (and we're not touching signalr.ts), so we bind
-   * directly on the raw HubConnection. `start()` is idempotent — it
-   * returns the existing connection if already connected.
-   */
   useEffect(() => {
     let cancelled = false;
     let unsub: (() => void) | null = null;
@@ -2251,10 +2296,7 @@ export default function GroupPane(): React.JSX.Element {
         unsub = () => {
           try { conn.off('GroupMessageDeleted', handler); } catch { /* noop */ }
         };
-      } catch {
-        /* connection failed — real-time deletes won't fire, but the
-           API call in handleConfirmDeleteForEveryone still works. */
-      }
+      } catch { /* silent */ }
     })();
 
     return () => {
@@ -2284,12 +2326,14 @@ export default function GroupPane(): React.JSX.Element {
     const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 120;
     stickRef.current = nearBottom;
     setShowJumpToLatest(!nearBottom);
+    if (nearBottom) setUnreadWhileScrolled(0);
   };
 
   const handleJumpToLatest = () => {
     stickRef.current = true;
     scrollToBottom();
     setShowJumpToLatest(false);
+    setUnreadWhileScrolled(0);
   };
 
   const jumpToMessage = useCallback((id: number) => {
@@ -2300,8 +2344,6 @@ export default function GroupPane(): React.JSX.Element {
     window.setTimeout(() => setHighlightedMessageId((cur) => (cur === id ? null : cur)), 1300);
     if (navigator.vibrate) navigator.vibrate(8);
   }, []);
-
-  /* ── Send handlers ───────────────────────────────────────── */
 
   const handleSendText = useCallback(async (text: string, replyId: number | null) => {
     if (!activeGroupId) return;
@@ -2323,13 +2365,11 @@ export default function GroupPane(): React.JSX.Element {
     const validation = validateFileSize(file);
     const contentType = file.type || 'application/octet-stream';
 
-    // Presign + PUT to R2
     const presign = await apiService.presignUpload(
       file.name, contentType, file.size, 'group', activeGroupId,
     );
     await apiService.uploadToR2(presign.uploadUrl, file, contentType);
 
-    // Optimistic local render via blob URL
     const blobUrl = URL.createObjectURL(file);
     const tempId = -Date.now();
     setMessages((prev) => [...prev, {
@@ -2361,12 +2401,10 @@ export default function GroupPane(): React.JSX.Element {
     }
   }, [activeGroupId, user?.id, user?.displayName, user?.avatarUrl]);
 
-    const handleSendVoice = useCallback(async (blob: Blob, _durationMs: number) => {
+  const handleSendVoice = useCallback(async (blob: Blob, _durationMs: number) => {
     if (!activeGroupId || !user?.id) return;
     stickRef.current = true;
 
-    // Strip ;codecs=... so the MIME matches the backend allowlist
-    // and the R2 PUT signature.
     const raw = blob.type || 'audio/webm';
     const baseType = raw.split(';')[0].trim() || 'audio/webm';
     const ext = baseType.includes('mp4') ? 'm4a'
@@ -2378,7 +2416,6 @@ export default function GroupPane(): React.JSX.Element {
       { type: baseType },
     );
     const contentType = baseType;
-    // ...rest unchanged
 
     const presign = await apiService.presignUpload(
       file.name, contentType, file.size, 'group', activeGroupId,
@@ -2415,6 +2452,35 @@ export default function GroupPane(): React.JSX.Element {
       throw err;
     }
   }, [activeGroupId, user?.id, user?.displayName, user?.avatarUrl]);
+
+  /* ── Drag & drop ─────────────────────────────────────────── */
+
+  const handleDragEnter = (e: React.DragEvent) => {
+    if (!e.dataTransfer?.types.includes('Files')) return;
+    dragCounterRef.current += 1;
+    setIsDraggingFile(true);
+  };
+  const handleDragLeave = (e: React.DragEvent) => {
+    if (!e.dataTransfer?.types.includes('Files')) return;
+    dragCounterRef.current -= 1;
+    if (dragCounterRef.current <= 0) {
+      dragCounterRef.current = 0;
+      setIsDraggingFile(false);
+    }
+  };
+  const handleDragOver = (e: React.DragEvent) => {
+    if (e.dataTransfer?.types.includes('Files')) {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'copy';
+    }
+  };
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    dragCounterRef.current = 0;
+    setIsDraggingFile(false);
+    const file = e.dataTransfer?.files?.[0];
+    if (file && activeGroupId) void handleSendFile(file).catch(() => { /* handled by Composer */ });
+  };
 
   /* ── Group actions ───────────────────────────────────────── */
 
@@ -2498,7 +2564,6 @@ export default function GroupPane(): React.JSX.Element {
   const handleCancelReply = useCallback(() => setReplyTo(null), []);
   const handleOpenMenu = useCallback((m: GroupMessageDto) => { setMenuMessage(m); }, []);
 
-  /** Delete for me — persisted per user+group in localStorage so it survives reloads. */
   const handleDeleteForMe = useCallback((m: GroupMessageDto) => {
     if (typeof m.id !== 'number' || m.id <= 0) return;
     setMessages((prev) => prev.filter((x) => x.id !== m.id));
@@ -2514,18 +2579,11 @@ export default function GroupPane(): React.JSX.Element {
     });
   }, []);
 
-  /** Delete for everyone — opens the confirmation modal. */
   const handleRequestDeleteForEveryone = useCallback((m: GroupMessageDto) => {
     if (typeof m.id !== 'number' || m.id <= 0) return;
     setPendingDeleteEveryoneId(m.id as number);
   }, []);
 
-  /**
-   * Confirms delete-for-everyone. Calls the real server endpoint
-   * (DELETE /api/Group/messages/{id}); the server soft-deletes the row
-   * and broadcasts GroupMessageDeleted to every connected client.
-   * Falls back to restoring the message locally if the API call fails.
-   */
   const handleConfirmDeleteForEveryone = useCallback(async () => {
     if (pendingDeleteEveryoneId == null || !activeGroupId) return;
     const targetId = pendingDeleteEveryoneId;
@@ -2534,7 +2592,6 @@ export default function GroupPane(): React.JSX.Element {
     const targetStr = String(targetId);
     const removed = messages.find((m) => String(m.id) === targetStr);
 
-    // Optimistic local removal.
     setMessages((prev) => prev.filter((m) => String(m.id) !== targetStr));
     setReactions((prev) => {
       const next = { ...prev };
@@ -2545,7 +2602,6 @@ export default function GroupPane(): React.JSX.Element {
     try {
       await apiService.deleteGroupMessageForEveryone(targetId);
     } catch (err) {
-      // Restore on failure.
       if (removed) {
         setMessages((prev) =>
           [...prev, removed].sort((a, b) => getMessageTime(a) - getMessageTime(b)),
@@ -2600,6 +2656,11 @@ export default function GroupPane(): React.JSX.Element {
     for (const m of visibleMessages) map.set(m.id, m);
     return map;
   }, [visibleMessages]);
+
+  const onlineMembers = useMemo(() => {
+    if (!activeGroup) return 0;
+    return (activeGroup.members ?? []).filter((m) => presenceStore.isOnline(m.id)).length;
+  }, [activeGroup]);
 
   const filteredGroups = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
@@ -2666,7 +2727,7 @@ export default function GroupPane(): React.JSX.Element {
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               placeholder="Search groups"
-              className="w-full h-9 pl-9 pr-3 rounded-lg bg-white/[0.03] border border-white/[0.06] text-[12.5px] text-[#EDE5D4] focus:outline-none placeholder-[#6B6259]"
+              className="w-full h-9 pl-9 pr-3 rounded-lg bg-white/[0.03] border border-white/[0.06] text-[12.5px] text-[#EDE5D4] focus:outline-none focus:border-[#D97706]/40 transition-colors placeholder-[#6B6259]"
             />
           </div>
         </div>
@@ -2686,23 +2747,23 @@ export default function GroupPane(): React.JSX.Element {
                   key={group.id}
                   onClick={() => navigate(`/app/groups/${group.id}`)}
                   onContextMenu={(e) => { e.preventDefault(); setChatMenuGroup(group); }}
-                  className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-left transition-all duration-150 ${
+                  className={`group w-full flex items-center gap-3 px-2.5 py-2 rounded-xl text-left transition-all duration-150 ${
                     isSelected
-                      ? 'bg-[#D97706]/[0.10] ring-1 ring-inset ring-[#D97706]/20'
-                      : 'hover:bg-white/[0.035]'
+                      ? 'bg-[#D97706]/[0.12] ring-1 ring-inset ring-[#D97706]/25'
+                      : 'hover:bg-white/[0.04]'
                   }`}
                 >
                   <GroupAvatar name={group.name} groupId={group.id} />
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-1.5 min-w-0">
                       {pinned && <Pin className="w-3 h-3 text-[#D97706] shrink-0" />}
-                      <p className="text-[13.5px] font-medium text-[#EDE5D4] truncate">
+                      <p className={`text-[13.5px] ${isSelected ? 'font-semibold' : 'font-medium'} text-[#EDE5D4] truncate`}>
                         {group.name}
                       </p>
                       {muted && <BellOff className="w-3 h-3 text-[#6B6259] shrink-0" />}
                     </div>
-                    <p className="text-[11.5px] text-[#6B6259] truncate mt-0.5">
-                      {group.memberCount} member{group.memberCount === 1 ? '' : 's'}
+                    <p className="text-[11px] text-[#6B6259] truncate mt-0.5">
+                      {group.memberCount} {group.memberCount === 1 ? 'member' : 'members'}
                     </p>
                   </div>
                 </button>
@@ -2733,7 +2794,7 @@ export default function GroupPane(): React.JSX.Element {
                 <button
                   type="button"
                   onClick={() => setInfoOpen(true)}
-                  className="shrink-0 rounded-lg focus:outline-none"
+                  className="shrink-0 rounded-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-[#D97706]/50"
                 >
                   <GroupAvatar name={activeGroup.name} groupId={activeGroup.id} />
                 </button>
@@ -2741,9 +2802,19 @@ export default function GroupPane(): React.JSX.Element {
                   <h3 className="text-[14px] sm:text-[14.5px] font-semibold text-[#EDE5D4] truncate tracking-tight">
                     {activeGroup.name}
                   </h3>
-                  <p className="text-[11px] sm:text-[11.5px] text-[#6B6259] truncate mt-0.5">
-                    {activeGroup.memberCount} member{activeGroup.memberCount === 1 ? '' : 's'}
-                    {activeGroup.description ? ` · ${activeGroup.description}` : ''}
+                  <p className="text-[11px] sm:text-[11.5px] text-[#6B6259] truncate mt-0.5 flex items-center gap-1.5">
+                    {onlineMembers > 0 && (
+                      <>
+                        <span className="inline-flex items-center gap-1">
+                          <span className="w-1.5 h-1.5 rounded-full bg-[#22C55E]" />
+                          {onlineMembers} online
+                        </span>
+                        <span className="opacity-50">·</span>
+                      </>
+                    )}
+                    <span>
+                      {activeGroup.memberCount} {activeGroup.memberCount === 1 ? 'member' : 'members'}
+                    </span>
                   </p>
                 </div>
               </div>
@@ -2751,7 +2822,7 @@ export default function GroupPane(): React.JSX.Element {
               <div className="flex items-center gap-0.5 shrink-0">
                 <button
                   onClick={() => (call.inCall ? call.leave() : void call.join())}
-                  className={`w-9 h-9 rounded-xl flex items-center justify-center transition-colors shrink-0 ${
+                  className={`relative w-9 h-9 rounded-xl flex items-center justify-center transition-colors shrink-0 ${
                     call.inCall
                       ? 'bg-[#B91C1C] text-white hover:bg-[#991B1B]'
                       : 'text-[#A8A29E] hover:text-[#EDE5D4] hover:bg-white/[0.05]'
@@ -2760,6 +2831,11 @@ export default function GroupPane(): React.JSX.Element {
                   aria-label={call.inCall ? 'Leave call' : 'Start group call'}
                 >
                   {call.inCall ? <PhoneOff className="w-[17px] h-[17px]" /> : <Phone className="w-[17px] h-[17px]" />}
+                  {call.inCall && (
+                    <span className="absolute -top-1 -right-1 min-w-[16px] h-[16px] px-1 rounded-full bg-[#22C55E] text-[9px] font-bold text-white flex items-center justify-center ring-2 ring-[#0B0A08]">
+                      {call.participants.length + 1}
+                    </span>
+                  )}
                 </button>
 
                 <button
@@ -2773,108 +2849,142 @@ export default function GroupPane(): React.JSX.Element {
               </div>
             </div>
 
-            <div
-              ref={messagesContainerRef}
-              onScroll={handleMessagesScroll}
-              className="flex-1 overflow-y-auto px-3 sm:px-6 py-3 sm:py-4"
-              style={{ overscrollBehavior: 'contain' }}
-            >
-              {loadingHistory ? (
-                <MessageSkeleton />
-              ) : historyError && visibleMessages.length === 0 ? (
-                <div className="h-full flex flex-col items-center justify-center text-center gap-3 py-12">
-                  <div className="w-14 h-14 rounded-2xl bg-[#B91C1C]/[0.10] border border-[#B91C1C]/30 flex items-center justify-center">
-                    <AlertCircle className="w-6 h-6 text-[#F87171]" />
-                  </div>
-                  <div>
-                    <p className="text-[14.5px] font-bold tracking-tight text-[#EDE5D4]">
-                      Couldn't load messages
-                    </p>
-                    <p className="text-[12.5px] mt-1 max-w-[300px] text-[#6B6259]">{historyError}</p>
-                  </div>
-                  <button
-                    onClick={() => setReloadTick((t) => t + 1)}
-                    className="h-9 px-4 rounded-xl bg-[#D97706] hover:bg-[#B45309] text-[#0F0D0A] text-[12.5px] font-semibold"
-                  >
-                    Retry
-                  </button>
-                </div>
-              ) : visibleMessages.length === 0 ? (
-                <div className="h-full flex flex-col items-center justify-center text-center gap-3 py-12">
-                  <GroupAvatar name={activeGroup.name} groupId={activeGroup.id} size="lg" />
-                  <div>
-                    <p className="text-[14.5px] text-[#EDE5D4] font-semibold tracking-tight">
-                      No messages yet
-                    </p>
-                    <p className="text-[12.5px] text-[#6B6259] mt-1">
-                      Start the conversation in {activeGroup.name}.
-                    </p>
-                  </div>
-                </div>
-              ) : (
-                <>
-                  {hasMore && (
-                    <div className="flex justify-center mb-3">
-                      <button
-                        onClick={() => void handleLoadEarlier()}
-                        disabled={loadingMore}
-                        className="px-3 py-1.5 rounded-full bg-white/[0.035] border border-white/[0.06] text-[11.5px] text-[#A8A29E] hover:text-[#EDE5D4] hover:bg-white/[0.06] disabled:opacity-50 transition-colors inline-flex items-center gap-1.5"
-                      >
-                        {loadingMore && <Loader2 className="w-3 h-3 animate-spin" />}
-                        Load earlier messages
-                      </button>
+            <div className="flex-1 relative min-h-0">
+              <div
+                ref={messagesContainerRef}
+                onScroll={handleMessagesScroll}
+                onDragEnter={handleDragEnter}
+                onDragLeave={handleDragLeave}
+                onDragOver={handleDragOver}
+                onDrop={handleDrop}
+                className="absolute inset-0 overflow-y-auto px-3 sm:px-6 py-3 sm:py-4"
+                style={{ overscrollBehavior: 'contain' }}
+              >
+                {loadingHistory ? (
+                  <MessageSkeleton />
+                ) : historyError && visibleMessages.length === 0 ? (
+                  <div className="h-full flex flex-col items-center justify-center text-center gap-3 py-12">
+                    <div className="w-14 h-14 rounded-2xl bg-[#B91C1C]/[0.10] border border-[#B91C1C]/30 flex items-center justify-center">
+                      <AlertCircle className="w-6 h-6 text-[#F87171]" />
                     </div>
-                  )}
-                  {grouped.map((item) => {
-                    if (item.type === 'date') {
+                    <div>
+                      <p className="text-[14.5px] font-bold tracking-tight text-[#EDE5D4]">
+                        Couldn't load messages
+                      </p>
+                      <p className="text-[12.5px] mt-1 max-w-[300px] text-[#6B6259]">{historyError}</p>
+                    </div>
+                    <button
+                      onClick={() => setReloadTick((t) => t + 1)}
+                      className="h-9 px-4 rounded-xl bg-[#D97706] hover:bg-[#B45309] text-[#0F0D0A] text-[12.5px] font-semibold transition-colors"
+                    >
+                      Retry
+                    </button>
+                  </div>
+                ) : visibleMessages.length === 0 ? (
+                  <div className="h-full flex flex-col items-center justify-center text-center gap-3 py-12">
+                    <GroupAvatar name={activeGroup.name} groupId={activeGroup.id} size="lg" />
+                    <div>
+                      <p className="text-[14.5px] text-[#EDE5D4] font-semibold tracking-tight">
+                        No messages yet
+                      </p>
+                      <p className="text-[12.5px] text-[#6B6259] mt-1">
+                        Start the conversation in {activeGroup.name}.
+                      </p>
+                    </div>
+                  </div>
+                ) : (
+                  <>
+                    {hasMore && (
+                      <div className="flex justify-center mb-3">
+                        <button
+                          onClick={() => void handleLoadEarlier()}
+                          disabled={loadingMore}
+                          className="px-3 py-1.5 rounded-full bg-white/[0.035] border border-white/[0.06] text-[11.5px] text-[#A8A29E] hover:text-[#EDE5D4] hover:bg-white/[0.06] disabled:opacity-50 transition-colors inline-flex items-center gap-1.5"
+                        >
+                          {loadingMore && <Loader2 className="w-3 h-3 animate-spin" />}
+                          Load earlier messages
+                        </button>
+                      </div>
+                    )}
+                    {grouped.map((item) => {
+                      if (item.type === 'date') {
+                        return (
+                          <div key={item.key} className="sticky top-0 z-10 flex justify-center py-2 select-none pointer-events-none">
+                            <span className="px-3.5 py-1 rounded-full bg-[#0B0A08]/90 backdrop-blur-sm border border-white/[0.06] text-[10.5px] uppercase tracking-[0.14em] text-[#6B6259] font-bold shadow-[0_4px_12px_-2px_rgba(0,0,0,0.4)]">
+                              {item.label}
+                            </span>
+                          </div>
+                        );
+                      }
+                      const m = item.message;
+                      const replyId = (m as GroupMessageDto & { replyToId?: number | null }).replyToId ?? null;
+                      const replyTarget = replyId != null ? messagesById.get(replyId) ?? null : null;
                       return (
-                        <div key={item.key} className="flex justify-center my-5 select-none">
-                          <span className="px-3.5 py-1 rounded-full bg-white/[0.04] border border-white/[0.06] text-[10.5px] uppercase tracking-[0.14em] text-[#6B6259] font-bold">
-                            {item.label}
-                          </span>
-                        </div>
+                        <GroupMessageItem
+                          key={item.key}
+                          message={m}
+                          isMe={m.senderId === user?.id}
+                          grouped={item.grouped}
+                          isLastOfGroup={item.last}
+                          highlighted={highlightedMessageId === m.id}
+                          reactions={reactions[String(m.id)] ?? EMPTY_REACTIONS}
+                          currentUserId={user?.id}
+                          replyTarget={replyTarget}
+                          onRequestProfile={setProfileModalUserId}
+                          onOpenMenu={handleOpenMenu}
+                          onStartReply={handleStartReply}
+                          onReact={handleReact}
+                          onJumpToReply={jumpToMessage}
+                        />
                       );
-                    }
-                    const m = item.message;
-                    const replyId = (m as GroupMessageDto & { replyToId?: number | null }).replyToId ?? null;
-                    const replyTarget = replyId != null ? messagesById.get(replyId) ?? null : null;
-                    return (
-                      <GroupMessageItem
-                        key={item.key}
-                        message={m}
-                        isMe={m.senderId === user?.id}
-                        grouped={item.grouped}
-                        isLastOfGroup={item.last}
-                        highlighted={highlightedMessageId === m.id}
-                        reactions={reactions[String(m.id)] ?? EMPTY_REACTIONS}
-                        currentUserId={user?.id}
-                        replyTarget={replyTarget}
-                        onRequestProfile={setProfileModalUserId}
-                        onOpenMenu={handleOpenMenu}
-                        onStartReply={handleStartReply}
-                        onReact={handleReact}
-                        onJumpToReply={jumpToMessage}
-                      />
-                    );
-                  })}
-                </>
+                    })}
+                  </>
+                )}
+                <div ref={messagesEndRef} />
+              </div>
+
+              {/* Drag-drop overlay */}
+              {isDraggingFile && (
+                <div className="absolute inset-2 z-30 bg-[#D97706]/[0.08] border-2 border-dashed border-[#D97706]/60 rounded-2xl flex flex-col items-center justify-center pointer-events-none backdrop-blur-sm">
+                  <div className="w-14 h-14 rounded-full bg-[#D97706]/20 flex items-center justify-center mb-2">
+                    <ImageIcon className="w-6 h-6 text-[#D97706]" />
+                  </div>
+                  <p className="text-[14px] font-semibold text-[#D97706]">Drop to send</p>
+                  <p className="text-[11.5px] text-[#D97706]/70 mt-1">Release to send to {activeGroup.name}</p>
+                </div>
               )}
-              <div ref={messagesEndRef} />
             </div>
 
             {showJumpToLatest && (
               <button
                 onClick={handleJumpToLatest}
-                className="absolute bottom-28 right-6 z-30 w-10 h-10 rounded-full bg-[#D97706] hover:bg-[#B45309] text-[#0F0D0A] shadow-xl flex items-center justify-center"
+                className="absolute bottom-24 right-6 z-30 w-10 h-10 rounded-full bg-[#D97706] hover:bg-[#B45309] text-[#0F0D0A] shadow-xl flex items-center justify-center transition-colors"
                 aria-label="Jump to latest"
               >
                 <ChevronDown className="w-5 h-5" />
+                {unreadWhileScrolled > 0 && (
+                  <span className="absolute -top-1 -right-1 min-w-[18px] h-[18px] px-1 rounded-full bg-[#22C55E] text-[10px] font-bold text-white flex items-center justify-center ring-2 ring-[#0B0A08]">
+                    {unreadWhileScrolled > 99 ? '99+' : unreadWhileScrolled}
+                  </span>
+                )}
               </button>
             )}
 
-            {typingLabel && (
-              <div className="px-4 sm:px-6 pb-1">
-                <span className="text-[11.5px] text-[#6B6259] italic">{typingLabel}</span>
+            {typingUsers.length > 0 && (
+              <div className="px-4 sm:px-6 pb-2 flex items-center gap-2">
+                <div className="flex -space-x-2">
+                  {typingUsers.slice(0, 3).map((u) => (
+                    <div key={u.userId} className="rounded-full ring-2 ring-[#0B0A08]">
+                      <Avatar name={u.handle || 'User'} size="sm" />
+                    </div>
+                  ))}
+                </div>
+                <div className="flex items-center gap-1 px-2 py-1.5 rounded-full bg-[#1A1816] border border-white/[0.04]">
+                  <span className="w-1 h-1 rounded-full bg-[#6B6259] animate-bounce [animation-delay:-0.3s]" />
+                  <span className="w-1 h-1 rounded-full bg-[#6B6259] animate-bounce [animation-delay:-0.15s]" />
+                  <span className="w-1 h-1 rounded-full bg-[#6B6259] animate-bounce" />
+                </div>
+                <span className="text-[11px] text-[#6B6259]">{typingLabel}</span>
               </div>
             )}
 
@@ -2888,45 +2998,93 @@ export default function GroupPane(): React.JSX.Element {
             )}
 
             {call.inCall && (
-              <div className="px-3 sm:px-5 py-2 border-t border-white/[0.05] bg-[#131110] flex items-center gap-3">
-                <span className="text-[11.5px] font-semibold text-[#EDE5D4] shrink-0">
-                  {call.participants.length + 1} in call
-                </span>
-                <div className="flex-1 min-w-0 flex items-center gap-1.5 overflow-x-auto">
-                  <span className="text-[11px] px-2 py-0.5 rounded-full bg-[#22C55E]/15 text-[#22C55E] shrink-0">
-                    You
-                  </span>
-                  {call.participants.map((p) => (
-                    <span
-                      key={p.userId}
-                      className="text-[11px] px-2 py-0.5 rounded-full bg-white/[0.06] text-[#A8A29E] shrink-0"
-                    >
-                      {p.displayName}
+              <div className="shrink-0 border-t border-white/[0.05] bg-[#131110]">
+                <div className="px-3 sm:px-5 py-2 flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setCallExpanded((v) => !v)}
+                    className="flex-1 min-w-0 flex items-center gap-2 text-left"
+                  >
+                    <span className="relative flex w-2 h-2 shrink-0">
+                      <span className="absolute inset-0 rounded-full bg-[#22C55E] opacity-50 animate-ping" />
+                      <span className="relative inline-flex w-2 h-2 rounded-full bg-[#22C55E]" />
                     </span>
-                  ))}
+                    <span className="text-[11.5px] font-semibold text-[#EDE5D4] tracking-tight shrink-0">
+                      In call
+                    </span>
+                    <span
+                      className={`text-[10.5px] font-semibold tabular-nums shrink-0 ${
+                        call.participants.length + 1 >= MAX_PARTICIPANTS ? 'text-[#F59E0B]' : 'text-[#6B6259]'
+                      }`}
+                    >
+                      {call.participants.length + 1}/{MAX_PARTICIPANTS}
+                    </span>
+                    {call.participants.length > 0 && (
+                      <div className="flex -space-x-2 ml-1 min-w-0">
+                        {call.participants.slice(0, 3).map((p) => (
+                          <div key={p.userId} className="rounded-full ring-2 ring-[#131110]">
+                            <Avatar name={p.displayName} size="sm" />
+                          </div>
+                        ))}
+                        {call.participants.length > 3 && (
+                          <span className="ml-2 text-[10.5px] text-[#6B6259] font-semibold self-center">
+                            +{call.participants.length - 3}
+                          </span>
+                        )}
+                      </div>
+                    )}
+                    <ChevronDown
+                      className={`w-3.5 h-3.5 text-[#6B6259] shrink-0 ml-auto transition-transform duration-150 ${
+                        callExpanded ? 'rotate-180' : ''
+                      }`}
+                    />
+                  </button>
+
+                  <button
+                    onClick={call.toggleMute}
+                    className={`shrink-0 h-8 w-8 rounded-lg flex items-center justify-center transition-colors ${
+                      call.muted
+                        ? 'bg-[#B91C1C]/20 text-[#F87171] hover:bg-[#B91C1C]/30'
+                        : 'bg-white/[0.05] text-[#EDE5D4] hover:bg-white/[0.1]'
+                    }`}
+                    title={call.muted ? 'Unmute' : 'Mute'}
+                    aria-label={call.muted ? 'Unmute' : 'Mute'}
+                  >
+                    {call.muted ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
+                  </button>
+
+                  <button
+                    onClick={call.leave}
+                    className="shrink-0 h-8 px-3 rounded-lg bg-[#B91C1C] hover:bg-[#991B1B] text-white text-[11.5px] font-semibold transition-colors inline-flex items-center gap-1.5"
+                  >
+                    <PhoneOff className="w-3.5 h-3.5" />
+                    Leave
+                  </button>
                 </div>
-                <button
-                  onClick={call.toggleMute}
-                  className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 transition-colors ${
-                    call.muted
-                      ? 'bg-[#B91C1C]/20 text-[#F87171]'
-                      : 'bg-white/[0.04] text-[#A8A29E] hover:bg-white/[0.08]'
-                  }`}
-                  title={call.muted ? 'Unmute' : 'Mute'}
-                  aria-label={call.muted ? 'Unmute' : 'Mute'}
-                >
-                  {call.muted ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
-                </button>
-                <button
-                  onClick={call.leave}
-                  className="h-8 px-3 rounded-lg bg-[#B91C1C] hover:bg-[#991B1B] text-white text-[11.5px] font-semibold shrink-0 transition-colors"
-                >
-                  Leave
-                </button>
+
+                {callExpanded && (
+                  <div className="border-t border-white/[0.04] px-2 py-1.5 max-h-[220px] overflow-y-auto space-y-0.5">
+                    <CallParticipantRow
+                      name={user?.displayName ?? 'You'}
+                      avatarUrl={user?.avatarUrl}
+                      muted={call.muted}
+                      isMe
+                    />
+                    {call.participants.map((p) => (
+                      <CallParticipantRow
+                        key={p.userId}
+                        name={p.displayName}
+                        muted={p.muted}
+                      />
+                    ))}
+                  </div>
+                )}
+
                 {call.participants.map((p) => (
                   <audio
-                    key={p.userId}
+                    key={`${p.userId}:${p.stream.id}`}
                     autoPlay
+                    playsInline
                     ref={(el) => { if (el) el.srcObject = p.stream; }}
                   />
                 ))}
@@ -2992,7 +3150,6 @@ export default function GroupPane(): React.JSX.Element {
         />
       )}
 
-      {/* Delete-for-everyone confirm modal */}
       {pendingDeleteEveryoneId != null && (
         <div
           className="fixed inset-0 z-[190] bg-black/65 flex items-center justify-center p-4"
@@ -3011,13 +3168,13 @@ export default function GroupPane(): React.JSX.Element {
             <div className="px-5 py-3.5 border-t border-white/[0.06] flex items-center justify-end gap-2">
               <button
                 onClick={() => setPendingDeleteEveryoneId(null)}
-                className="h-9 px-4 rounded-xl bg-white/[0.04] hover:bg-white/[0.08] text-[12.5px] font-medium text-[#EDE5D4]"
+                className="h-9 px-4 rounded-xl bg-white/[0.04] hover:bg-white/[0.08] text-[12.5px] font-medium text-[#EDE5D4] transition-colors"
               >
                 Cancel
               </button>
               <button
                 onClick={() => void handleConfirmDeleteForEveryone()}
-                className="h-9 px-4 rounded-xl bg-[#B91C1C] hover:bg-[#991B1B] text-white text-[12.5px] font-semibold"
+                className="h-9 px-4 rounded-xl bg-[#B91C1C] hover:bg-[#991B1B] text-white text-[12.5px] font-semibold transition-colors"
               >
                 Delete for everyone
               </button>

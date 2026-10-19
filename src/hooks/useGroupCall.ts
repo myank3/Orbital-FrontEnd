@@ -3,16 +3,19 @@ import * as sfu from '../services/cloudflareRealtime';
 import { signalRService } from '../services/signalr';
 
 const PREFIX = '[call:';
+export const MAX_PARTICIPANTS = 5;
 
 type CallEvent =
-  | { type: 'join'; userId: string; displayName: string; sessionId: string }
-  | { type: 'publish'; userId: string; displayName: string; sessionId: string; trackName: string }
+  | { type: 'join'; userId: string; displayName: string; sessionId: string; muted: boolean }
+  | { type: 'publish'; userId: string; displayName: string; sessionId: string; trackName: string; muted: boolean }
+  | { type: 'mute'; userId: string; muted: boolean }
   | { type: 'leave'; userId: string };
 
 export interface CallParticipant {
   userId: string;
   displayName: string;
   stream: MediaStream;
+  muted: boolean;
 }
 
 export interface UseGroupCallResult {
@@ -84,6 +87,12 @@ export function useGroupCall(
     if (!groupId || !me || inCall) return;
     setError(null);
 
+    // Capacity check — we'd be the (size + 1)th person
+    if (participantsRef.current.size + 1 > MAX_PARTICIPANTS) {
+      setError(`This call is full (${MAX_PARTICIPANTS} participants max).`);
+      return;
+    }
+
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
@@ -102,7 +111,13 @@ export function useGroupCall(
         const meta = pendingPullsRef.current.shift();
         if (!meta) return;
         const mediaStream = new MediaStream([e.track]);
-        participantsRef.current.set(meta.userId, { ...meta, stream: mediaStream });
+        const existing = participantsRef.current.get(meta.userId);
+        participantsRef.current.set(meta.userId, {
+          userId: meta.userId,
+          displayName: meta.displayName,
+          stream: mediaStream,
+          muted: existing?.muted ?? false,
+        });
         setParticipants(Array.from(participantsRef.current.values()));
       };
 
@@ -136,6 +151,7 @@ export function useGroupCall(
         userId: me.id,
         displayName: me.displayName,
         sessionId: created.sessionId,
+        muted: false,
       });
       await send({
         type: 'publish',
@@ -143,6 +159,7 @@ export function useGroupCall(
         displayName: me.displayName,
         sessionId: created.sessionId,
         trackName: track.id,
+        muted: false,
       });
     } catch (err) {
       console.error('[call] join failed', err);
@@ -159,7 +176,17 @@ export function useGroupCall(
       if (!pcRef.current || !sessionIdRef.current) return;
       pulledKeysRef.current.add(key);
 
-      // Serialize pulls — ontrack fires in order, so we pop from the queue reliably
+      // Show them in the list immediately, before the track arrives
+      if (!participantsRef.current.has(evt.userId)) {
+        participantsRef.current.set(evt.userId, {
+          userId: evt.userId,
+          displayName: evt.displayName,
+          stream: new MediaStream(),
+          muted: evt.muted,
+        });
+        setParticipants(Array.from(participantsRef.current.values()));
+      }
+
       pullChainRef.current = pullChainRef.current.then(async () => {
         const pc = pcRef.current;
         const mySid = sessionIdRef.current;
@@ -176,6 +203,7 @@ export function useGroupCall(
           }
         } catch (err) {
           console.warn('[call] pull failed', err);
+          pulledKeysRef.current.delete(key);
           pendingPullsRef.current.pop();
         }
       });
@@ -187,8 +215,10 @@ export function useGroupCall(
     const t = localTrackRef.current;
     if (!t) return;
     t.enabled = !t.enabled;
-    setMuted(!t.enabled);
-  }, []);
+    const nowMuted = !t.enabled;
+    setMuted(nowMuted);
+    if (me) void send({ type: 'mute', userId: me.id, muted: nowMuted });
+  }, [me, send]);
 
   useEffect(() => {
     if (!groupId || !me) return;
@@ -204,7 +234,7 @@ export function useGroupCall(
       }
 
       if (evt.type === 'join' && evt.userId !== me.id && inCall) {
-        // New participant — re-broadcast our publish so they can pull us
+        // Someone joined — re-announce our publish so they can pull us
         const sid = sessionIdRef.current;
         const tid = localTrackRef.current?.id;
         if (sid && tid) {
@@ -214,17 +244,24 @@ export function useGroupCall(
             displayName: me.displayName,
             sessionId: sid,
             trackName: tid,
+            muted,
           });
         }
       } else if (evt.type === 'publish' && evt.userId !== me.id && inCall) {
         pullFor(evt);
+      } else if (evt.type === 'mute') {
+        const p = participantsRef.current.get(evt.userId);
+        if (p) {
+          p.muted = evt.muted;
+          setParticipants(Array.from(participantsRef.current.values()));
+        }
       } else if (evt.type === 'leave') {
         participantsRef.current.delete(evt.userId);
         setParticipants(Array.from(participantsRef.current.values()));
       }
     });
     return () => unsub();
-  }, [groupId, me, inCall, send, pullFor]);
+  }, [groupId, me, inCall, send, pullFor, muted]);
 
   useEffect(() => {
     return () => {
