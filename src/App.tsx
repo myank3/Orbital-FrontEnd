@@ -16,8 +16,6 @@ import { AuthProvider, useAuth } from './context/AuthContext';
 import { CallProvider } from './context/CallContext';
 import { ScrollToTop } from './components/ScrollToTop';
 import ConnectionBanner from './components/ConnectionBanner';
-import { GroupCallProvider } from './context/GroupCallContext';  // ← add this
-
 
 // Public pages
 import Landing from './pages/Landing';
@@ -122,6 +120,7 @@ function TokenInterceptor() {
 
   return null;
 }
+
 export default function App() {
   return (
     <BrowserRouter>
@@ -129,48 +128,72 @@ export default function App() {
         <CallProvider>
           <ScrollToTop />
           <TokenInterceptor />
-          <GroupCallProvider>
-            <Routes>
-              {/* ── Public (redirects to /app if logged in) ── */}
-              <Route path="/" element={<PublicOnlyRoute><Landing /></PublicOnlyRoute>} />
-              <Route path="/login" element={<PublicOnlyRoute><Login /></PublicOnlyRoute>} />
-              <Route path="/register" element={<PublicOnlyRoute><Register /></PublicOnlyRoute>} />
+          <Routes>
+            {/* ── Public (redirects to /app if logged in) ── */}
+            <Route
+              path="/"
+              element={
+                <PublicOnlyRoute>
+                  <Landing />
+                </PublicOnlyRoute>
+              }
+            />
+            <Route
+              path="/login"
+              element={
+                <PublicOnlyRoute>
+                  <Login />
+                </PublicOnlyRoute>
+              }
+            />
+            <Route
+              path="/register"
+              element={
+                <PublicOnlyRoute>
+                  <Register />
+                </PublicOnlyRoute>
+              }
+            />
 
-              {/* ── Public (always accessible) ───────────── */}
-              <Route path="/forgot-password" element={<ForgotPassword />} />
-              <Route path="/reset-password" element={<ResetPassword />} />
-              <Route path="/confirm-email" element={<ConfirmEmail />} />
-              <Route path="/confirm-email-pending" element={<ConfirmEmailPending />} />
-              <Route path="/terms" element={<Terms />} />
-              <Route path="/privacy" element={<Privacy />} />
+            {/* ── Public (always accessible) ───────────── */}
+            <Route path="/forgot-password" element={<ForgotPassword />} />
+            <Route path="/reset-password" element={<ResetPassword />} />
+            <Route path="/confirm-email" element={<ConfirmEmail />} />
+            <Route path="/confirm-email-pending" element={<ConfirmEmailPending />} />
+            <Route path="/terms" element={<Terms />} />
+            <Route path="/privacy" element={<Privacy />} />
 
-              {/* ── Protected app shell ──────────────────── */}
-              <Route
-                path="/app"
-                element={
-                  <ProtectedRoute>
-                    <AppShell />
-                  </ProtectedRoute>
-                }
-              >
-                <Route index element={<Navigate to="/app/orbit" replace />} />
-                <Route path="orbit" element={<OrbitView />} />
-                <Route path="dm" element={<DirectMessagePane />} />
-                <Route path="dm/:userId" element={<DirectMessagePane />} />
-                <Route path="groups" element={<GroupPane />} />
-                <Route path="groups/:groupId" element={<GroupPane />} />
-                <Route path="friends" element={<FriendsPane />} />
-                <Route path="calls" element={<CallsPane />} />
-                <Route path="notifications" element={<NotificationsPane />} />
-                <Route path="signals" element={<SignalsPage />} />
-                <Route path="settings" element={<SettingsPane />} />
-              </Route>
+            {/* ── Protected app shell ──────────────────── */}
+            <Route
+              path="/app"
+              element={
+                <ProtectedRoute>
+                  <AppShell />
+                </ProtectedRoute>
+              }
+            >
+              <Route index element={<Navigate to="/app/orbit" replace />} />
+              <Route path="orbit" element={<OrbitView />} />
+              <Route path="dm" element={<DirectMessagePane />} />
+              <Route path="dm/:userId" element={<DirectMessagePane />} />
+              <Route path="groups" element={<GroupPane />} />
+              <Route path="groups/:groupId" element={<GroupPane />} />
+              <Route path="friends" element={<FriendsPane />} />
+              <Route path="calls" element={<CallsPane />} />
+              <Route path="notifications" element={<NotificationsPane />} />
+              <Route path="signals" element={<SignalsPage />} />
+              <Route path="settings" element={<SettingsPane />} />
+            </Route>
 
-              <Route path="/auth/google/success" element={<div className="h-screen w-screen bg-[#0B0A08]" />} />
-              <Route path="/auth/callback" element={<div className="h-screen w-screen bg-[#0B0A08]" />} />
-              <Route path="*" element={<Navigate to="/" replace />} />
-            </Routes>
-          </GroupCallProvider>
+            {/* ── Auth Callbacks (intercepted by TokenInterceptor above) ── */}
+            {/* These dummy routes prevent the wildcard from redirecting to "/" 
+                before the interceptor finishes hydrating the token. */}
+            <Route path="/auth/google/success" element={<div className="h-screen w-screen bg-[#0B0A08]" />} />
+            <Route path="/auth/callback" element={<div className="h-screen w-screen bg-[#0B0A08]" />} />
+
+            {/* ── Catch-all ────────────────────────────── */}
+            <Route path="*" element={<Navigate to="/" replace />} />
+          </Routes>
 
           <Toaster
             position="top-center"
