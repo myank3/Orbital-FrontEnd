@@ -13,6 +13,10 @@ export const MAX_PARTICIPANTS = 10;
  * Was 30s — lowered to 3s so a fresh joiner can hear existing
  * participants who published moments ago (they'd otherwise be skipped
  * by the rate-limit and never re-published).
+ *
+ * NOTE: `probe` and `join` responses now bypass this entirely
+ * (force = true) — see sendPublish / probe / join handlers below.
+ * This constant only applies to dedupe for other background publishes.
  */
 const PROBE_RESPONSE_MIN_MS = 3_000;
 
@@ -176,6 +180,10 @@ export function useGroupCall(
     participantsRef.current.clear();
     lastPublishKeyRef.current = '';
     lastPublishAtRef.current = 0;
+
+    // FIX #3: flip the ref synchronously *before* setInCall so any
+    // in-flight publish handlers see the correct state immediately.
+    inCallRef.current = false;
     setParticipants([]);
     setInCall(false);
     setCallGroupId(null);
@@ -185,6 +193,11 @@ export function useGroupCall(
 
   const join = useCallback(async () => {
     if (!groupId || !me || inCall) return;
+    // Guard against concurrent join() invocations (double-click, etc.)
+    if (pcRef.current) {
+      console.warn('[call] join already in progress');
+      return;
+    }
     setError(null);
 
     if (activeCallersRef.current.size >= MAX_PARTICIPANTS) {
@@ -211,7 +224,7 @@ export function useGroupCall(
         audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
       });
       localStreamRef.current = stream;
-      setLocalStream(stream);                    // FIX #4
+      setLocalStream(stream);
       const track = stream.getAudioTracks()[0];
       localTrackRef.current = track;
       track.enabled = !mutedRef.current;
@@ -257,10 +270,32 @@ export function useGroupCall(
       });
 
       await pc.setLocalDescription(await pc.createOffer());
-      await sfu.publishTrack(created.sessionId, tx.mid!, track.id, pc.localDescription!.sdp);
+      const pub = await sfu.publishTrack(
+        created.sessionId,
+        tx.mid!,
+        track.id,
+        pc.localDescription!.sdp,
+      );
 
+      // ── FIX #2: apply the SFU's answer to our publish offer ──────
+      // Previously this return value was discarded, leaving the
+      // RTCPeerConnection stuck in `have-local-offer`. Any later
+      // pull would then trigger an implicit rollback, which drops
+      // the publish entirely on some browser/SFU combinations.
+      if (pub?.sessionDescription) {
+        await pc.setRemoteDescription(pub.sessionDescription);
+      } else if (pc.signalingState === 'have-local-offer') {
+        console.warn(
+          '[call] publishTrack returned no answer — signaling state is', pc.signalingState,
+        );
+      }
+
+      // FIX #3: set the ref synchronously so any publish arriving in
+      // the next few ms is not dropped by the inCallRef guard in the
+      // receive handler below.
+      inCallRef.current = true;
       setInCall(true);
-      setCallGroupId(groupId);                   // FIX #2
+      setCallGroupId(groupId);
 
       // Publish announces our track so existing peers can pull it.
       sendPublish(true);
@@ -308,8 +343,8 @@ export function useGroupCall(
         const mySid = sessionIdRef.current;
         if (!pc || !mySid) return;
 
-        // ── FIX #5: hold a reference to our queue entry so a failure
-        // removes the RIGHT one, not whatever happens to be last.
+        // Hold a reference to our queue entry so a failure removes the
+        // RIGHT one, not whatever happens to be last.
         const meta = { userId: evt.userId, displayName: evt.displayName };
         pendingPullsRef.current.push(meta);
 
@@ -327,8 +362,7 @@ export function useGroupCall(
           if (idx >= 0) pendingPullsRef.current.splice(idx, 1);
         }
       });
-    },
-    [me],
+    }, [me],
   );
 
   const toggleMute = useCallback(() => {
@@ -411,26 +445,27 @@ export function useGroupCall(
     }
   }, [inCall, callGroupId, groupName, leave]);
 
- // Cleanup on unmount — clears the registry AND closes the SFU
-// session so navigation away doesn't leave a phantom call.
-useEffect(() => {
-  return () => {
-    activeCallRegistry.unregister('group');
-    if (pcRef.current) {
-      const leaveGroupId = prevGroupIdRef.current ?? groupId;
-      if (me && leaveGroupId != null) {
-        void signalRService.sendGroupMessage({
-          groupId: leaveGroupId,
-          content: `${PREFIX}${JSON.stringify({ type: 'leave', userId: me.id })}]`,
-          mediaUrl: undefined,
-          mediaType: undefined,
-        }).catch(() => {});
+  // Cleanup on unmount — clears the registry AND closes the SFU
+  // session so navigation away doesn't leave a phantom call.
+  useEffect(() => {
+    return () => {
+      activeCallRegistry.unregister('group');
+      if (pcRef.current) {
+        const leaveGroupId = prevGroupIdRef.current ?? groupId;
+        if (me && leaveGroupId != null) {
+          void signalRService.sendGroupMessage({
+            groupId: leaveGroupId,
+            content: `${PREFIX}${JSON.stringify({ type: 'leave', userId: me.id })}]`,
+            mediaUrl: undefined,
+            mediaType: undefined,
+          }).catch(() => {});
+        }
+        try { pcRef.current.close(); } catch { /* noop */ }
       }
-      try { pcRef.current.close(); } catch { /* noop */ }
-    }
-  };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-}, []);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // Probe existing callers on mount / group switch
   useEffect(() => {
     if (!groupId || !me) return;
@@ -488,8 +523,12 @@ useEffect(() => {
           setParticipants(Array.from(participantsRef.current.values()));
         }
       } else if (evt.type === 'probe' && evt.userId !== me.id && inCallRef.current) {
-        // Rate-limited — 3s window (was 30s)
-        sendPublish(false);
+        // ── FIX #1: FORCE the publish. A fresh joiner may have missed
+        // our earlier publish because they weren't `inCall` yet when
+        // it arrived. If we respect the rate limit here, they'll
+        // never hear us and never pull our track. A probe is a
+        // one-shot per-peer request — no spam risk.
+        sendPublish(true);
       }
 
       if (evt.type === 'publish' && evt.userId !== me.id && inCallRef.current) {
@@ -497,8 +536,11 @@ useEffect(() => {
       }
 
       if (evt.type === 'join' && evt.userId !== me.id && inCallRef.current) {
-        // Someone joined — re-publish so they can pull our track.
-        sendPublish(false);
+        // ── FIX #1b: Someone joined — re-publish so they can pull
+        // our track. Force it so the rate limiter can't block a fresh
+        // joiner from hearing us. If they aren't inCall yet, their own
+        // probe (500ms later) will still recover the situation.
+        sendPublish(true);
       }
     });
     return () => unsub();

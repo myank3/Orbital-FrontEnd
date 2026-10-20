@@ -43,12 +43,6 @@ import { EmojiPanel } from './dm/ComposerToolkit';
 
 /* ────────────────────────────────────────────────────────── */
 /* Module-level: active group call tracker                    */
-/*                                                            */
-/* Lets a GroupPane for Group B detect that a live group      */
-/* call exists in Group A. Only meaningful if useGroupCall    */
-/* keeps the call alive across navigation — if it tears down  */
-/* on unmount, this is a harmless no-op (scenario can't       */
-/* happen either way).                                        */
 /* ────────────────────────────────────────────────────────── */
 
 let moduleActiveGroupCallId: number | null = null;
@@ -1577,19 +1571,22 @@ interface CallPillProps {
   activeCallers: Array<{ userId: string; displayName: string }>;
   participants: ReadonlyArray<CallPillParticipant>;
   muted: boolean;
+  /** FIX #5: deafen — I can't hear anyone (my mic is unaffected). */
+  deafened: boolean;
   myName: string;
   myAvatarUrl?: string | null;
   maxParticipants: number;
   bannerText: { title: string; sub: string } | null;
   onToggleMute: () => void;
+  onToggleDeafen: () => void;
   onLeave: () => void;
   onJoin: () => void;
   onOpenStage: () => void;
 }
 
 function CallPill({
-  inCall, activeCallers, participants, muted, myName, myAvatarUrl, maxParticipants, bannerText,
-  onToggleMute, onLeave, onJoin, onOpenStage,
+  inCall, activeCallers, participants, muted, deafened, myName, myAvatarUrl, maxParticipants, bannerText,
+  onToggleMute, onToggleDeafen, onLeave, onJoin, onOpenStage,
 }: CallPillProps) {
   if (!inCall && activeCallers.length === 0) return null;
 
@@ -1651,7 +1648,9 @@ function CallPill({
                 <span className="absolute inset-0 rounded-full bg-[#22C55E] opacity-60 animate-ping" />
                 <span className="relative inline-flex w-1.5 h-1.5 rounded-full bg-[#22C55E]" />
               </span>
-              <span className="text-[12.5px] font-semibold text-[#EDE5D4] leading-tight truncate">Voice Call</span>
+              <span className="text-[12.5px] font-semibold text-[#EDE5D4] leading-tight truncate">
+                {deafened ? 'Deafened' : 'Voice Call'}
+              </span>
             </div>
             <span className="text-[10.5px] text-[#A8A29E] leading-tight tabular-nums">
               {participants.length + 1} / {maxParticipants} · tap to open
@@ -1666,6 +1665,16 @@ function CallPill({
               }`}
               title={muted ? 'Unmute' : 'Mute'} aria-label={muted ? 'Unmute' : 'Mute'}>
               {muted ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
+            </button>
+            {/* FIX #5: deafen button */}
+            <button type="button"
+              onClick={(e) => { e.stopPropagation(); onToggleDeafen(); }}
+              className={`w-9 h-9 rounded-full flex items-center justify-center transition-colors ${
+                deafened ? 'bg-[#B91C1C]/25 text-[#F87171] hover:bg-[#B91C1C]/35' : 'bg-white/[0.06] text-[#EDE5D4] hover:bg-white/[0.12]'
+              }`}
+              title={deafened ? 'Undeafen' : 'Deafen (mute everyone)'}
+              aria-label={deafened ? 'Undeafen' : 'Deafen (mute everyone)'}>
+              {deafened ? <VolumeX className="w-4 h-4" /> : <Volume2 className="w-4 h-4" />}
             </button>
             <button type="button"
               onClick={(e) => { e.stopPropagation(); onLeave(); }}
@@ -1722,16 +1731,20 @@ interface VoiceStageProps {
   inCall: boolean;
   participants: ReadonlyArray<StageParticipant>;
   muted: boolean;
+  /** FIX #5: deafen — silences all remote audio; mic unaffected. */
+  deafened: boolean;
   /** Mic stream for the self tile's speaking detector. */
   localStream?: MediaStream | null;
   locallyMuted: Set<string>;
   currentUser: { id: string; displayName: string | null | undefined; avatarUrl?: string | null } | undefined;
   messages: GroupMessageDto[];
   onToggleMute: () => void;
+  onToggleDeafen: () => void;
   onToggleLocalMute: (userId: string) => void;
   onLeave: () => void;
   onSendMessage: (text: string, replyId: number | null) => Promise<void>;
 }
+
 function StageTileAvatar({ name, src, size = 96, accent = false }: {
   name: string; src?: string | null; size?: number; accent?: boolean;
 }) {
@@ -1786,8 +1799,6 @@ interface StageTileProps {
 function StageTile({
   tile, index, tileCount, currentUserDisplayName, locallyMuted, onToggleLocalMute,
 }: StageTileProps) {
-  // FIX (bug 2, self half): previously forced null for self, so your
-  // own tile could never say "Speaking". Now uses the mic stream too.
   const speaking = useSpeakingDetector(tile.stream);
   const isLocallyMuted = !tile.isSelf && locallyMuted;
   const avatarSize = tileCount === 1 ? 112 : tileCount === 2 ? 96 : 88;
@@ -1918,8 +1929,8 @@ function StageTile({
 }
 
 function VoiceStage({
-  open, onClose, groupId, groupName, inCall, participants, muted, localStream, locallyMuted,
-  currentUser, messages, onToggleMute, onToggleLocalMute, onLeave, onSendMessage,
+  open, onClose, groupId, groupName, inCall, participants, muted, deafened, localStream, locallyMuted,
+  currentUser, messages, onToggleMute, onToggleDeafen, onToggleLocalMute, onLeave, onSendMessage,
 }: VoiceStageProps) {
   const [chatOpen, setChatOpen] = useState(false);
   const [draft, setDraft] = useState('');
@@ -2011,8 +2022,6 @@ function VoiceStage({
         displayName: currentUser.displayName ?? 'You',
         muted,
         avatarUrl: currentUser.avatarUrl ?? null,
-        // FIX (bug 2, self half): pass the mic stream so the speaking
-        // detector can animate your own tile when you talk.
         stream: localStream ?? null,
       });
     }
@@ -2071,6 +2080,12 @@ function VoiceStage({
                 <span className="text-[#A8A29E] font-medium">{formatDuration(elapsed)}</span>
                 <span className="opacity-50">·</span>
                 <span>{tiles.length} {tiles.length === 1 ? 'person' : 'people'}</span>
+                {deafened && (
+                  <>
+                    <span className="opacity-50">·</span>
+                    <span className="text-[#F87171] font-semibold">Deafened</span>
+                  </>
+                )}
               </p>
             </div>
             <button type="button" onClick={() => setChatOpen((v) => !v)}
@@ -2092,7 +2107,7 @@ function VoiceStage({
                     index={idx}
                     tileCount={tiles.length}
                     currentUserDisplayName={currentUser?.displayName ?? 'You'}
-                    locallyMuted={!tile.isSelf && locallyMuted.has(tile.userId)}
+                    locallyMuted={!tile.isSelf && (deafened || locallyMuted.has(tile.userId))}
                     onToggleLocalMute={onToggleLocalMute}
                   />
                 ))}
@@ -2175,6 +2190,16 @@ function VoiceStage({
                   title={muted ? 'Unmute' : 'Mute'} aria-label={muted ? 'Unmute' : 'Mute'}>
                   {muted ? <MicOff className="w-5 h-5" /> : <Mic className="w-5 h-5" />}
                 </button>
+                {/* FIX #5: deafen button in stage */}
+                <button type="button" onClick={onToggleDeafen}
+                  className={`h-12 w-12 rounded-full flex items-center justify-center transition-colors ${
+                    deafened ? 'bg-[#B91C1C]/25 text-[#F87171] hover:bg-[#B91C1C]/35 ring-1 ring-[#B91C1C]/40'
+                            : 'bg-white/[0.06] text-[#EDE5D4] hover:bg-white/[0.12]'
+                  }`}
+                  title={deafened ? 'Undeafen' : 'Deafen (mute everyone)'}
+                  aria-label={deafened ? 'Undeafen' : 'Deafen (mute everyone)'}>
+                  {deafened ? <VolumeX className="w-5 h-5" /> : <Volume2 className="w-5 h-5" />}
+                </button>
                 <button type="button" onClick={onLeave}
                   className="h-12 px-5 rounded-full bg-[#B91C1C] hover:bg-[#991B1B] text-white flex items-center justify-center gap-2 text-[13px] font-semibold transition-colors">
                   <PhoneOff className="w-4 h-4" /> Leave
@@ -2225,8 +2250,6 @@ export default function GroupPane(): React.JSX.Element {
   const navigate = useNavigate();
   const { user } = useAuth();
 
-  // ── Moved up so useGroupCall can register the group name in the
-  //    active-call registry (drives the "you're in a call in X" toast).
   const [activeGroup, setActiveGroup] = useState<GroupDetailDto | null>(null);
 
   const call = useGroupCall(
@@ -2235,7 +2258,6 @@ export default function GroupPane(): React.JSX.Element {
     activeGroup?.name,
   );
 
-  // 1-on-1 call context (global — works across routes)
   const call1on1 = useCall() as unknown as {
     callState: string;
     peerId: string | null;
@@ -2247,10 +2269,8 @@ export default function GroupPane(): React.JSX.Element {
   };
   const is1on1Busy = Boolean(call1on1.callState && call1on1.callState !== 'idle');
 
-  // Blocking toast state — null when no block is shown
   const [callBlock, setCallBlock] = useState<{ kind: '1on1' | 'group'; name: string } | null>(null);
 
-  // Fresh self-profile so we always have the latest avatarUrl (context may be stale)
   const [myFreshProfile, setMyFreshProfile] = useState<{ avatarUrl?: string | null } | null>(null);
   useEffect(() => {
     if (!user?.id) { setMyFreshProfile(null); return; }
@@ -2266,6 +2286,16 @@ export default function GroupPane(): React.JSX.Element {
     if (!call.inCall) setCallExpanded(false);
   }, [call.inCall]);
 
+  /* ── FIX #5: deafen state ────────────────────────────────── */
+  // Deafened means "silence all remote audio". My mic is unaffected.
+  // Auto-clear when the call ends (stale deafen shouldn't persist
+  // into a future call the user starts fresh).
+  const [deafened, setDeafened] = useState(false);
+  useEffect(() => {
+    if (!call.inCall) setDeafened(false);
+  }, [call.inCall]);
+  const toggleDeafen = useCallback(() => setDeafened((v) => !v), []);
+
   const disconnectRef = useRef<HTMLAudioElement | null>(null);
   const prevInCallRef = useRef(call.inCall);
   useEffect(() => {
@@ -2278,8 +2308,6 @@ export default function GroupPane(): React.JSX.Element {
     prevInCallRef.current = call.inCall;
   }, [call.inCall]);
 
-  // Track our current group id in a ref so the cleanup can clear the
-  // module tracker for the *previous* group when navigating away.
   const prevTrackerGroupIdRef = useRef<number | undefined>(activeGroupId);
   useEffect(() => {
     const prev = prevTrackerGroupIdRef.current;
@@ -2290,8 +2318,6 @@ export default function GroupPane(): React.JSX.Element {
       moduleActiveGroupCallName = null;
       moduleActiveGroupCallLeave = call.leave;
     } else {
-      // Clear if the tracked call belongs to the group we just left
-      // OR to our current group (which is no longer in a call).
       if (
         moduleActiveGroupCallId === activeGroupId ||
         moduleActiveGroupCallId === prev
@@ -2304,16 +2330,13 @@ export default function GroupPane(): React.JSX.Element {
   }, [call.inCall, activeGroupId, call.leave]);
 
   const [groups, setGroups] = useState<GroupDto[]>([]);
-  // (activeGroup state moved up — see above)
 
-  // Now that activeGroup is known, keep the tracker's name in sync.
   useEffect(() => {
     if (call.inCall && activeGroupId && moduleActiveGroupCallId === activeGroupId) {
       moduleActiveGroupCallName = activeGroup?.name ?? null;
     }
   }, [call.inCall, activeGroupId, activeGroup?.name]);
 
-  // Friendly display name for the 1-on-1 peer, looked up from current group members
   const active1on1PeerName = useMemo(() => {
     const pid = call1on1.peerId;
     if (!pid) return 'someone';
@@ -2369,11 +2392,13 @@ export default function GroupPane(): React.JSX.Element {
   }, [user?.id]);
 
   const audioElsRef = useRef<Map<string, HTMLAudioElement>>(new Map());
+  /* ── FIX #4 + #5: update mute state on all audio elements when
+     either per-user mute or deafen changes. */
   useEffect(() => {
     for (const [userId, el] of audioElsRef.current) {
-      el.muted = locallyMuted.has(userId);
+      el.muted = deafened || locallyMuted.has(userId);
     }
-  }, [locallyMuted]);
+  }, [locallyMuted, deafened]);
 
   useEffect(() => {
     setPinnedIds(readPinned(user?.id));
@@ -2758,20 +2783,16 @@ export default function GroupPane(): React.JSX.Element {
   const handleGroupCallClick = useCallback(async () => {
     if (!activeGroupId) return;
 
-    // Already in THIS group's call — open the stage.
-    // (call.callGroupId disambiguates; inCall alone is true for any call.)
     if (call.inCall && call.callGroupId === activeGroupId) {
       setCallExpanded(true);
       return;
     }
 
-    // In a 1-on-1 call — block with "End & join"
     if (is1on1Busy) {
       setCallBlock({ kind: '1on1', name: active1on1PeerName });
       return;
     }
 
-    // In ANOTHER group's call — hard block. Do NOT auto-join.
     if (call.callGroupId != null && call.callGroupId !== activeGroupId) {
       setCallBlock({
         kind: 'group',
@@ -2890,7 +2911,6 @@ export default function GroupPane(): React.JSX.Element {
 
   const hasActiveGroup = Boolean(activeGroupId && activeGroup);
 
-  // Enrich participants with avatar URLs, preferring sources known to work
   const enrichedParticipants = useMemo(() => {
     const fromMessages = new Map<string, string>();
     for (const msg of messages) {
@@ -3149,11 +3169,13 @@ export default function GroupPane(): React.JSX.Element {
                 activeCallers={call.activeCallers}
                 participants={enrichedParticipants}
                 muted={call.muted}
+                deafened={deafened}
                 myName={user?.displayName ?? 'You'}
                 myAvatarUrl={myFreshProfile?.avatarUrl ?? user?.avatarUrl ?? null}
                 maxParticipants={MAX_PARTICIPANTS}
                 bannerText={activeCallBanner}
                 onToggleMute={call.toggleMute}
+                onToggleDeafen={toggleDeafen}
                 onLeave={call.leave}
                 onJoin={() => void handleGroupCallClick()}
                 onOpenStage={() => setCallExpanded(true)}
@@ -3208,6 +3230,7 @@ export default function GroupPane(): React.JSX.Element {
               replyTo={replyTo} onCancelReply={handleCancelReply}
               onSendText={handleSendText} onSendFile={handleSendFile} onSendVoice={handleSendVoice} />
 
+            {/* ── FIX #4 + #5: explicit play + deafen-aware muting ── */}
             {call.inCall && enrichedParticipants
               .filter((p) => p.userId !== user?.id && p.stream)
               .map((p) => (
@@ -3217,8 +3240,20 @@ export default function GroupPane(): React.JSX.Element {
                   playsInline
                   ref={(el) => {
                     if (el) {
-                      el.srcObject = p.stream as MediaStream;
-                      el.muted = locallyMuted.has(p.userId);
+                      const wantMuted = deafened || locallyMuted.has(p.userId);
+                      if (el.srcObject !== (p.stream as MediaStream)) {
+                        el.srcObject = p.stream as MediaStream;
+                        el.muted = wantMuted;
+                        // FIX #4: don't rely on autoPlay alone — call play()
+                        // explicitly. .catch() swallows browser autoplay
+                        // blocks (which shouldn't happen during a live call
+                        // with user-gesture activation, but belt-and-braces).
+                        void el.play().catch((e) =>
+                          console.warn('[call] audio play blocked', e),
+                        );
+                      } else {
+                        el.muted = wantMuted;
+                      }
                       audioElsRef.current.set(p.userId, el);
                     } else {
                       audioElsRef.current.delete(p.userId);
@@ -3299,6 +3334,7 @@ export default function GroupPane(): React.JSX.Element {
           inCall={call.inCall}
           participants={enrichedParticipants}
           muted={call.muted}
+          deafened={deafened}
           localStream={call.localStream}
           locallyMuted={locallyMuted}
           currentUser={user ? {
@@ -3308,6 +3344,7 @@ export default function GroupPane(): React.JSX.Element {
           } : undefined}
           messages={visibleMessages}
           onToggleMute={call.toggleMute}
+          onToggleDeafen={toggleDeafen}
           onToggleLocalMute={toggleLocalMute}
           onLeave={call.leave}
           onSendMessage={handleSendText}
@@ -3375,10 +3412,6 @@ export default function GroupPane(): React.JSX.Element {
                 await call.join();
                 setCallExpanded(true);
               } else {
-                // Cross-group: leave the other call, dismiss, and stop.
-                // Do NOT auto-join — user must click Join again in this
-                // group once the tracker clears. This makes the block
-                // an actual block instead of an "enter the wrong call".
                 const ok = leaveOtherGroupCall();
                 if (!ok) {
                   throw new Error('Could not leave the other group call.');
