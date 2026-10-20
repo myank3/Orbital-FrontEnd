@@ -95,6 +95,10 @@ export function useGroupCall(
 
   const lastPublishKeyRef = useRef<string>('');
   const lastPublishAtRef = useRef<number>(0);
+    /** Synchronous sentinel: true from the moment join() starts until it
+   *  succeeds or fails. Blocks the getUserMedia window where pcRef is
+   *  still null, closing the double-click race. */
+  const joiningRef = useRef(false);
 
   /**
    * Tracks the group we last saw. Used by the groupId-change teardown
@@ -189,19 +193,26 @@ export function useGroupCall(
     setCallGroupId(null);
     setLocalStream(null);
     setMuted(false);
+    setError(null);
+inCallRef.current = false;
   }, [me, send]);
 
-  const join = useCallback(async () => {
+    const join = useCallback(async () => {
     if (!groupId || !me || inCall) return;
-    // Guard against concurrent join() invocations (double-click, etc.)
-    if (pcRef.current) {
+    // Guard against concurrent join() invocations (double-click, tab
+    // focus loss during the mic prompt, etc.). joiningRef is
+    // synchronous and closes the getUserMedia window where pcRef is
+    // still null.
+    if (joiningRef.current || pcRef.current) {
       console.warn('[call] join already in progress');
       return;
     }
+    joiningRef.current = true;
     setError(null);
 
     if (activeCallersRef.current.size >= MAX_PARTICIPANTS) {
       setError(`This call is full (${MAX_PARTICIPANTS} participants max).`);
+      joiningRef.current = false;
       return;
     }
 
@@ -301,6 +312,7 @@ export function useGroupCall(
       sendPublish(true);
 
       // Probe for existing participants we didn't see yet.
+            // Probe for existing participants we didn't see yet.
       window.setTimeout(() => {
         if (inCallRef.current) {
           void send({ type: 'probe', userId: me.id }).catch(() => {});
@@ -317,9 +329,11 @@ export function useGroupCall(
         setError(msg);
       }
       leave();
+      throw err; // surface to caller so the UI can toast
+    } finally {
+      joiningRef.current = false;
     }
   }, [groupId, me, inCall, send, sendPublish, leave]);
-
   const pullFor = useCallback(
     (evt: Extract<CallEvent, { type: 'publish' }>) => {
       if (!me || evt.userId === me.id) return;
@@ -422,7 +436,8 @@ export function useGroupCall(
     lastPublishKeyRef.current = '';
     lastPublishAtRef.current = 0;
 
-    inCallRef.current = false;
+        inCallRef.current = false;
+    joiningRef.current = false;
     setInCall(false);
     setCallGroupId(null);
     setLocalStream(null);
@@ -450,6 +465,7 @@ export function useGroupCall(
   useEffect(() => {
     return () => {
       activeCallRegistry.unregister('group');
+            joiningRef.current = false;
       if (pcRef.current) {
         const leaveGroupId = prevGroupIdRef.current ?? groupId;
         if (me && leaveGroupId != null) {

@@ -12,7 +12,9 @@ import React, {
   useMemo,
   useDeferredValue,
   startTransition,
+  useSyncExternalStore,
 } from 'react';
+import { toast } from 'sonner';
 import { useParams, useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'motion/react';
 import { apiService, extractErrorMessage, applyPresignedUrls } from '../services/api';
@@ -20,7 +22,7 @@ import { signalRService } from '../services/signalr';
 import { useAuth } from '../context/AuthContext';
 import { useCall } from '../context/CallContext';
 import { presenceStore } from '../services/presenceStore';
-import { isCallSignal, MAX_PARTICIPANTS } from '../hooks/useGroupCall';
+import { useGroupCall, isCallSignal, MAX_PARTICIPANTS } from '../hooks/useGroupCall';
 import { Phone, PhoneOff, MicOff, Mic, Volume2, VolumeX, MessageSquare } from 'lucide-react';
 import { playReceive, playSend, unlockSounds } from '../services/sounds';
 import {
@@ -29,7 +31,6 @@ import {
 import { Avatar } from './Avatar';
 import { UserProfileModal } from './UserProfileModal';
 import MessageSkeleton from './MessageSkeleton';
-import { useGroupCallContext } from '../context/GroupCallContext';
 import { MAX_FILE_SIZE, validateFileSize } from '../services/upload';
 import {
   Plus, Paperclip, Send, Loader2, FileText, Download, AlertCircle, X,
@@ -43,6 +44,14 @@ import {
   useGroupTypingReceiver,
 } from '../hooks/useTypingIndicator';
 import { EmojiPanel } from './dm/ComposerToolkit';
+
+/* ────────────────────────────────────────────────────────── */
+/* Module-level: active group call tracker                    */
+/* ────────────────────────────────────────────────────────── */
+
+let moduleActiveGroupCallId: number | null = null;
+let moduleActiveGroupCallName: string | null = null;
+let moduleActiveGroupCallLeave: (() => void) | null = null;
 
 /* ────────────────────────────────────────────────────────── */
 /* Already-in-call toast                                      */
@@ -1829,42 +1838,22 @@ const StageTile = React.memo(function StageTile({
 }: StageTileProps) {
   const speaking = useSpeakingDetector(tile.stream);
   const isLocallyMuted = !tile.isSelf && locallyMuted;
+  const avatarSize = tileCount === 1 ? 112 : tileCount === 2 ? 96 : 88;
   const showSpeaking = speaking && !tile.muted && !isLocallyMuted;
-
-  const avatarSize =
-    tileCount === 1 ? 88 :
-    tileCount === 2 ? 72 :
-    tileCount === 3 ? 64 :
-    tileCount === 4 ? 60 :
-    52;
-
-  const nameClass =
-    tileCount === 1 ? 'text-[16px] sm:text-[18px]' :
-    tileCount === 2 ? 'text-[14px] sm:text-[15px]' :
-    tileCount <= 4 ? 'text-[13px] sm:text-[14px]' :
-    'text-[12px] sm:text-[13px]';
-
-  const statusTextClass =
-    tileCount <= 2 ? 'text-[9px] sm:text-[10px]' :
-    tileCount <= 4 ? 'text-[9px] sm:text-[9.5px]' :
-    'text-[8.5px] sm:text-[9px]';
-
-  const overlayBadgeClass = tileCount >= 5 ? 'w-5 h-5' : 'w-6 h-6';
-  const overlayIconClass = tileCount >= 5 ? 'w-2.5 h-2.5' : 'w-3 h-3';
 
   return (
     <motion.div
       initial={{ opacity: 0, scale: 0.92 }}
       animate={{ opacity: 1, scale: 1 }}
       transition={{ delay: index * 0.05, type: 'spring', stiffness: 260, damping: 24 }}
-      className={`group relative rounded-2xl overflow-hidden transition-shadow flex flex-col min-h-[120px] ${
+      className={`group relative rounded-3xl overflow-hidden aspect-[4/3] transition-shadow ${
         tile.isSelf
           ? 'bg-gradient-to-br from-[#1A1410] via-[#131110] to-[#0F0D0A] border border-[#D97706]/25'
           : 'bg-gradient-to-br from-[#141220] via-[#131110] to-[#0F0D0A] border border-white/[0.06]'
       } ${showSpeaking ? 'ring-2 ring-[#22C55E]/60' : ''}`}
     >
       <div
-        className="absolute inset-0 transition-opacity duration-200 pointer-events-none"
+        className="absolute inset-0 transition-opacity duration-200"
         style={{
           opacity: showSpeaking ? 0.6 : 0.4,
           background: tile.isSelf
@@ -1879,9 +1868,7 @@ const StageTile = React.memo(function StageTile({
         <button
           type="button"
           onClick={(e) => { e.stopPropagation(); onToggleLocalMute(tile.userId); }}
-          className={`absolute top-1.5 right-1.5 z-10 rounded-full flex items-center justify-center transition-all ${
-            tileCount >= 5 ? 'w-6 h-6' : 'w-7 h-7'
-          } ${
+          className={`absolute top-2 right-2 z-10 w-8 h-8 rounded-full flex items-center justify-center transition-all ${
             isLocallyMuted
               ? 'bg-[#B91C1C]/85 text-white ring-1 ring-[#B91C1C] shadow-[0_4px_12px_-2px_rgba(185,28,28,0.6)]'
               : 'bg-black/50 backdrop-blur-sm text-white opacity-0 group-hover:opacity-100 hover:bg-black/70'
@@ -1889,19 +1876,13 @@ const StageTile = React.memo(function StageTile({
           aria-label={isLocallyMuted ? `Unmute ${tile.displayName} for you` : `Mute ${tile.displayName} for you`}
           title={isLocallyMuted ? `Unmute ${tile.displayName}` : `Mute ${tile.displayName} for you`}
         >
-          {isLocallyMuted
-            ? <VolumeX className={tileCount >= 5 ? 'w-3 h-3' : 'w-3.5 h-3.5'} />
-            : <Volume2 className={tileCount >= 5 ? 'w-3 h-3' : 'w-3.5 h-3.5'} />}
+          {isLocallyMuted ? <VolumeX className="w-4 h-4" /> : <Volume2 className="w-4 h-4" />}
         </button>
       )}
 
-      <div
-        className={`relative flex-1 min-h-0 flex flex-col items-center justify-center transition-opacity ${
-          tileCount >= 5 ? 'gap-1 p-1.5' : 'gap-1.5 p-2 sm:p-3'
-        } ${isLocallyMuted ? 'opacity-55' : ''}`}
-      >
-        <div className="relative shrink-0">
-          <div className={`absolute -inset-2 rounded-full blur-2xl transition-opacity duration-200 ${
+      <div className={`relative h-full flex flex-col items-center justify-center gap-3 p-4 transition-opacity ${isLocallyMuted ? 'opacity-55' : ''}`}>
+        <div className="relative">
+          <div className={`absolute -inset-3 rounded-full blur-2xl transition-opacity duration-200 ${
             showSpeaking ? 'opacity-90 bg-[#22C55E]/50' : 'opacity-60 ' + (tile.isSelf ? 'bg-[#D97706]/40' : 'bg-[#7C3AED]/40')
           }`} />
 
@@ -1922,44 +1903,46 @@ const StageTile = React.memo(function StageTile({
               accent={tile.isSelf}
             />
             {tile.muted && (
-              <div className={`absolute -bottom-0.5 -right-0.5 rounded-full bg-[#B91C1C] ring-[3px] ring-[#0F0D0A] flex items-center justify-center shadow-lg ${overlayBadgeClass}`}>
-                <MicOff className={`${overlayIconClass} text-white`} />
+              <div className="absolute -bottom-1 -right-1 w-7 h-7 rounded-full bg-[#B91C1C] ring-4 ring-[#0F0D0A] flex items-center justify-center shadow-lg">
+                <MicOff className="w-3.5 h-3.5 text-white" />
               </div>
             )}
             {isLocallyMuted && !tile.muted && (
-              <div className={`absolute -bottom-0.5 -right-0.5 rounded-full bg-[#B91C1C]/90 ring-[3px] ring-[#0F0D0A] flex items-center justify-center shadow-lg ${overlayBadgeClass}`}>
-                <VolumeX className={`${overlayIconClass} text-white`} />
+              <div className="absolute -bottom-1 -right-1 w-7 h-7 rounded-full bg-[#B91C1C]/90 ring-4 ring-[#0F0D0A] flex items-center justify-center shadow-lg">
+                <VolumeX className="w-3.5 h-3.5 text-white" />
               </div>
             )}
           </div>
         </div>
 
-        <div className="flex flex-col items-center gap-0.5 max-w-full min-w-0 px-1">
-          <div className="flex items-center gap-1 min-w-0 max-w-full">
+        <div className="flex flex-col items-center gap-1.5 max-w-full">
+          <div className="flex items-center gap-1.5">
             <span
-              className={`font-bold text-[#EDE5D4] truncate tracking-tight ${nameClass}`}
+              className={`font-bold text-[#EDE5D4] truncate tracking-tight ${
+                tileCount === 1 ? 'text-[20px]' :
+                tileCount === 2 ? 'text-[17px]' :
+                'text-[15px]'
+              }`}
               title={tile.isSelf ? 'You' : tile.displayName}
             >
               {tile.isSelf ? 'You' : tile.displayName}
             </span>
             {tile.isSelf && (
-              <span className={`shrink-0 px-1 py-0.5 rounded-full bg-[#D97706]/20 text-[#F59E0B] font-bold uppercase tracking-wider ${
-                tileCount >= 5 ? 'text-[7.5px]' : 'text-[8.5px]'
-              }`}>
+              <span className="text-[9.5px] px-1.5 py-0.5 rounded-full bg-[#D97706]/20 text-[#F59E0B] font-bold uppercase tracking-wider">
                 you
               </span>
             )}
           </div>
 
           <div
-            className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full max-w-full ${
+            className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full ${
               showSpeaking ? 'bg-[#22C55E]/15' :
               isLocallyMuted ? 'bg-[#F87171]/10' :
               'bg-white/[0.04]'
             }`}
           >
             <span
-              className={`w-1 h-1 rounded-full shrink-0 ${
+              className={`w-1.5 h-1.5 rounded-full shrink-0 ${
                 showSpeaking ? 'bg-[#22C55E] animate-pulse' :
                 isLocallyMuted ? 'bg-[#F87171]' :
                 tile.muted ? 'bg-[#A8A29E]' :
@@ -1967,11 +1950,11 @@ const StageTile = React.memo(function StageTile({
               }`}
             />
             <span
-              className={`font-semibold uppercase tracking-wider truncate ${
+              className={`text-[10.5px] font-semibold uppercase tracking-wider ${
                 showSpeaking ? 'text-[#22C55E]' :
                 isLocallyMuted ? 'text-[#F87171]' :
                 'text-[#A8A29E]'
-              } ${statusTextClass}`}
+              }`}
             >
               {isLocallyMuted ? 'Muted for you' : tile.muted ? 'Muted' : showSpeaking ? 'Speaking' : 'Listening'}
             </span>
@@ -2093,14 +2076,11 @@ function VoiceStage({
     return list;
   }, [currentUser, participants, muted, localStream]);
 
-  const gridClass = (() => {
-    const n = tiles.length;
-    if (n <= 1) return 'grid-cols-1 max-w-md mx-auto';
-    if (n === 2) return 'grid-cols-1 sm:grid-cols-2 max-w-3xl mx-auto';
-    if (n === 3) return 'grid-cols-2 sm:grid-cols-3 max-w-4xl mx-auto';
-    if (n === 4) return 'grid-cols-2 max-w-3xl mx-auto';
-    return 'grid-cols-2 sm:grid-cols-3 max-w-4xl mx-auto';
-  })();
+  const gridClass =
+    tiles.length === 1 ? 'grid-cols-1 max-w-md mx-auto' :
+    tiles.length === 2 ? 'grid-cols-1 sm:grid-cols-2 max-w-3xl mx-auto' :
+    tiles.length <= 4 ? 'grid-cols-2 max-w-4xl mx-auto' :
+    'grid-cols-2 sm:grid-cols-3 max-w-5xl mx-auto';
 
   const recentMessages = useMemo(() => messages.slice(-60), [messages]);
 
@@ -2155,11 +2135,8 @@ function VoiceStage({
           </header>
 
           <div className="relative flex-1 flex flex-col min-h-0">
-            <div className="flex-1 min-h-0 overflow-y-auto px-3 sm:px-6 py-4 sm:py-6">
-              <div
-                className={`grid gap-2 sm:gap-3 ${gridClass}`}
-                style={{ gridAutoRows: tiles.length >= 5 ? 'minmax(120px, 1fr)' : 'minmax(150px, 1fr)' }}
-              >
+            <div className="flex-1 min-h-0 overflow-y-auto px-4 sm:px-6 py-6">
+              <div className={`grid gap-3 sm:gap-4 ${gridClass}`}>
                 {tiles.map((tile, idx) => (
                   <StageTile
                     key={tile.key}
@@ -2177,11 +2154,11 @@ function VoiceStage({
             <AnimatePresence>
               {chatOpen && (
                 <motion.div
-                  initial={{ height: 0, opacity: 0 }} animate={{ height: 'min(40vh, 340px)', opacity: 1 }} exit={{ height: 0, opacity: 0 }}
+                  initial={{ height: 0, opacity: 0 }} animate={{ height: 340, opacity: 1 }} exit={{ height: 0, opacity: 0 }}
                   transition={{ type: 'spring', stiffness: 300, damping: 32 }}
                   className="shrink-0 border-t border-white/[0.08] bg-[#0B0A08]/95 backdrop-blur-xl overflow-hidden"
                 >
-                  <div className="flex flex-col" style={{ height: 'min(40vh, 340px)' }}>
+                  <div className="h-[340px] flex flex-col">
                     <div className="shrink-0 px-4 py-2 flex items-center justify-between border-b border-white/[0.05]">
                       <div className="flex items-center gap-2">
                         <MessageSquare className="w-3.5 h-3.5 text-[#D97706]" />
@@ -2240,7 +2217,7 @@ function VoiceStage({
               )}
             </AnimatePresence>
 
-            <div className={`shrink-0 flex justify-center relative ${tiles.length >= 5 ? 'py-3' : 'py-5'}`}>
+            <div className="shrink-0 py-5 flex justify-center relative">
               <div className="flex items-center gap-2 px-2 py-2 rounded-full bg-[#1C1A17]/95 backdrop-blur-xl border border-white/[0.1] shadow-[0_16px_48px_-12px_rgba(0,0,0,0.9)]">
                 <button type="button" onClick={onToggleMute}
                   className={`h-12 w-12 rounded-full flex items-center justify-center transition-colors ${
@@ -2300,7 +2277,7 @@ function VoiceStage({
 }
 
 /* ────────────────────────────────────────────────────────── */
-/* Isolated presence count                                    */
+/* Isolated presence count (no more presenceTick in parent)   */
 /* ────────────────────────────────────────────────────────── */
 
 const OnlineCount = React.memo(function OnlineCount({ memberIds }: { memberIds: string[] }) {
@@ -2312,6 +2289,7 @@ const OnlineCount = React.memo(function OnlineCount({ memberIds }: { memberIds: 
       const maybe = presenceStore.subscribe(() => force((n) => n + 1));
       if (typeof maybe === 'function') unsub = maybe;
     } catch {
+      // Fallback poll if subscribe isn't compatible
       const id = window.setInterval(() => force((n) => n + 1), 2000);
       return () => window.clearInterval(id);
     }
@@ -2326,7 +2304,7 @@ const OnlineCount = React.memo(function OnlineCount({ memberIds }: { memberIds: 
       <span className="w-1.5 h-1.5 rounded-full bg-[#22C55E]" />
       {count} online
     </span>
-  );
+  );   
 });
 
 /* ────────────────────────────────────────────────────────── */
@@ -2361,7 +2339,7 @@ const TypingIndicator = React.memo(function TypingIndicator({
 });
 
 /* ────────────────────────────────────────────────────────── */
-/* Sidebar row                                                */
+/* Sidebar row (memoized, stable callbacks)                   */
 /* ────────────────────────────────────────────────────────── */
 
 interface SidebarRowProps {
@@ -2407,55 +2385,21 @@ export default function GroupPane(): React.JSX.Element {
 
   const [activeGroup, setActiveGroup] = useState<GroupDetailDto | null>(null);
 
-  const call = useGroupCallContext();
+   // Memoize identity so useGroupCall's useEffect deps stay stable —
+  // otherwise the SignalR handler re-subscribes on every render and
+  // can drop publish events from peers.
+  const meIdentity = useMemo(
+    () => (user ? { id: user.id, displayName: user.displayName ?? '' } : undefined),
+    [user?.id, user?.displayName],
+  );
 
-  const [callExpanded, setCallExpanded] = useState(false);
-  const [callBlock, setCallBlock] = useState<{ kind: '1on1' | 'group'; name: string } | null>(null);
-  const [myFreshProfile, setMyFreshProfile] = useState<{ avatarUrl?: string | null } | null>(null);
-  const [deafened, setDeafened] = useState(false);
-  const [groups, setGroups] = useState<GroupDto[]>([]);
-  const [messages, setMessages] = useState<GroupMessageDto[]>([]);
-  const [loadingHistory, setLoadingHistory] = useState<boolean>(false);
-  const [loadingMore, setLoadingMore] = useState<boolean>(false);
-  const [hasMore, setHasMore] = useState<boolean>(true);
-  const [historyError, setHistoryError] = useState<string | null>(null);
-  const [reloadTick, setReloadTick] = useState(0);
-  const [createModalOpen, setCreateModalOpen] = useState<boolean>(false);
-  const [newGroupName, setNewGroupName] = useState<string>('');
-  const [newGroupDescription, setNewGroupDescription] = useState<string>('');
-  const [createLoading, setCreateLoading] = useState<boolean>(false);
-  const [createError, setCreateError] = useState<string | null>(null);
-  const [infoOpen, setInfoOpen] = useState(false);
-  const [profileModalUserId, setProfileModalUserId] = useState<string | null>(null);
-  const [chatMenuGroup, setChatMenuGroup] = useState<GroupDto | null>(null);
-  const [menuMessage, setMenuMessage] = useState<GroupMessageDto | null>(null);
-  const [replyTo, setReplyTo] = useState<GroupMessageDto | null>(null);
-  const [searchQuery, setSearchQuery] = useState('');
-  const deferredSearch = useDeferredValue(searchQuery);
-  const [highlightedMessageId, setHighlightedMessageId] = useState<number | null>(null);
-  const [showJumpToLatest, setShowJumpToLatest] = useState(false);
-  const [unreadWhileScrolled, setUnreadWhileScrolled] = useState(0);
-  const [isDraggingFile, setIsDraggingFile] = useState(false);
-  const [pendingDeleteEveryoneId, setPendingDeleteEveryoneId] = useState<number | null>(null);
-  const [pinnedIds, setPinnedIds] = useState<Set<string>>(() => readPinned(user?.id));
-  const [mutedIds, setMutedIds] = useState<Set<string>>(() => readMuted(user?.id));
-  const [hiddenIds, setHiddenIds] = useState<Set<number>>(() => readHidden(user?.id, activeGroupId));
-  const [reactions, setReactions] = useState<Record<string, ReactionEntry[]>>(() => readReactions(user?.id, activeGroupId));
-  const [locallyMuted, setLocallyMuted] = useState<Set<string>>(() => readLocalMute(user?.id));
+  const call = useGroupCall(
+    activeGroupId,
+    meIdentity,
+    activeGroup?.name,
+  );
 
-  const dragCounterRef = useRef(0);
-  const audioElsRef = useRef<Map<string, HTMLAudioElement>>(new Map());
-  const messagesEndRef = useRef<HTMLDivElement | null>(null);
-  const messagesContainerRef = useRef<HTMLDivElement | null>(null);
-  const processedIdsRef = useRef<Set<GroupMessageDto['id']>>(new Set());
-  const stickRef = useRef(true);
-  const anchorRef = useRef<number | null>(null);
-  const rafScrollRef = useRef<number | null>(null);
-  const disconnectRef = useRef<HTMLAudioElement | null>(null);
-  const prevInCallRef = useRef(call.inCall);
-  const typingUsers = useGroupTypingReceiver(activeGroupId, user?.id);
-
-    const call1on1 = useCall() as unknown as {
+  const call1on1 = useCall() as unknown as {
     callState: string;
     peerId: string | null;
     endCall?: () => void;
@@ -2465,46 +2409,32 @@ export default function GroupPane(): React.JSX.Element {
     end?: () => void;
   };
   const is1on1Busy = Boolean(call1on1.callState && call1on1.callState !== 'idle');
-  const active1on1PeerName = useMemo(() => {
-    const pid = call1on1.peerId;
-    if (!pid) return 'someone';
-    const m = activeGroup?.members?.find((mem) => mem.id === pid);
-    return m?.displayName ?? 'another user';
-  }, [call1on1.peerId, activeGroup]);
 
-  // ─── Effects ────────────────────────────────────────────
-
-  // ─── Effects ────────────────────────────────────────────
-
-  // Sync group name to the call provider for display purposes
+  const [callBlock, setCallBlock] = useState<{ kind: '1on1' | 'group'; name: string } | null>(null);
+  const [joining, setJoining] = useState(false);
+  const [myFreshProfile, setMyFreshProfile] = useState<{ avatarUrl?: string | null } | null>(null);
   useEffect(() => {
-    if (activeGroup?.name && call.activeCallGroupId === activeGroupId) {
-      call.setGroupName(activeGroup.name);
-    }
-  }, [activeGroup?.name, activeGroupId, call]);
+    if (!user?.id) { setMyFreshProfile(null); return; }
+    let cancelled = false;
+    void apiService.getMyProfile()
+      .then((p) => { if (!cancelled) setMyFreshProfile({ avatarUrl: p.avatarUrl ?? null }); })
+      .catch(() => { /* silent */ });
+    return () => { cancelled = true; };
+  }, [user?.id]);
 
-  // Auto-reopen the voice stage when returning to the group we're in a call with
-  useEffect(() => {
-    if (
-      activeGroupId != null &&
-      call.inCall &&
-      call.activeCallGroupId === activeGroupId
-    ) {
-      setCallExpanded(true);
-    }
-  }, [activeGroupId, call.inCall, call.activeCallGroupId]);
-
-  // Reset call expanded when call ends
+  const [callExpanded, setCallExpanded] = useState(false);
   useEffect(() => {
     if (!call.inCall) setCallExpanded(false);
   }, [call.inCall]);
 
-  // Reset deafen when call ends
+  const [deafened, setDeafened] = useState(false);
   useEffect(() => {
     if (!call.inCall) setDeafened(false);
   }, [call.inCall]);
+  const toggleDeafen = useCallback(() => setDeafened((v) => !v), []);
 
-  // Play disconnect sound when call ends
+  const disconnectRef = useRef<HTMLAudioElement | null>(null);
+  const prevInCallRef = useRef(call.inCall);
   useEffect(() => {
     if (prevInCallRef.current && !call.inCall) {
       const el = disconnectRef.current;
@@ -2515,21 +2445,92 @@ export default function GroupPane(): React.JSX.Element {
     prevInCallRef.current = call.inCall;
   }, [call.inCall]);
 
-  // Load own fresh profile (for avatar in voice stage)
+  const prevTrackerGroupIdRef = useRef<number | undefined>(activeGroupId);
   useEffect(() => {
-    if (!user?.id) { setMyFreshProfile(null); return; }
-    let cancelled = false;
-    void apiService.getMyProfile()
-      .then((p) => { if (!cancelled) setMyFreshProfile({ avatarUrl: p.avatarUrl ?? null }); })
-      .catch(() => { /* silent */ });
-    return () => { cancelled = true; };
-  }, [user?.id]);
+    const prev = prevTrackerGroupIdRef.current;
+    prevTrackerGroupIdRef.current = activeGroupId;
 
-  // Persist local mutes
+    if (call.inCall && activeGroupId) {
+      moduleActiveGroupCallId = activeGroupId;
+      moduleActiveGroupCallName = null;
+      moduleActiveGroupCallLeave = call.leave;
+    } else {
+      if (
+        moduleActiveGroupCallId === activeGroupId ||
+        moduleActiveGroupCallId === prev
+      ) {
+        moduleActiveGroupCallId = null;
+        moduleActiveGroupCallName = null;
+        moduleActiveGroupCallLeave = null;
+      }
+    }
+  }, [call.inCall, activeGroupId, call.leave]);
+
+  const [groups, setGroups] = useState<GroupDto[]>([]);
+
+  useEffect(() => {
+    if (call.inCall && activeGroupId && moduleActiveGroupCallId === activeGroupId) {
+      moduleActiveGroupCallName = activeGroup?.name ?? null;
+    }
+  }, [call.inCall, activeGroupId, activeGroup?.name]);
+
+  const active1on1PeerName = useMemo(() => {
+    const pid = call1on1.peerId;
+    if (!pid) return 'someone';
+    const m = activeGroup?.members?.find((mem) => mem.id === pid);
+    return m?.displayName ?? 'another user';
+  }, [call1on1.peerId, activeGroup]);
+
+  const [messages, setMessages] = useState<GroupMessageDto[]>([]);
+  const [loadingHistory, setLoadingHistory] = useState<boolean>(false);
+  const [loadingMore, setLoadingMore] = useState<boolean>(false);
+  const [hasMore, setHasMore] = useState<boolean>(true);
+  const [historyError, setHistoryError] = useState<string | null>(null);
+  const [reloadTick, setReloadTick] = useState(0);
+
+  const [createModalOpen, setCreateModalOpen] = useState<boolean>(false);
+  const [newGroupName, setNewGroupName] = useState<string>('');
+  const [newGroupDescription, setNewGroupDescription] = useState<string>('');
+  const [createLoading, setCreateLoading] = useState<boolean>(false);
+  const [createError, setCreateError] = useState<string | null>(null);
+
+  const [infoOpen, setInfoOpen] = useState(false);
+  const [profileModalUserId, setProfileModalUserId] = useState<string | null>(null);
+  const [chatMenuGroup, setChatMenuGroup] = useState<GroupDto | null>(null);
+  const [menuMessage, setMenuMessage] = useState<GroupMessageDto | null>(null);
+  const [replyTo, setReplyTo] = useState<GroupMessageDto | null>(null);
+  const [searchQuery, setSearchQuery] = useState('');
+  const deferredSearch = useDeferredValue(searchQuery);
+  const [highlightedMessageId, setHighlightedMessageId] = useState<number | null>(null);
+  const [showJumpToLatest, setShowJumpToLatest] = useState(false);
+  const [unreadWhileScrolled, setUnreadWhileScrolled] = useState(0);
+
+  const [isDraggingFile, setIsDraggingFile] = useState(false);
+  const dragCounterRef = useRef(0);
+
+  const [pendingDeleteEveryoneId, setPendingDeleteEveryoneId] = useState<number | null>(null);
+
+  const [pinnedIds, setPinnedIds] = useState<Set<string>>(() => readPinned(user?.id));
+  const [mutedIds, setMutedIds] = useState<Set<string>>(() => readMuted(user?.id));
+  const [hiddenIds, setHiddenIds] = useState<Set<number>>(() => readHidden(user?.id, activeGroupId));
+  const [reactions, setReactions] = useState<Record<string, ReactionEntry[]>>(() => readReactions(user?.id, activeGroupId));
+
+  const [locallyMuted, setLocallyMuted] = useState<Set<string>>(() => readLocalMute(user?.id));
   useEffect(() => { setLocallyMuted(readLocalMute(user?.id)); }, [user?.id]);
   useEffect(() => { writeLocalMute(user?.id, locallyMuted); }, [locallyMuted, user?.id]);
 
-  // Imperative audio element manager
+  const toggleLocalMute = useCallback((targetUserId: string) => {
+    if (!targetUserId || targetUserId === user?.id) return;
+    setLocallyMuted((prev) => {
+      const next = new Set(prev);
+      if (next.has(targetUserId)) next.delete(targetUserId);
+      else next.add(targetUserId);
+      return next;
+    });
+  }, [user?.id]);
+
+  /* ── Imperative audio element manager (no more inline refs) ── */
+  const audioElsRef = useRef<Map<string, HTMLAudioElement>>(new Map());
   useEffect(() => {
     if (!call.inCall) {
       for (const el of audioElsRef.current.values()) {
@@ -2561,8 +2562,6 @@ export default function GroupPane(): React.JSX.Element {
       if (!seen.has(id)) { try { el.srcObject = null; el.remove(); } catch { /* noop */ } audioElsRef.current.delete(id); }
     }
   }, [call.inCall, call.participants, user?.id, deafened, locallyMuted]);
-
-  // Cleanup audio elements on unmount
   useEffect(() => {
     return () => {
       for (const el of audioElsRef.current.values()) {
@@ -2572,13 +2571,11 @@ export default function GroupPane(): React.JSX.Element {
     };
   }, []);
 
-  // Sync pinned/muted from storage on user change
   useEffect(() => {
     setPinnedIds(readPinned(user?.id));
     setMutedIds(readMuted(user?.id));
   }, [user?.id]);
 
-  // Sync reactions/hidden from storage on group/user change
   useEffect(() => {
     setReactions(readReactions(user?.id, activeGroupId));
     setHiddenIds(readHidden(user?.id, activeGroupId));
@@ -2587,7 +2584,20 @@ export default function GroupPane(): React.JSX.Element {
   useEffect(() => { writeReactions(user?.id, activeGroupId, reactions); }, [user?.id, activeGroupId, reactions]);
   useEffect(() => { writeHidden(user?.id, activeGroupId, hiddenIds); }, [user?.id, activeGroupId, hiddenIds]);
 
-  // Audio unlock on first interaction
+  const messagesEndRef = useRef<HTMLDivElement | null>(null);
+  const messagesContainerRef = useRef<HTMLDivElement | null>(null);
+  const processedIdsRef = useRef<Set<GroupMessageDto['id']>>(new Set());
+  const stickRef = useRef(true);
+  const anchorRef = useRef<number | null>(null);
+
+  const typingUsers = useGroupTypingReceiver(activeGroupId, user?.id);
+
+  useEffect(() => {
+    setMessages([]); setReplyTo(null); setHasMore(true); setHistoryError(null);
+    setShowJumpToLatest(false); setUnreadWhileScrolled(0);
+    processedIdsRef.current = new Set(); stickRef.current = true; anchorRef.current = null;
+  }, [activeGroupId]);
+
   useEffect(() => {
     const unlock = () => {
       try { unlockSounds(); } catch { /* silent */ }
@@ -2605,14 +2615,6 @@ export default function GroupPane(): React.JSX.Element {
     };
   }, []);
 
-  // Reset message state on group change
-  useEffect(() => {
-    setMessages([]); setReplyTo(null); setHasMore(true); setHistoryError(null);
-    setShowJumpToLatest(false); setUnreadWhileScrolled(0);
-    processedIdsRef.current = new Set(); stickRef.current = true; anchorRef.current = null;
-  }, [activeGroupId]);
-
-  // Fetch groups
   const fetchGroups = useCallback(async () => {
     try {
       const data = await apiService.getMyGroups();
@@ -2622,7 +2624,6 @@ export default function GroupPane(): React.JSX.Element {
 
   useEffect(() => { void fetchGroups(); }, [fetchGroups]);
 
-  // Load group detail + history
   useEffect(() => {
     if (!activeGroupId || isNaN(activeGroupId)) { setActiveGroup(null); setMessages([]); return; }
     let active = true;
@@ -2666,7 +2667,6 @@ export default function GroupPane(): React.JSX.Element {
     return () => { active = false; };
   }, [activeGroupId, reloadTick]);
 
-  // Load earlier messages
   const handleLoadEarlier = async () => {
     if (!activeGroupId || loadingMore || !hasMore || messages.length === 0) return;
     const el = messagesContainerRef.current;
@@ -2707,7 +2707,6 @@ export default function GroupPane(): React.JSX.Element {
     }
   };
 
-  // Real-time message handler
   useEffect(() => {
     const unsub = signalRService.onReceiveGroupMessage(async (msg: GroupMessageDto) => {
       if (isCallSignal(msg.content)) return;
@@ -2731,6 +2730,7 @@ export default function GroupPane(): React.JSX.Element {
         const isOwnEcho = msg.senderId === user?.id;
         const decorated = { ...msg, content: d.body, replyToId: d.replyToId } as GroupMessageDto & { replyToId?: number | null };
 
+        // Optimistic insert — resolve media URL in background without blocking render.
         startTransition(() => setMessages((prev) => mergeIncomingGroup(prev, decorated)));
         if (msg.senderId !== user?.id) {
           safePlayReceive();
@@ -2753,7 +2753,6 @@ export default function GroupPane(): React.JSX.Element {
     return () => { unsub(); };
   }, [activeGroupId, user?.id]);
 
-  // GroupMessageDeleted handler
   useEffect(() => {
     let cancelled = false;
     let unsub: (() => void) | null = null;
@@ -2774,7 +2773,6 @@ export default function GroupPane(): React.JSX.Element {
     return () => { cancelled = true; unsub?.(); };
   }, [activeGroupId]);
 
-  // Auto-scroll on new messages
   useLayoutEffect(() => {
     const el = messagesContainerRef.current;
     if (!el) return;
@@ -2787,6 +2785,7 @@ export default function GroupPane(): React.JSX.Element {
     if (el) el.scrollTop = el.scrollHeight;
   }, []);
 
+  const rafScrollRef = useRef<number | null>(null);
   const handleMessagesScroll = useCallback((e: React.UIEvent<HTMLDivElement>) => {
     if (rafScrollRef.current != null) return;
     const el = e.currentTarget;
@@ -2957,10 +2956,15 @@ export default function GroupPane(): React.JSX.Element {
     );
   }, [call1on1]);
 
-  const handleGroupCallClick = useCallback(async () => {
-    if (!activeGroupId) return;
+  const leaveOtherGroupCall = useCallback((): boolean => {
+    try { moduleActiveGroupCallLeave?.(); return true; }
+    catch (err) { console.warn('[group] leave other call failed', err); return false; }
+  }, []);
 
-    if (call.inCall && call.activeCallGroupId === activeGroupId) {
+   const handleGroupCallClick = useCallback(async () => {
+    if (!activeGroupId || joining) return;
+
+    if (call.inCall && call.callGroupId === activeGroupId) {
       setCallExpanded(true);
       return;
     }
@@ -2970,22 +2974,31 @@ export default function GroupPane(): React.JSX.Element {
       return;
     }
 
-    if (call.inCall && call.activeCallGroupId != null && call.activeCallGroupId !== activeGroupId) {
+    if (call.callGroupId != null && call.callGroupId !== activeGroupId) {
       setCallBlock({
         kind: 'group',
-        name: call.activeGroupName ?? `group ${call.activeCallGroupId}`,
+        name: moduleActiveGroupCallName ?? `group ${call.callGroupId}`,
       });
       return;
     }
 
+    setJoining(true);
     try {
-      await call.joinForGroup(activeGroupId, activeGroup?.name);
-      setCallExpanded(true);
-    } catch {
-      /* surfaced via call.error */
+      await call.join();
+      // join() resolves silently in a few edge cases (call full,
+      // concurrent join, no-op). Only open the stage when the state
+      // has actually flipped — the useGroupCall effect will re-render
+      // with inCall=true.
+      if (call.inCall) setCallExpanded(true);
+    } catch (err) {
+      console.error('[group] join threw', err);
+      toast.error(
+        err instanceof Error ? err.message : 'Could not join the call.',
+      );
+    } finally {
+      setJoining(false);
     }
-  }, [call, is1on1Busy, activeGroupId, active1on1PeerName, activeGroup?.name]);
-
+  }, [call, joining, is1on1Busy, activeGroupId, active1on1PeerName]);
   const handleReact = useCallback((messageId: number, emoji: string) => {
     if (!user?.id) return;
     const mine = (reactions[String(messageId)] ?? []).some((r) => r.userId === user.id && r.emoji === emoji);
@@ -3089,6 +3102,7 @@ export default function GroupPane(): React.JSX.Element {
   const hasActiveGroup = Boolean(activeGroupId && activeGroup);
 
   const enrichedParticipants = useMemo(() => {
+    // Iterate messages backwards — grab only the latest avatar per sender.
     const fromMessages = new Map<string, string>();
     for (let i = messages.length - 1; i >= 0; i--) {
       const msg = messages[i];
@@ -3120,17 +3134,6 @@ export default function GroupPane(): React.JSX.Element {
     });
   }, [call.participants, messages, activeGroup, user?.id, user?.avatarUrl, myFreshProfile?.avatarUrl]);
 
- 
-  const toggleLocalMute = useCallback((targetUserId: string) => {
-    if (!targetUserId || targetUserId === user?.id) return;
-    setLocallyMuted((prev) => {
-      const next = new Set(prev);
-      if (next.has(targetUserId)) next.delete(targetUserId);
-      else next.add(targetUserId);
-      return next;
-    });
-  }, [user?.id]);
-
   const togglePin = useCallback((id: string) => {
     setPinnedIds((prev) => {
       const next = new Set(prev);
@@ -3149,8 +3152,6 @@ export default function GroupPane(): React.JSX.Element {
     });
   }, [user?.id]);
 
-  const toggleDeafen = useCallback(() => setDeafened((v) => !v), []);
-
   const activeCallBanner = useMemo(() => {
     if (call.activeCallers.length === 0) return null;
     const names = call.activeCallers.map((a) => a.displayName);
@@ -3159,12 +3160,18 @@ export default function GroupPane(): React.JSX.Element {
     return { title: `${names[0]} + ${names.length - 1} others are in a call`, sub: 'Tap to join' };
   }, [call.activeCallers]);
 
+    // Surface useGroupCall errors as a toast so failures are never silent.
+  const lastCallErrorRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (call.error && call.error !== lastCallErrorRef.current) {
+      toast.error(call.error);
+      lastCallErrorRef.current = call.error;
+    } else if (!call.error) {
+      lastCallErrorRef.current = null;
+    }
+  }, [call.error]);
   const openGroup = useCallback((id: number) => navigate(`/app/groups/${id}`), [navigate]);
   const openMenu = useCallback((g: GroupDto) => setChatMenuGroup(g), []);
-
-  // ─── Compute guards for group-call UI ───────────────────
-  const isViewingCallGroup = call.inCall && call.activeCallGroupId === activeGroupId;
-  const showCallPill = isViewingCallGroup || (!call.inCall && call.activeCallers.length > 0);
 
   return (
     <div className="flex h-full w-full bg-[#0B0A08] text-[#EDE5D4] overflow-hidden">
@@ -3228,12 +3235,13 @@ export default function GroupPane(): React.JSX.Element {
                   <h3 className="text-[14px] sm:text-[14.5px] font-semibold text-[#EDE5D4] truncate tracking-tight">{activeGroup.name}</h3>
                   <p className="text-[11px] sm:text-[11.5px] text-[#6B6259] truncate mt-0.5 flex items-center gap-1.5">
                     <OnlineCount memberIds={memberIds} />
+                    {onlineMembersSafe(memberIds) > 0 && <span className="opacity-50">·</span>}
                     <span>{activeGroup.memberCount} {activeGroup.memberCount === 1 ? 'member' : 'members'}</span>
                   </p>
                 </div>
               </div>
               <div className="flex items-center gap-0.5 shrink-0">
-                {isViewingCallGroup ? (
+                {call.inCall ? (
                   <button onClick={() => setCallExpanded(true)}
                     className="relative w-9 h-9 rounded-xl flex items-center justify-center bg-[#22C55E]/15 text-[#22C55E] ring-1 ring-inset ring-[#22C55E]/40 hover:bg-[#22C55E]/25 transition-colors shrink-0"
                     title="Open voice room" aria-label="Open voice room">
@@ -3243,19 +3251,25 @@ export default function GroupPane(): React.JSX.Element {
                     </span>
                   </button>
                 ) : call.activeCallers.length > 0 ? (
-                  <button onClick={() => void handleGroupCallClick()}
-                    className="relative w-9 h-9 rounded-xl flex items-center justify-center text-[#22C55E] bg-[#22C55E]/10 hover:bg-[#22C55E]/20 transition-colors shrink-0 ring-1 ring-inset ring-[#22C55E]/30"
-                    title="Join call" aria-label="Join call">
-                    <Phone className="w-[17px] h-[17px]" />
-                    <span className="absolute -top-1 -right-1 min-w-[16px] h-[16px] px-1 rounded-full bg-[#22C55E] text-[9px] font-bold text-white flex items-center justify-center ring-2 ring-[#0B0A08]">
-                      {call.activeCallers.length + 1}
-                    </span>
+                                    <button onClick={() => void handleGroupCallClick()} disabled={joining}
+                    className="relative w-9 h-9 rounded-xl flex items-center justify-center text-[#22C55E] bg-[#22C55E]/10 hover:bg-[#22C55E]/20 transition-colors shrink-0 ring-1 ring-inset ring-[#22C55E]/30 disabled:opacity-60"
+                    title={joining ? 'Joining…' : 'Join call'} aria-label={joining ? 'Joining…' : 'Join call'}>
+                    {joining
+                      ? <Loader2 className="w-[17px] h-[17px] animate-spin" />
+                      : <Phone className="w-[17px] h-[17px]" />}
+                    {!joining && (
+                      <span className="absolute -top-1 -right-1 min-w-[16px] h-[16px] px-1 rounded-full bg-[#22C55E] text-[9px] font-bold text-white flex items-center justify-center ring-2 ring-[#0B0A08]">
+                        {call.activeCallers.length + 1}
+                      </span>
+                    )}
                   </button>
                 ) : (
-                  <button onClick={() => void handleGroupCallClick()}
-                    className="w-9 h-9 rounded-xl flex items-center justify-center text-[#A8A29E] hover:text-[#EDE5D4] hover:bg-white/[0.05] transition-colors shrink-0"
-                    title="Start call" aria-label="Start call">
-                    <Phone className="w-[17px] h-[17px]" />
+                                   <button onClick={() => void handleGroupCallClick()} disabled={joining}
+                    className="w-9 h-9 rounded-xl flex items-center justify-center text-[#A8A29E] hover:text-[#EDE5D4] hover:bg-white/[0.05] transition-colors shrink-0 disabled:opacity-60"
+                    title={joining ? 'Joining…' : 'Start call'} aria-label={joining ? 'Joining…' : 'Start call'}>
+                    {joining
+                      ? <Loader2 className="w-[17px] h-[17px] animate-spin" />
+                      : <Phone className="w-[17px] h-[17px]" />}
                   </button>
                 )}
                 <button onClick={() => setInfoOpen(true)}
@@ -3343,24 +3357,22 @@ export default function GroupPane(): React.JSX.Element {
                 </div>
               )}
 
-              {showCallPill && (
-                <CallPill
-                  inCall={isViewingCallGroup}
-                  activeCallers={call.activeCallers}
-                  participants={isViewingCallGroup ? enrichedParticipants : []}
-                  muted={call.muted}
-                  deafened={deafened}
-                  myName={user?.displayName ?? 'You'}
-                  myAvatarUrl={myFreshProfile?.avatarUrl ?? user?.avatarUrl ?? null}
-                  maxParticipants={MAX_PARTICIPANTS}
-                  bannerText={activeCallBanner}
-                  onToggleMute={call.toggleMute}
-                  onToggleDeafen={toggleDeafen}
-                  onLeave={call.leave}
-                  onJoin={() => void handleGroupCallClick()}
-                  onOpenStage={() => setCallExpanded(true)}
-                />
-              )}
+              <CallPill
+                inCall={call.inCall}
+                activeCallers={call.activeCallers}
+                participants={enrichedParticipants}
+                muted={call.muted}
+                deafened={deafened}
+                myName={user?.displayName ?? 'You'}
+                myAvatarUrl={myFreshProfile?.avatarUrl ?? user?.avatarUrl ?? null}
+                maxParticipants={MAX_PARTICIPANTS}
+                bannerText={activeCallBanner}
+                onToggleMute={call.toggleMute}
+                onToggleDeafen={toggleDeafen}
+                onLeave={call.leave}
+                onJoin={() => void handleGroupCallClick()}
+                onOpenStage={() => setCallExpanded(true)}
+              />
             </div>
 
             {showJumpToLatest && (
@@ -3460,11 +3472,11 @@ export default function GroupPane(): React.JSX.Element {
 
       {activeGroupId && (
         <VoiceStage
-          open={callExpanded && isViewingCallGroup}
+          open={callExpanded && call.inCall}
           onClose={() => setCallExpanded(false)}
           groupId={activeGroupId}
           groupName={activeGroup?.name ?? 'Voice'}
-          inCall={isViewingCallGroup}
+          inCall={call.inCall}
           participants={enrichedParticipants}
           muted={call.muted}
           deafened={deafened}
@@ -3533,18 +3545,23 @@ export default function GroupPane(): React.JSX.Element {
             kind={callBlock.kind}
             name={callBlock.name}
             onEndAndJoin={async () => {
-              if (!activeGroupId) throw new Error('No group selected.');
               if (callBlock.kind === '1on1') {
                 const ok = end1on1Call();
-                if (!ok) throw new Error('Could not end the 1-on-1 call. Try ending it manually.');
+                if (!ok) {
+                  throw new Error(
+                    'Could not end the 1-on-1 call. Try ending it manually.',
+                  );
+                }
                 setCallBlock(null);
                 await new Promise((r) => setTimeout(r, 250));
-                await call.joinForGroup(activeGroupId, activeGroup?.name);
+                await call.join();
                 setCallExpanded(true);
               } else {
-                await call.joinForGroup(activeGroupId, activeGroup?.name);
+                const ok = leaveOtherGroupCall();
+                if (!ok) {
+                  throw new Error('Could not leave the other group call.');
+                }
                 setCallBlock(null);
-                setCallExpanded(true);
               }
             }}
             onDismiss={() => setCallBlock(null)}
@@ -3555,4 +3572,11 @@ export default function GroupPane(): React.JSX.Element {
       <audio ref={disconnectRef} src="/sounds/disconnect.mp3" preload="none" />
     </div>
   );
+}
+
+/* tiny helper — presence check without needing full store subscription in parent */
+function onlineMembersSafe(memberIds: string[]): number {
+  let count = 0;
+  for (const id of memberIds) if (presenceStore.isOnline(id)) count++;
+  return count;
 }
