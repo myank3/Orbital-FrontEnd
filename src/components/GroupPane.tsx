@@ -16,6 +16,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { apiService, extractErrorMessage, applyPresignedUrls } from '../services/api';
 import { signalRService } from '../services/signalr';
 import { useAuth } from '../context/AuthContext';
+import { useCall } from '../context/CallContext';
 import { presenceStore } from '../services/presenceStore';
 import { useGroupCall, isCallSignal, MAX_PARTICIPANTS } from '../hooks/useGroupCall';
 import { Phone, PhoneOff, MicOff, Mic, Volume2, VolumeX, MessageSquare } from 'lucide-react';
@@ -39,6 +40,81 @@ import {
   useGroupTypingReceiver,
 } from '../hooks/useTypingIndicator';
 import { EmojiPanel } from './dm/ComposerToolkit';
+
+/* ────────────────────────────────────────────────────────── */
+/* Module-level: active group call tracker                    */
+/*                                                            */
+/* Lets a GroupPane for Group B detect that a live group      */
+/* call exists in Group A. Only meaningful if useGroupCall    */
+/* keeps the call alive across navigation — if it tears down  */
+/* on unmount, this is a harmless no-op (scenario can't       */
+/* happen either way).                                        */
+/* ────────────────────────────────────────────────────────── */
+
+let moduleActiveGroupCallId: number | null = null;
+let moduleActiveGroupCallName: string | null = null;
+let moduleActiveGroupCallLeave: (() => void) | null = null;
+
+/* ────────────────────────────────────────────────────────── */
+/* Already-in-call toast                                      */
+/* ────────────────────────────────────────────────────────── */
+
+function AlreadyInCallToast({
+  kind, name, onEndAndJoin, onDismiss,
+}: {
+  kind: '1on1' | 'group';
+  name: string;
+  onEndAndJoin: () => void | Promise<void>;
+  onDismiss: () => void;
+}) {
+  const title = kind === '1on1' ? 'Already in a 1-on-1 call' : 'Already in a group call';
+  const body = kind === '1on1'
+    ? `You're in a 1-on-1 call with ${name}. End it to join this group call.`
+    : `You're already in a call in "${name}". Leave it to join this group call.`;
+  const actionLabel = kind === '1on1' ? 'End & join' : 'Leave & join';
+
+  return (
+    <motion.div
+      initial={{ y: 40, opacity: 0 }}
+      animate={{ y: 0, opacity: 1 }}
+      exit={{ y: 40, opacity: 0 }}
+      transition={{ type: 'spring', stiffness: 340, damping: 28 }}
+      className="fixed bottom-6 left-1/2 -translate-x-1/2 z-[250] w-[340px] max-w-[calc(100%-32px)] rounded-2xl bg-[#1A1816] border border-white/[0.08] shadow-2xl overflow-hidden"
+    >
+      <div className="p-4 flex items-start gap-3">
+        <div className="shrink-0 w-10 h-10 rounded-full bg-[#F59E0B]/15 border border-[#F59E0B]/30 flex items-center justify-center">
+          <Phone className="w-4 h-4 text-[#F59E0B]" />
+        </div>
+        <div className="min-w-0 flex-1">
+          <p className="text-[13.5px] font-semibold text-[#EDE5D4]">{title}</p>
+          <p className="text-[12px] text-[#A8A29E] mt-0.5 leading-snug">{body}</p>
+        </div>
+        <button
+          onClick={onDismiss}
+          className="shrink-0 w-6 h-6 -mr-1 -mt-1 rounded-md flex items-center justify-center text-[#6B6259] hover:text-[#EDE5D4] hover:bg-white/[0.06]"
+          aria-label="Dismiss"
+        >
+          <X className="w-3.5 h-3.5" />
+        </button>
+      </div>
+      <div className="px-4 pb-3 flex items-center gap-2">
+        <button
+          onClick={() => void onEndAndJoin()}
+          className="flex-1 h-8 rounded-lg bg-[#F59E0B] hover:bg-[#D97706] text-[#0F0D0A] text-[12px] font-semibold transition-colors"
+        >
+          {actionLabel}
+        </button>
+        <button
+          onClick={onDismiss}
+          className="h-8 px-3 rounded-lg bg-white/[0.04] hover:bg-white/[0.08] text-[#EDE5D4] text-[12px] font-medium transition-colors"
+        >
+          Cancel
+        </button>
+      </div>
+      <div className="h-[3px] bg-gradient-to-r from-[#F59E0B] via-[#D97706] to-transparent" />
+    </motion.div>
+  );
+}
 
 /* ────────────────────────────────────────────────────────── */
 /* Tunables                                                   */
@@ -1649,8 +1725,6 @@ function StageTileAvatar({ name, src, size = 96, accent = false }: {
           alt={name}
           className="w-full h-full object-cover"
           onError={(e) => {
-            // Fallback: if the URL still fails, hide the img so initials
-            // can be shown instead — prevents a broken-image icon.
             (e.currentTarget as HTMLImageElement).style.display = 'none';
           }}
         />
@@ -1769,7 +1843,7 @@ function StageTile({
           </div>
         </div>
 
-               <div className="flex flex-col items-center gap-1.5 max-w-full">
+        <div className="flex flex-col items-center gap-1.5 max-w-full">
           <div className="flex items-center gap-1.5">
             <span
               className={`font-bold text-[#EDE5D4] truncate tracking-tight ${
@@ -2130,6 +2204,21 @@ export default function GroupPane(): React.JSX.Element {
     user ? { id: user.id, displayName: user.displayName ?? '' } : undefined,
   );
 
+  // 1-on-1 call context (global — works across routes)
+  const call1on1 = useCall() as unknown as {
+    callState: string;
+    peerId: string | null;
+    endCall?: () => void;
+    hangUp?: () => void;
+    leave?: () => void;
+    terminate?: () => void;
+    end?: () => void;
+  };
+  const is1on1Busy = Boolean(call1on1.callState && call1on1.callState !== 'idle');
+
+  // Blocking toast state — null when no block is shown
+  const [callBlock, setCallBlock] = useState<{ kind: '1on1' | 'group'; name: string } | null>(null);
+
   // Fresh self-profile so we always have the latest avatarUrl (context may be stale)
   const [myFreshProfile, setMyFreshProfile] = useState<{ avatarUrl?: string | null } | null>(null);
   useEffect(() => {
@@ -2158,8 +2247,38 @@ export default function GroupPane(): React.JSX.Element {
     prevInCallRef.current = call.inCall;
   }, [call.inCall]);
 
+  // Publish/withdraw the module-level "active group call" marker so
+  // GroupPane for a different group can detect a live call elsewhere.
+  useEffect(() => {
+    if (call.inCall && activeGroupId) {
+      moduleActiveGroupCallId = activeGroupId;
+      moduleActiveGroupCallName = null; // filled by the effect below when activeGroup is known
+      moduleActiveGroupCallLeave = call.leave;
+    } else if (!call.inCall && moduleActiveGroupCallId === activeGroupId) {
+      moduleActiveGroupCallId = null;
+      moduleActiveGroupCallName = null;
+      moduleActiveGroupCallLeave = null;
+    }
+  }, [call.inCall, activeGroupId, call.leave]);
+
   const [groups, setGroups] = useState<GroupDto[]>([]);
   const [activeGroup, setActiveGroup] = useState<GroupDetailDto | null>(null);
+
+  // Now that activeGroup is known, keep the tracker's name in sync.
+  useEffect(() => {
+    if (call.inCall && activeGroupId && moduleActiveGroupCallId === activeGroupId) {
+      moduleActiveGroupCallName = activeGroup?.name ?? null;
+    }
+  }, [call.inCall, activeGroupId, activeGroup?.name]);
+
+  // Friendly display name for the 1-on-1 peer, looked up from current group members
+  const active1on1PeerName = useMemo(() => {
+    const pid = call1on1.peerId;
+    if (!pid) return 'someone';
+    const m = activeGroup?.members?.find((mem) => mem.id === pid);
+    return m?.displayName ?? 'another user';
+  }, [call1on1.peerId, activeGroup]);
+
   const [messages, setMessages] = useState<GroupMessageDto[]>([]);
   const [loadingHistory, setLoadingHistory] = useState<boolean>(false);
   const [loadingMore, setLoadingMore] = useState<boolean>(false);
@@ -2569,6 +2688,59 @@ export default function GroupPane(): React.JSX.Element {
     setActiveGroup(detail);
   };
 
+  /* ── Call guard helpers ─────────────────────────────────── */
+
+  const end1on1Call = useCallback((): boolean => {
+    const c = call1on1 as unknown as Record<string, unknown>;
+    const tryCall = (name: string): boolean => {
+      const fn = c[name];
+      if (typeof fn === 'function') {
+        try { (fn as () => void)(); return true; } catch { /* try next */ }
+      }
+      return false;
+    };
+    return (
+      tryCall('endCall') ||
+      tryCall('hangUp') ||
+      tryCall('leave') ||
+      tryCall('terminate') ||
+      tryCall('end')
+    );
+  }, [call1on1]);
+
+  const leaveOtherGroupCall = useCallback((): boolean => {
+    try { moduleActiveGroupCallLeave?.(); return true; }
+    catch (err) { console.warn('[group] leave other call failed', err); return false; }
+  }, []);
+
+  const handleGroupCallClick = useCallback(async () => {
+    // Already in THIS group's call — just open the stage
+    if (call.inCall) {
+      setCallExpanded(true);
+      return;
+    }
+
+    // In a 1-on-1 call? Block with toast
+    if (is1on1Busy) {
+      setCallBlock({ kind: '1on1', name: active1on1PeerName });
+      return;
+    }
+
+    // In a group call elsewhere? Block with toast
+    if (moduleActiveGroupCallId != null && moduleActiveGroupCallId !== activeGroupId) {
+      setCallBlock({ kind: 'group', name: moduleActiveGroupCallName ?? 'another group' });
+      return;
+    }
+
+    // Clear — join normally
+    try {
+      await call.join();
+      setCallExpanded(true);
+    } catch {
+      /* useGroupCall surfaces the error via call.error */
+    }
+  }, [call, is1on1Busy, activeGroupId, active1on1PeerName]);
+
   const handleReact = useCallback((messageId: number, emoji: string) => {
     if (!user?.id) return;
     const mine = (reactions[String(messageId)] ?? []).some((r) => r.userId === user.id && r.emoji === emoji);
@@ -2825,7 +2997,7 @@ export default function GroupPane(): React.JSX.Element {
                     </span>
                   </button>
                 ) : call.activeCallers.length > 0 ? (
-                  <button onClick={() => void call.join()}
+                  <button onClick={() => void handleGroupCallClick()}
                     className="relative w-9 h-9 rounded-xl flex items-center justify-center text-[#22C55E] bg-[#22C55E]/10 hover:bg-[#22C55E]/20 transition-colors shrink-0 ring-1 ring-inset ring-[#22C55E]/30"
                     title="Join call" aria-label="Join call">
                     <Phone className="w-[17px] h-[17px]" />
@@ -2834,7 +3006,7 @@ export default function GroupPane(): React.JSX.Element {
                     </span>
                   </button>
                 ) : (
-                  <button onClick={() => void call.join()}
+                  <button onClick={() => void handleGroupCallClick()}
                     className="w-9 h-9 rounded-xl flex items-center justify-center text-[#A8A29E] hover:text-[#EDE5D4] hover:bg-white/[0.05] transition-colors shrink-0"
                     title="Start call" aria-label="Start call">
                     <Phone className="w-[17px] h-[17px]" />
@@ -2936,9 +3108,7 @@ export default function GroupPane(): React.JSX.Element {
                 bannerText={activeCallBanner}
                 onToggleMute={call.toggleMute}
                 onLeave={call.leave}
-                onJoin={() => {
-                  void call.join().then(() => setCallExpanded(true)).catch(() => { /* hook handles error */ });
-                }}
+                onJoin={() => void handleGroupCallClick()}
                 onOpenStage={() => setCallExpanded(true)}
               />
             </div>
@@ -2979,7 +3149,7 @@ export default function GroupPane(): React.JSX.Element {
                 <div className="flex items-center gap-2 text-[11.5px] text-[#F87171]">
                   <AlertCircle className="w-3.5 h-3.5 shrink-0" />
                   <span className="truncate">{call.error}</span>
-                  <button type="button" onClick={() => void call.join()}
+                  <button type="button" onClick={() => void handleGroupCallClick()}
                     className="ml-auto shrink-0 text-[11px] font-semibold underline hover:no-underline">
                     Retry
                   </button>
@@ -3133,6 +3303,36 @@ export default function GroupPane(): React.JSX.Element {
               </form>
             </motion.div>
           </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Call guard toast */}
+      <AnimatePresence>
+        {callBlock && (
+          <AlreadyInCallToast
+            kind={callBlock.kind}
+            name={callBlock.name}
+            onEndAndJoin={async () => {
+              const kind = callBlock.kind;
+              let ok = false;
+              if (kind === '1on1') ok = end1on1Call();
+              else ok = leaveOtherGroupCall();
+              if (!ok) {
+                // Couldn't end/leave — keep the toast up so the user can retry or dismiss
+                return;
+              }
+              setCallBlock(null);
+              // Give the previous call a moment to tear down
+              await new Promise((r) => setTimeout(r, 150));
+              try {
+                await call.join();
+                setCallExpanded(true);
+              } catch {
+                /* useGroupCall surfaces the error via call.error */
+              }
+            }}
+            onDismiss={() => setCallBlock(null)}
+          />
         )}
       </AnimatePresence>
 
