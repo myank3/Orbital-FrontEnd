@@ -1,14 +1,23 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import * as sfu from '../services/cloudflareRealtime';
 import { signalRService } from '../services/signalr';
+import { activeCallRegistry } from '../services/activeCallRegistry';
 
 const PREFIX = '[call:';
 
 /** SFU topology — safe to go higher than mesh. 10 keeps UI readable. */
 export const MAX_PARTICIPANTS = 10;
 
-/** Minimum gap between publishes triggered by probe responses. */
-const PROBE_RESPONSE_MIN_MS = 30_000;
+/**
+ * Minimum gap between publishes triggered by probe responses.
+ * Was 30s — lowered to 3s so a fresh joiner can hear existing
+ * participants who published moments ago (they'd otherwise be skipped
+ * by the rate-limit and never re-published).
+ */
+const PROBE_RESPONSE_MIN_MS = 3_000;
+
+/** SFU session disconnected if we don't hear anything for this long. */
+const STALE_CALLER_MS = 90_000;
 
 type CallEvent =
   | { type: 'join'; userId: string; displayName: string; sessionId: string; muted: boolean }
@@ -31,6 +40,17 @@ export interface ActiveCaller {
 
 export interface UseGroupCallResult {
   inCall: boolean;
+  /**
+   * Which group the active call belongs to. `null` when not in a call.
+   * NOTE: this can differ from the groupId you passed in — after a
+   * group switch the teardown effect may not have fired yet in the
+   * same tick. Consumers should treat `callGroupId === groupId` as
+   * "in THIS group's call" and `callGroupId != null && callGroupId !== groupId`
+   * as "in another group's call".
+   */
+  callGroupId: number | null;
+  /** Mic stream. Null when not in a call. */
+  localStream: MediaStream | null;
   participants: CallParticipant[];
   activeCallers: ActiveCaller[];
   muted: boolean;
@@ -47,8 +67,11 @@ export function isCallSignal(content: string | null | undefined): boolean {
 export function useGroupCall(
   groupId: number | undefined,
   me: { id: string; displayName: string } | undefined,
+  groupName?: string,
 ): UseGroupCallResult {
   const [inCall, setInCall] = useState(false);
+  const [callGroupId, setCallGroupId] = useState<number | null>(null);
+  const [localStream, setLocalStream] = useState<MediaStream | null>(null);
   const [participants, setParticipants] = useState<CallParticipant[]>([]);
   const [activeCallers, setActiveCallers] = useState<ActiveCaller[]>([]);
   const [muted, setMuted] = useState(false);
@@ -66,9 +89,15 @@ export function useGroupCall(
   const mutedRef = useRef(false);
   const inCallRef = useRef(false);
 
-  // Deduplication — only publish when something actually changed
   const lastPublishKeyRef = useRef<string>('');
   const lastPublishAtRef = useRef<number>(0);
+
+  /**
+   * Tracks the group we last saw. Used by the groupId-change teardown
+   * effect (#1) to know whether to send a leave to the previous group.
+   * Initialised to `groupId` so the very first render is a no-op.
+   */
+  const prevGroupIdRef = useRef<number | undefined>(groupId);
 
   useEffect(() => { mutedRef.current = muted; }, [muted]);
   useEffect(() => { inCallRef.current = inCall; }, [inCall]);
@@ -101,9 +130,7 @@ export function useGroupCall(
    * Publish our current track+session+mute state.
    *
    * - `force = true` bypasses the dedupe (used on join, mute toggle, initial publish)
-   * - `force = false` respects dedupe: same state within 30s is skipped
-   *
-   * This is the ONLY publish path now — no more heartbeat interval.
+   * - `force = false` respects dedupe: same state within PROBE_RESPONSE_MIN_MS is skipped
    */
   const sendPublish = useCallback((force = false) => {
     if (!me) return;
@@ -116,10 +143,10 @@ export function useGroupCall(
 
     if (!force) {
       if (lastPublishKeyRef.current === stateKey && now - lastPublishAtRef.current < PROBE_RESPONSE_MIN_MS) {
-        return; // same state, recently published — skip
+        return;
       }
       if (now - lastPublishAtRef.current < PROBE_RESPONSE_MIN_MS) {
-        return; // recently published a different state — still rate-limited
+        return;
       }
     }
 
@@ -133,7 +160,7 @@ export function useGroupCall(
       sessionId: sid,
       trackName: tid,
       muted: mutedRef.current,
-    }).catch(() => { /* silent */ });
+    }).catch(() => {});
   }, [me, send]);
 
   const leave = useCallback(() => {
@@ -151,6 +178,8 @@ export function useGroupCall(
     lastPublishAtRef.current = 0;
     setParticipants([]);
     setInCall(false);
+    setCallGroupId(null);
+    setLocalStream(null);
     setMuted(false);
   }, [me, send]);
 
@@ -163,11 +192,26 @@ export function useGroupCall(
       return;
     }
 
+    // ── FIX #3: announce presence immediately ────────────────────────
+    // getUserMedia + SFU handshake can take several seconds. Sending
+    // `join` first means others see us in the pill within ~100ms,
+    // instead of staring at "1 in call" until our media is live.
+    // sessionId/track aren't ready yet — peers treat `join` as a
+    // presence-only event, so an empty sessionId is harmless.
+    void send({
+      type: 'join',
+      userId: me.id,
+      displayName: me.displayName,
+      sessionId: '',
+      muted: mutedRef.current,
+    }).catch(() => {});
+
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
       });
       localStreamRef.current = stream;
+      setLocalStream(stream);                    // FIX #4
       const track = stream.getAudioTracks()[0];
       localTrackRef.current = track;
       track.enabled = !mutedRef.current;
@@ -216,14 +260,12 @@ export function useGroupCall(
       await sfu.publishTrack(created.sessionId, tx.mid!, track.id, pc.localDescription!.sdp);
 
       setInCall(true);
+      setCallGroupId(groupId);                   // FIX #2
 
-      // One publish announces both presence AND track. We don't need a separate
-      // `join` event — the publish handler updates activeCallers AND triggers
-      // the pull flow for existing participants.
+      // Publish announces our track so existing peers can pull it.
       sendPublish(true);
 
-      // Delayed probe lets us discover any existing callers we didn't see
-      // because they published before we connected. Rate-limited on their side.
+      // Probe for existing participants we didn't see yet.
       window.setTimeout(() => {
         if (inCallRef.current) {
           void send({ type: 'probe', userId: me.id }).catch(() => {});
@@ -266,7 +308,10 @@ export function useGroupCall(
         const mySid = sessionIdRef.current;
         if (!pc || !mySid) return;
 
-        pendingPullsRef.current.push({ userId: evt.userId, displayName: evt.displayName });
+        // ── FIX #5: hold a reference to our queue entry so a failure
+        // removes the RIGHT one, not whatever happens to be last.
+        const meta = { userId: evt.userId, displayName: evt.displayName };
+        pendingPullsRef.current.push(meta);
 
         try {
           const r = await sfu.pullTrack(mySid, evt.sessionId, evt.trackName);
@@ -278,7 +323,8 @@ export function useGroupCall(
         } catch (err) {
           console.warn('[call] pull failed', err);
           pulledKeysRef.current.delete(key);
-          pendingPullsRef.current.pop();
+          const idx = pendingPullsRef.current.indexOf(meta);
+          if (idx >= 0) pendingPullsRef.current.splice(idx, 1);
         }
       });
     },
@@ -295,7 +341,6 @@ export function useGroupCall(
       setMuted(nowMuted);
       mutedRef.current = nowMuted;
 
-      // Publish new state (force — real change) and notify peers via `mute`
       if (inCallRef.current) sendPublish(true);
       if (me) {
         void send({ type: 'mute', userId: me.id, muted: nowMuted }).catch(() => { /* silent */ });
@@ -305,11 +350,87 @@ export function useGroupCall(
     }
   }, [me, send, sendPublish]);
 
-  // No heartbeat interval — presence is kept fresh by:
-  //   1. `publish` on state change (join, mute)
-  //   2. `publish` responses to `probe` (rate-limited to once per 30s)
-  //   3. 45s expiry sweep below removes stale entries
+  // ── FIX #1: tear down the SFU session when the group changes. ──────
+  //
+  // The previous implementation only cleared the roster *display*,
+  // leaving pcRef/sessionIdRef/localTrackRef pointing at the previous
+  // group's SFU session. Then `inCall` stayed true and `join()` in the
+  // new group returned early (`if (inCall) return`), so the user was
+  // "in a call" in group B while the audio was still A's call.
+  // This effect closes the loop: leave A (send leave to A's channel),
+  // tear down everything, and reset state so B starts clean.
+  useEffect(() => {
+    if (prevGroupIdRef.current === groupId) return;
+    const prev = prevGroupIdRef.current;
+    prevGroupIdRef.current = groupId;
 
+    // Send leave to the OLD group. `send()` closes over the current
+    // (new) groupId so we can't reuse it — go direct.
+    if (inCallRef.current && prev != null && me) {
+      void signalRService.sendGroupMessage({
+        groupId: prev,
+        content: `${PREFIX}${JSON.stringify({ type: 'leave', userId: me.id })}]`,
+        mediaUrl: undefined,
+        mediaType: undefined,
+      }).catch(() => {});
+    }
+
+    try { pcRef.current?.close(); } catch { /* noop */ }
+    pcRef.current = null;
+    sessionIdRef.current = null;
+    try { localStreamRef.current?.getTracks().forEach((t) => t.stop()); } catch { /* noop */ }
+    localStreamRef.current = null;
+    localTrackRef.current = null;
+    pulledKeysRef.current.clear();
+    pendingPullsRef.current = [];
+    participantsRef.current.clear();
+    activeCallersRef.current.clear();
+    lastPublishKeyRef.current = '';
+    lastPublishAtRef.current = 0;
+
+    inCallRef.current = false;
+    setInCall(false);
+    setCallGroupId(null);
+    setLocalStream(null);
+    setParticipants([]);
+    setActiveCallers([]);
+    setMuted(false);
+    setError(null);
+  }, [groupId, me]);
+
+  // ── Registry publish (feeds CallContext blocking). ─────────────────
+  useEffect(() => {
+    if (inCall && callGroupId != null) {
+      activeCallRegistry.register({
+        kind: 'group',
+        leave: () => { leave(); },
+        label: groupName ?? `group ${callGroupId}`,
+      });
+    } else {
+      activeCallRegistry.unregister('group');
+    }
+  }, [inCall, callGroupId, groupName, leave]);
+
+ // Cleanup on unmount — clears the registry AND closes the SFU
+// session so navigation away doesn't leave a phantom call.
+useEffect(() => {
+  return () => {
+    activeCallRegistry.unregister('group');
+    if (pcRef.current) {
+      const leaveGroupId = prevGroupIdRef.current ?? groupId;
+      if (me && leaveGroupId != null) {
+        void signalRService.sendGroupMessage({
+          groupId: leaveGroupId,
+          content: `${PREFIX}${JSON.stringify({ type: 'leave', userId: me.id })}]`,
+          mediaUrl: undefined,
+          mediaType: undefined,
+        }).catch(() => {});
+      }
+      try { pcRef.current.close(); } catch { /* noop */ }
+    }
+  };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+}, []);
   // Probe existing callers on mount / group switch
   useEffect(() => {
     if (!groupId || !me) return;
@@ -325,7 +446,7 @@ export function useGroupCall(
       const now = Date.now();
       let changed = false;
       for (const [uid, v] of activeCallersRef.current) {
-        if (now - v.lastSeen > 90000) { // 90s (up from 45s — no heartbeat to rely on)
+        if (now - v.lastSeen > STALE_CALLER_MS) {
           activeCallersRef.current.delete(uid);
           changed = true;
         }
@@ -334,12 +455,6 @@ export function useGroupCall(
     }, 15000);
     return () => window.clearInterval(id);
   }, [refreshActiveCallers]);
-
-  // Reset when the group changes
-  useEffect(() => {
-    activeCallersRef.current.clear();
-    setActiveCallers([]);
-  }, [groupId]);
 
   // Real-time handlers
   useEffect(() => {
@@ -373,7 +488,7 @@ export function useGroupCall(
           setParticipants(Array.from(participantsRef.current.values()));
         }
       } else if (evt.type === 'probe' && evt.userId !== me.id && inCallRef.current) {
-        // Rate-limited — only responds once per 30s per user
+        // Rate-limited — 3s window (was 30s)
         sendPublish(false);
       }
 
@@ -382,23 +497,23 @@ export function useGroupCall(
       }
 
       if (evt.type === 'join' && evt.userId !== me.id && inCallRef.current) {
-        // Legacy join events from older clients — respond with rate-limited publish
+        // Someone joined — re-publish so they can pull our track.
         sendPublish(false);
       }
     });
     return () => unsub();
   }, [groupId, me, pullFor, refreshActiveCallers, sendPublish]);
 
-  // Cleanup on unmount
-  useEffect(() => {
-    return () => {
-      if (pcRef.current) {
-        if (me) void send({ type: 'leave', userId: me.id }).catch(() => {});
-        try { pcRef.current.close(); } catch { /* noop */ }
-      }
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  return { inCall, participants, activeCallers, muted, error, join, leave, toggleMute };
+  return {
+    inCall,
+    callGroupId,
+    localStream,
+    participants,
+    activeCallers,
+    muted,
+    error,
+    join,
+    leave,
+    toggleMute,
+  };
 }

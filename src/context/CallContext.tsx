@@ -24,9 +24,14 @@ import {
   registerServiceWorker,
   showDmNotification,
 } from '../services/serviceWorker';
+// ── EDIT C1: import shared active-call registry ──────────────────
+import { activeCallRegistry } from '../services/activeCallRegistry';
+// ─────────────────────────────────────────────────────────────────
 import { useAuth } from './AuthContext';
 import { Avatar } from '../components/Avatar';
 import { MessageSquare, X } from 'lucide-react';
+import {applyPresignedUrls,
+} from '../services/api';
 import {
   CallEndedPayload,
   CallSessionDto,
@@ -65,6 +70,9 @@ export interface CallContextType {
   incomingCall: CallSessionDto | null;
   peerId: string | null;
   callState: CallState;
+  // ── EDIT C2: expose blocking group-call info ───────────────────
+  blockedByOtherCall: { kind: 'group'; name?: string } | null;
+  // ───────────────────────────────────────────────────────────────
   duration: number;
   peerRinging: boolean;
   initiateCall: (peerId: string, callType: number) => Promise<void>;
@@ -465,6 +473,12 @@ function CallProviderComponent({
   const [duration, setDuration] = useState<number>(0);
   const [peerRinging, setPeerRinging] = useState<boolean>(false);
 
+  // ── EDIT C7a: track whether a group call is blocking 1-on-1 ────
+  const [blockedByOtherCall, setBlockedByOtherCall] = useState<
+    { kind: 'group'; name?: string } | null
+  >(null);
+  // ───────────────────────────────────────────────────────────────
+
   const [unreadCounts, setUnreadCounts] = useState<Record<string, number>>(
     () => (myUserId ? readDmUnread(myUserId) : {}),
   );
@@ -678,11 +692,13 @@ function CallProviderComponent({
           }
         }
 
-        if (!paneMounted && !prefetchedHistoryRef.current.has(senderId)) {
+               if (!paneMounted && !prefetchedHistoryRef.current.has(senderId)) {
           void apiService
             .getDmHistory(senderId, 200)
-            .then((history) => {
-              prefetchedHistoryRef.current.set(senderId, history);
+            .then((res) => {
+              // res: { messages: DirectMessageDto[], presignedUrls: Record<string,string> }
+              const msgs = applyPresignedUrls(res.messages, res.presignedUrls);
+              prefetchedHistoryRef.current.set(senderId, msgs);
               setPrefetchedHistory(new Map(prefetchedHistoryRef.current));
             })
             .catch(() => {
@@ -1288,6 +1304,17 @@ function CallProviderComponent({
         throw new Error('A call is already in progress.');
       }
 
+      // ── EDIT C4: block if a group call is live ──────────────────
+      const other = activeCallRegistry.blocking('1on1');
+      if (other) {
+        throw new Error(
+          other.kind === 'group'
+            ? `You're in a group call${other.label ? ` in "${other.label}"` : ''}. Leave it first.`
+            : 'A call is already in progress.',
+        );
+      }
+      // ───────────────────────────────────────────────────────────
+
       if (audioSinkRef.current) {
         audioSinkRef.current.play().catch(() => {});
       }
@@ -1349,6 +1376,28 @@ function CallProviderComponent({
   const acceptCall = useCallback(async (): Promise<void> => {
     const incoming = incomingCallRef.current;
     if (!incoming) return;
+
+    // ── EDIT C5: refuse to accept while a group call is live ──────
+    const other = activeCallRegistry.blocking('1on1');
+    if (other) {
+      const rejectedPeer = resolvePeerId(null, incoming);
+      void apiService
+        .updateCallStatus(incoming.sessionId, CallSessionStatus.Rejected)
+        .catch(() => {});
+      if (rejectedPeer) {
+        void signalRService
+          .notifyCallEnded(incoming.sessionId, rejectedPeer)
+          .catch(() => {});
+      }
+      teardown();
+      toast.error(
+        other.kind === 'group'
+          ? `You're in a group call${other.label ? ` in "${other.label}"` : ''}. Leave it before accepting.`
+          : 'You are already in a call.',
+      );
+      return;
+    }
+    // ───────────────────────────────────────────────────────────────
 
     if (audioSinkRef.current) {
       audioSinkRef.current.play().catch(() => {});
@@ -1516,6 +1565,25 @@ function CallProviderComponent({
   useEffect(() => {
     endCallRef.current = endCall;
   }, [endCall]);
+
+  // ── EDIT C3: publish this 1-on-1 call into the shared registry ─
+  useEffect(() => {
+    if (callState === 'idle') {
+      activeCallRegistry.unregister('1on1');
+      return;
+    }
+    activeCallRegistry.register({
+      kind: '1on1',
+      leave: () => {
+        void endCallRef.current?.();
+      },
+      label: peerId ?? undefined,
+    });
+    return () => {
+      activeCallRegistry.unregister('1on1');
+    };
+  }, [callState, peerId]);
+  // ───────────────────────────────────────────────────────────────
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -1781,6 +1849,19 @@ function CallProviderComponent({
           return;
         }
 
+        // ── EDIT C6: auto-reject incoming rings during a group call ──
+        const other = activeCallRegistry.blocking('1on1');
+        if (other) {
+          void apiService
+            .updateCallStatus(call.sessionId, CallSessionStatus.Rejected)
+            .catch(() => {});
+          void signalRService
+            .notifyCallEnded(call.sessionId, peer)
+            .catch(() => {});
+          return;
+        }
+        // ─────────────────────────────────────────────────────────────
+
         if (callStateRef.current !== 'idle') {
           signalRService
             .notifyCallEnded(call.sessionId, peer)
@@ -1850,6 +1931,21 @@ function CallProviderComponent({
     return clearWatchdog;
   }, [callState, armWatchdog, clearWatchdog]);
 
+  // ── EDIT C7b: derive blockedByOtherCall from the registry ──────
+  useEffect(() => {
+    const update = () => {
+      const other = activeCallRegistry.blocking('1on1');
+      setBlockedByOtherCall(
+        other && other.kind === 'group'
+          ? { kind: 'group', name: other.label }
+          : null,
+      );
+    };
+    update();
+    return activeCallRegistry.subscribe(update);
+  }, []);
+  // ───────────────────────────────────────────────────────────────
+
   const contextValue = useMemo<CallContextType>(
     () => ({
       session,
@@ -1863,6 +1959,9 @@ function CallProviderComponent({
       incomingCall,
       peerId,
       callState,
+      // ── EDIT C7c: expose blockedByOtherCall ────────────────────
+      blockedByOtherCall,
+      // ───────────────────────────────────────────────────────────
       duration,
       peerRinging,
       initiateCall,
@@ -1899,6 +1998,9 @@ function CallProviderComponent({
       incomingCall,
       peerId,
       callState,
+      // ── EDIT C7d: include in deps ──────────────────────────────
+      blockedByOtherCall,
+      // ───────────────────────────────────────────────────────────
       duration,
       peerRinging,
       initiateCall,

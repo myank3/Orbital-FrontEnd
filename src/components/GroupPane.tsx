@@ -64,14 +64,29 @@ function AlreadyInCallToast({
 }: {
   kind: '1on1' | 'group';
   name: string;
-  onEndAndJoin: () => void | Promise<void>;
+  onEndAndJoin: () => Promise<void>;
   onDismiss: () => void;
 }) {
+  const [busy, setBusy] = React.useState(false);
+  const [error, setError] = React.useState<string | null>(null);
+
+  const handleAction = async () => {
+    if (busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await onEndAndJoin();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not leave the call.');
+      setBusy(false);
+    }
+  };
+
   const title = kind === '1on1' ? 'Already in a 1-on-1 call' : 'Already in a group call';
   const body = kind === '1on1'
     ? `You're in a 1-on-1 call with ${name}. End it to join this group call.`
-    : `You're already in a call in "${name}". Leave it to join this group call.`;
-  const actionLabel = kind === '1on1' ? 'End & join' : 'Leave & join';
+    : `You're in a call in "${name}". Leave it first, then join here.`;
+  const actionLabel = kind === '1on1' ? 'End & join' : `Leave call in "${name}"`;
 
   return (
     <motion.div
@@ -99,10 +114,12 @@ function AlreadyInCallToast({
       </div>
       <div className="px-4 pb-3 flex items-center gap-2">
         <button
-          onClick={() => void onEndAndJoin()}
-          className="flex-1 h-8 rounded-lg bg-[#F59E0B] hover:bg-[#D97706] text-[#0F0D0A] text-[12px] font-semibold transition-colors"
+          onClick={() => void handleAction()}
+          disabled={busy}
+          className="flex-1 h-8 rounded-lg bg-[#F59E0B] hover:bg-[#D97706] disabled:opacity-60 text-[#0F0D0A] text-[12px] font-semibold transition-colors inline-flex items-center justify-center gap-1.5"
         >
-          {actionLabel}
+          {busy && <Loader2 className="w-3 h-3 animate-spin" />}
+          {busy ? 'Working…' : actionLabel}
         </button>
         <button
           onClick={onDismiss}
@@ -111,6 +128,9 @@ function AlreadyInCallToast({
           Cancel
         </button>
       </div>
+      {error && (
+        <p className="px-4 pb-2 text-[11.5px] text-[#F87171]">{error}</p>
+      )}
       <div className="h-[3px] bg-gradient-to-r from-[#F59E0B] via-[#D97706] to-transparent" />
     </motion.div>
   );
@@ -1702,6 +1722,8 @@ interface VoiceStageProps {
   inCall: boolean;
   participants: ReadonlyArray<StageParticipant>;
   muted: boolean;
+  /** Mic stream for the self tile's speaking detector. */
+  localStream?: MediaStream | null;
   locallyMuted: Set<string>;
   currentUser: { id: string; displayName: string | null | undefined; avatarUrl?: string | null } | undefined;
   messages: GroupMessageDto[];
@@ -1764,7 +1786,9 @@ interface StageTileProps {
 function StageTile({
   tile, index, tileCount, currentUserDisplayName, locallyMuted, onToggleLocalMute,
 }: StageTileProps) {
-  const speaking = useSpeakingDetector(tile.isSelf ? null : tile.stream);
+  // FIX (bug 2, self half): previously forced null for self, so your
+  // own tile could never say "Speaking". Now uses the mic stream too.
+  const speaking = useSpeakingDetector(tile.stream);
   const isLocallyMuted = !tile.isSelf && locallyMuted;
   const avatarSize = tileCount === 1 ? 112 : tileCount === 2 ? 96 : 88;
   const showSpeaking = speaking && !tile.muted && !isLocallyMuted;
@@ -1894,7 +1918,7 @@ function StageTile({
 }
 
 function VoiceStage({
-  open, onClose, groupId, groupName, inCall, participants, muted, locallyMuted,
+  open, onClose, groupId, groupName, inCall, participants, muted, localStream, locallyMuted,
   currentUser, messages, onToggleMute, onToggleLocalMute, onLeave, onSendMessage,
 }: VoiceStageProps) {
   const [chatOpen, setChatOpen] = useState(false);
@@ -1987,7 +2011,9 @@ function VoiceStage({
         displayName: currentUser.displayName ?? 'You',
         muted,
         avatarUrl: currentUser.avatarUrl ?? null,
-        stream: null,
+        // FIX (bug 2, self half): pass the mic stream so the speaking
+        // detector can animate your own tile when you talk.
+        stream: localStream ?? null,
       });
     }
     for (const p of participants) {
@@ -2002,7 +2028,7 @@ function VoiceStage({
       });
     }
     return list;
-  }, [currentUser, participants, muted]);
+  }, [currentUser, participants, muted, localStream]);
 
   const gridClass =
     tiles.length === 1 ? 'grid-cols-1 max-w-md mx-auto' :
@@ -2199,9 +2225,14 @@ export default function GroupPane(): React.JSX.Element {
   const navigate = useNavigate();
   const { user } = useAuth();
 
+  // ── Moved up so useGroupCall can register the group name in the
+  //    active-call registry (drives the "you're in a call in X" toast).
+  const [activeGroup, setActiveGroup] = useState<GroupDetailDto | null>(null);
+
   const call = useGroupCall(
     activeGroupId,
     user ? { id: user.id, displayName: user.displayName ?? '' } : undefined,
+    activeGroup?.name,
   );
 
   // 1-on-1 call context (global — works across routes)
@@ -2247,22 +2278,33 @@ export default function GroupPane(): React.JSX.Element {
     prevInCallRef.current = call.inCall;
   }, [call.inCall]);
 
-  // Publish/withdraw the module-level "active group call" marker so
-  // GroupPane for a different group can detect a live call elsewhere.
+  // Track our current group id in a ref so the cleanup can clear the
+  // module tracker for the *previous* group when navigating away.
+  const prevTrackerGroupIdRef = useRef<number | undefined>(activeGroupId);
   useEffect(() => {
+    const prev = prevTrackerGroupIdRef.current;
+    prevTrackerGroupIdRef.current = activeGroupId;
+
     if (call.inCall && activeGroupId) {
       moduleActiveGroupCallId = activeGroupId;
-      moduleActiveGroupCallName = null; // filled by the effect below when activeGroup is known
-      moduleActiveGroupCallLeave = call.leave;
-    } else if (!call.inCall && moduleActiveGroupCallId === activeGroupId) {
-      moduleActiveGroupCallId = null;
       moduleActiveGroupCallName = null;
-      moduleActiveGroupCallLeave = null;
+      moduleActiveGroupCallLeave = call.leave;
+    } else {
+      // Clear if the tracked call belongs to the group we just left
+      // OR to our current group (which is no longer in a call).
+      if (
+        moduleActiveGroupCallId === activeGroupId ||
+        moduleActiveGroupCallId === prev
+      ) {
+        moduleActiveGroupCallId = null;
+        moduleActiveGroupCallName = null;
+        moduleActiveGroupCallLeave = null;
+      }
     }
   }, [call.inCall, activeGroupId, call.leave]);
 
   const [groups, setGroups] = useState<GroupDto[]>([]);
-  const [activeGroup, setActiveGroup] = useState<GroupDetailDto | null>(null);
+  // (activeGroup state moved up — see above)
 
   // Now that activeGroup is known, keep the tracker's name in sync.
   useEffect(() => {
@@ -2700,11 +2742,11 @@ export default function GroupPane(): React.JSX.Element {
       return false;
     };
     return (
-      tryCall('endCall') ||
       tryCall('hangUp') ||
       tryCall('leave') ||
+      tryCall('end') ||
       tryCall('terminate') ||
-      tryCall('end')
+      tryCall('endCall')
     );
   }, [call1on1]);
 
@@ -2714,25 +2756,30 @@ export default function GroupPane(): React.JSX.Element {
   }, []);
 
   const handleGroupCallClick = useCallback(async () => {
-    // Already in THIS group's call — just open the stage
-    if (call.inCall) {
+    if (!activeGroupId) return;
+
+    // Already in THIS group's call — open the stage.
+    // (call.callGroupId disambiguates; inCall alone is true for any call.)
+    if (call.inCall && call.callGroupId === activeGroupId) {
       setCallExpanded(true);
       return;
     }
 
-    // In a 1-on-1 call? Block with toast
+    // In a 1-on-1 call — block with "End & join"
     if (is1on1Busy) {
       setCallBlock({ kind: '1on1', name: active1on1PeerName });
       return;
     }
 
-    // In a group call elsewhere? Block with toast
-    if (moduleActiveGroupCallId != null && moduleActiveGroupCallId !== activeGroupId) {
-      setCallBlock({ kind: 'group', name: moduleActiveGroupCallName ?? 'another group' });
+    // In ANOTHER group's call — hard block. Do NOT auto-join.
+    if (call.callGroupId != null && call.callGroupId !== activeGroupId) {
+      setCallBlock({
+        kind: 'group',
+        name: moduleActiveGroupCallName ?? `group ${call.callGroupId}`,
+      });
       return;
     }
 
-    // Clear — join normally
     try {
       await call.join();
       setCallExpanded(true);
@@ -3161,22 +3208,24 @@ export default function GroupPane(): React.JSX.Element {
               replyTo={replyTo} onCancelReply={handleCancelReply}
               onSendText={handleSendText} onSendFile={handleSendFile} onSendVoice={handleSendVoice} />
 
-            {call.inCall && enrichedParticipants.map((p) => (
-              <audio
-                key={`${p.userId}:${p.stream.id}`}
-                autoPlay
-                playsInline
-                ref={(el) => {
-                  if (el) {
-                    el.srcObject = p.stream;
-                    el.muted = locallyMuted.has(p.userId);
-                    audioElsRef.current.set(p.userId, el);
-                  } else {
-                    audioElsRef.current.delete(p.userId);
-                  }
-                }}
-              />
-            ))}
+            {call.inCall && enrichedParticipants
+              .filter((p) => p.userId !== user?.id && p.stream)
+              .map((p) => (
+                <audio
+                  key={`${p.userId}:${(p.stream as MediaStream).id}`}
+                  autoPlay
+                  playsInline
+                  ref={(el) => {
+                    if (el) {
+                      el.srcObject = p.stream as MediaStream;
+                      el.muted = locallyMuted.has(p.userId);
+                      audioElsRef.current.set(p.userId, el);
+                    } else {
+                      audioElsRef.current.delete(p.userId);
+                    }
+                  }}
+                />
+              ))}
           </>
         ) : (
           <div className="h-full flex flex-col items-center justify-center text-center gap-3 p-6">
@@ -3250,6 +3299,7 @@ export default function GroupPane(): React.JSX.Element {
           inCall={call.inCall}
           participants={enrichedParticipants}
           muted={call.muted}
+          localStream={call.localStream}
           locallyMuted={locallyMuted}
           currentUser={user ? {
             id: user.id,
@@ -3313,22 +3363,27 @@ export default function GroupPane(): React.JSX.Element {
             kind={callBlock.kind}
             name={callBlock.name}
             onEndAndJoin={async () => {
-              const kind = callBlock.kind;
-              let ok = false;
-              if (kind === '1on1') ok = end1on1Call();
-              else ok = leaveOtherGroupCall();
-              if (!ok) {
-                // Couldn't end/leave — keep the toast up so the user can retry or dismiss
-                return;
-              }
-              setCallBlock(null);
-              // Give the previous call a moment to tear down
-              await new Promise((r) => setTimeout(r, 150));
-              try {
+              if (callBlock.kind === '1on1') {
+                const ok = end1on1Call();
+                if (!ok) {
+                  throw new Error(
+                    'Could not end the 1-on-1 call. Try ending it manually.',
+                  );
+                }
+                setCallBlock(null);
+                await new Promise((r) => setTimeout(r, 250));
                 await call.join();
                 setCallExpanded(true);
-              } catch {
-                /* useGroupCall surfaces the error via call.error */
+              } else {
+                // Cross-group: leave the other call, dismiss, and stop.
+                // Do NOT auto-join — user must click Join again in this
+                // group once the tracker clears. This makes the block
+                // an actual block instead of an "enter the wrong call".
+                const ok = leaveOtherGroupCall();
+                if (!ok) {
+                  throw new Error('Could not leave the other group call.');
+                }
+                setCallBlock(null);
               }
             }}
             onDismiss={() => setCallBlock(null)}
