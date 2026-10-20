@@ -7,6 +7,9 @@ const PREFIX = '[call:';
 /** SFU topology — safe to go higher than mesh. 10 keeps UI readable. */
 export const MAX_PARTICIPANTS = 10;
 
+/** Minimum gap between publishes triggered by probe responses. */
+const PROBE_RESPONSE_MIN_MS = 30_000;
+
 type CallEvent =
   | { type: 'join'; userId: string; displayName: string; sessionId: string; muted: boolean }
   | { type: 'publish'; userId: string; displayName: string; sessionId: string; trackName: string; muted: boolean }
@@ -29,7 +32,6 @@ export interface ActiveCaller {
 export interface UseGroupCallResult {
   inCall: boolean;
   participants: CallParticipant[];
-  /** Users currently in a call who are NOT me. Shows "X is in a call · Join" banner. */
   activeCallers: ActiveCaller[];
   muted: boolean;
   error: string | null;
@@ -64,6 +66,10 @@ export function useGroupCall(
   const mutedRef = useRef(false);
   const inCallRef = useRef(false);
 
+  // Deduplication — only publish when something actually changed
+  const lastPublishKeyRef = useRef<string>('');
+  const lastPublishAtRef = useRef<number>(0);
+
   useEffect(() => { mutedRef.current = muted; }, [muted]);
   useEffect(() => { inCallRef.current = inCall; }, [inCall]);
 
@@ -91,11 +97,35 @@ export function useGroupCall(
     [groupId],
   );
 
-  const sendPublish = useCallback(() => {
+  /**
+   * Publish our current track+session+mute state.
+   *
+   * - `force = true` bypasses the dedupe (used on join, mute toggle, initial publish)
+   * - `force = false` respects dedupe: same state within 30s is skipped
+   *
+   * This is the ONLY publish path now — no more heartbeat interval.
+   */
+  const sendPublish = useCallback((force = false) => {
     if (!me) return;
     const sid = sessionIdRef.current;
     const tid = localTrackRef.current?.id;
     if (!sid || !tid) return;
+
+    const stateKey = `${sid}:${tid}:${mutedRef.current}`;
+    const now = Date.now();
+
+    if (!force) {
+      if (lastPublishKeyRef.current === stateKey && now - lastPublishAtRef.current < PROBE_RESPONSE_MIN_MS) {
+        return; // same state, recently published — skip
+      }
+      if (now - lastPublishAtRef.current < PROBE_RESPONSE_MIN_MS) {
+        return; // recently published a different state — still rate-limited
+      }
+    }
+
+    lastPublishKeyRef.current = stateKey;
+    lastPublishAtRef.current = now;
+
     void send({
       type: 'publish',
       userId: me.id,
@@ -117,6 +147,8 @@ export function useGroupCall(
     pulledKeysRef.current.clear();
     pendingPullsRef.current = [];
     participantsRef.current.clear();
+    lastPublishKeyRef.current = '';
+    lastPublishAtRef.current = 0;
     setParticipants([]);
     setInCall(false);
     setMuted(false);
@@ -185,24 +217,13 @@ export function useGroupCall(
 
       setInCall(true);
 
-      await send({
-        type: 'join',
-        userId: me.id,
-        displayName: me.displayName,
-        sessionId: created.sessionId,
-        muted: mutedRef.current,
-      });
-      await send({
-        type: 'publish',
-        userId: me.id,
-        displayName: me.displayName,
-        sessionId: created.sessionId,
-        trackName: track.id,
-        muted: mutedRef.current,
-      });
+      // One publish announces both presence AND track. We don't need a separate
+      // `join` event — the publish handler updates activeCallers AND triggers
+      // the pull flow for existing participants.
+      sendPublish(true);
 
-      // Nudge existing participants to re-announce (in case our join fired
-      // before their subscribers were ready).
+      // Delayed probe lets us discover any existing callers we didn't see
+      // because they published before we connected. Rate-limited on their side.
       window.setTimeout(() => {
         if (inCallRef.current) {
           void send({ type: 'probe', userId: me.id }).catch(() => {});
@@ -220,7 +241,7 @@ export function useGroupCall(
       }
       leave();
     }
-  }, [groupId, me, inCall, send, leave]);
+  }, [groupId, me, inCall, send, sendPublish, leave]);
 
   const pullFor = useCallback(
     (evt: Extract<CallEvent, { type: 'publish' }>) => {
@@ -273,21 +294,21 @@ export function useGroupCall(
       const nowMuted = !nextEnabled;
       setMuted(nowMuted);
       mutedRef.current = nowMuted;
+
+      // Publish new state (force — real change) and notify peers via `mute`
+      if (inCallRef.current) sendPublish(true);
       if (me) {
         void send({ type: 'mute', userId: me.id, muted: nowMuted }).catch(() => { /* silent */ });
       }
     } catch (err) {
       console.warn('[call] toggleMute failed', err);
     }
-  }, [me, send]);
+  }, [me, send, sendPublish]);
 
-  // Heartbeat — keeps our presence alive for people who arrive later
-  useEffect(() => {
-    if (!inCall) return;
-    sendPublish();
-    const id = window.setInterval(sendPublish, 20000);
-    return () => window.clearInterval(id);
-  }, [inCall, sendPublish]);
+  // No heartbeat interval — presence is kept fresh by:
+  //   1. `publish` on state change (join, mute)
+  //   2. `publish` responses to `probe` (rate-limited to once per 30s)
+  //   3. 45s expiry sweep below removes stale entries
 
   // Probe existing callers on mount / group switch
   useEffect(() => {
@@ -298,19 +319,19 @@ export function useGroupCall(
     return () => window.clearTimeout(t);
   }, [groupId, me?.id, send]);
 
-  // Expiry sweep — drop stale callers who stopped heartbeating
+  // Expiry sweep — drop stale callers who stopped publishing
   useEffect(() => {
     const id = window.setInterval(() => {
       const now = Date.now();
       let changed = false;
       for (const [uid, v] of activeCallersRef.current) {
-        if (now - v.lastSeen > 45000) {
+        if (now - v.lastSeen > 90000) { // 90s (up from 45s — no heartbeat to rely on)
           activeCallersRef.current.delete(uid);
           changed = true;
         }
       }
       if (changed) refreshActiveCallers();
-    }, 10000);
+    }, 15000);
     return () => window.clearInterval(id);
   }, [refreshActiveCallers]);
 
@@ -352,7 +373,8 @@ export function useGroupCall(
           setParticipants(Array.from(participantsRef.current.values()));
         }
       } else if (evt.type === 'probe' && evt.userId !== me.id && inCallRef.current) {
-        sendPublish();
+        // Rate-limited — only responds once per 30s per user
+        sendPublish(false);
       }
 
       if (evt.type === 'publish' && evt.userId !== me.id && inCallRef.current) {
@@ -360,7 +382,8 @@ export function useGroupCall(
       }
 
       if (evt.type === 'join' && evt.userId !== me.id && inCallRef.current) {
-        sendPublish();
+        // Legacy join events from older clients — respond with rate-limited publish
+        sendPublish(false);
       }
     });
     return () => unsub();
