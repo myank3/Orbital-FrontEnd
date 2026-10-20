@@ -45,6 +45,23 @@ import { EmojiPanel } from './dm/ComposerToolkit';
 /* ────────────────────────────────────────────────────────── */
 
 const PAGE_SIZE = 50;
+const API_ORIGIN: string =
+  (import.meta.env.VITE_API_BASE as string | undefined) ??
+  'https://orbital.runasp.net';
+
+function resolveAvatarUrl(raw: string | null | undefined): string | undefined {
+  if (!raw) return undefined;
+  if (
+    raw.startsWith('http://') ||
+    raw.startsWith('https://') ||
+    raw.startsWith('data:') ||
+    raw.startsWith('blob:')
+  ) {
+    return raw;
+  }
+  const base = API_ORIGIN.replace(/\/+$/, '');
+  return `${base}${raw.startsWith('/') ? '' : '/'}${raw}`;
+}
 const PANEL_HEIGHT = 'h-[300px]';
 const MAX_RECORD_MS = 5 * 60 * 1000;
 const QUICK_REACT_EMOJIS = ['👍', '❤️', '😂'];
@@ -1617,14 +1634,26 @@ interface VoiceStageProps {
   onLeave: () => void;
   onSendMessage: (text: string, replyId: number | null) => Promise<void>;
 }
-
 function StageTileAvatar({ name, src, size = 96, accent = false }: {
   name: string; src?: string | null; size?: number; accent?: boolean;
 }) {
-  if (src) {
+  const resolvedSrc = resolveAvatarUrl(src);
+  if (resolvedSrc) {
     return (
-      <div style={{ width: size, height: size }} className="rounded-full overflow-hidden ring-4 ring-[#0F0D0A] shadow-[0_8px_24px_-8px_rgba(0,0,0,0.8)]">
-        <img src={src} alt={name} className="w-full h-full object-cover" />
+      <div
+        style={{ width: size, height: size }}
+        className="rounded-full overflow-hidden ring-4 ring-[#0F0D0A] shadow-[0_8px_24px_-8px_rgba(0,0,0,0.8)]"
+      >
+        <img
+          src={resolvedSrc}
+          alt={name}
+          className="w-full h-full object-cover"
+          onError={(e) => {
+            // Fallback: if the URL still fails, hide the img so initials
+            // can be shown instead — prevents a broken-image icon.
+            (e.currentTarget as HTMLImageElement).style.display = 'none';
+          }}
+        />
       </div>
     );
   }
@@ -1641,7 +1670,6 @@ function StageTileAvatar({ name, src, size = 96, accent = false }: {
     </div>
   );
 }
-
 interface StageTileProps {
   tile: {
     key: string;
