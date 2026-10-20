@@ -1741,22 +1741,50 @@ function StageTile({
           </div>
         </div>
 
-        <div className="flex flex-col items-center gap-0.5 max-w-full">
+               <div className="flex flex-col items-center gap-1.5 max-w-full">
           <div className="flex items-center gap-1.5">
-            <span className="text-[13px] font-semibold text-[#EDE5D4] truncate">
+            <span
+              className={`font-bold text-[#EDE5D4] truncate tracking-tight ${
+                tileCount === 1 ? 'text-[20px]' :
+                tileCount === 2 ? 'text-[17px]' :
+                'text-[15px]'
+              }`}
+              title={tile.isSelf ? 'You' : tile.displayName}
+            >
               {tile.isSelf ? 'You' : tile.displayName}
             </span>
             {tile.isSelf && (
-              <span className="text-[9.5px] px-1.5 py-0.5 rounded-full bg-[#D97706]/20 text-[#F59E0B] font-bold uppercase tracking-wider">you</span>
+              <span className="text-[9.5px] px-1.5 py-0.5 rounded-full bg-[#D97706]/20 text-[#F59E0B] font-bold uppercase tracking-wider">
+                you
+              </span>
             )}
           </div>
-          <span className={`text-[10.5px] ${
-            showSpeaking ? 'text-[#22C55E] font-semibold' :
-            isLocallyMuted ? 'text-[#F87171]' :
-            'text-[#6B6259]'
-          }`}>
-            {isLocallyMuted ? 'Muted for you' : tile.muted ? 'Muted' : showSpeaking ? 'Speaking' : 'Listening'}
-          </span>
+
+          <div
+            className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full ${
+              showSpeaking ? 'bg-[#22C55E]/15' :
+              isLocallyMuted ? 'bg-[#F87171]/10' :
+              'bg-white/[0.04]'
+            }`}
+          >
+            <span
+              className={`w-1.5 h-1.5 rounded-full shrink-0 ${
+                showSpeaking ? 'bg-[#22C55E] animate-pulse' :
+                isLocallyMuted ? 'bg-[#F87171]' :
+                tile.muted ? 'bg-[#A8A29E]' :
+                'bg-[#6B6259]'
+              }`}
+            />
+            <span
+              className={`text-[10.5px] font-semibold uppercase tracking-wider ${
+                showSpeaking ? 'text-[#22C55E]' :
+                isLocallyMuted ? 'text-[#F87171]' :
+                'text-[#A8A29E]'
+              }`}
+            >
+              {isLocallyMuted ? 'Muted for you' : tile.muted ? 'Muted' : showSpeaking ? 'Speaking' : 'Listening'}
+            </span>
+          </div>
         </div>
       </div>
     </motion.div>
