@@ -2280,11 +2280,23 @@ function VoiceStage({
 /* ────────────────────────────────────────────────────────── */
 
 const OnlineCount = React.memo(function OnlineCount({ memberIds }: { memberIds: string[] }) {
-  const count = useSyncExternalStore(
-    presenceStore.subscribe,
-    () => memberIds.reduce((n, id) => n + (presenceStore.isOnline(id) ? 1 : 0), 0),
-    () => 0,
-  );
+  const [, force] = useState(0);
+
+  useEffect(() => {
+    let unsub: (() => void) | undefined;
+    try {
+      const maybe = presenceStore.subscribe(() => force((n) => n + 1));
+      if (typeof maybe === 'function') unsub = maybe;
+    } catch {
+      // Fallback poll if subscribe isn't compatible
+      const id = window.setInterval(() => force((n) => n + 1), 2000);
+      return () => window.clearInterval(id);
+    }
+    return () => { try { unsub?.(); } catch { /* noop */ } };
+  }, []);
+
+  let count = 0;
+  for (const id of memberIds) if (presenceStore.isOnline(id)) count++;
   if (count === 0) return null;
   return (
     <span className="inline-flex items-center gap-1">
