@@ -1837,22 +1837,42 @@ const StageTile = React.memo(function StageTile({
 }: StageTileProps) {
   const speaking = useSpeakingDetector(tile.stream);
   const isLocallyMuted = !tile.isSelf && locallyMuted;
-  const avatarSize = tileCount === 1 ? 112 : tileCount === 2 ? 96 : 88;
   const showSpeaking = speaking && !tile.muted && !isLocallyMuted;
+
+  const avatarSize =
+    tileCount === 1 ? 88 :
+    tileCount === 2 ? 72 :
+    tileCount === 3 ? 64 :
+    tileCount === 4 ? 60 :
+    52;
+
+  const nameClass =
+    tileCount === 1 ? 'text-[16px] sm:text-[18px]' :
+    tileCount === 2 ? 'text-[14px] sm:text-[15px]' :
+    tileCount <= 4 ? 'text-[13px] sm:text-[14px]' :
+    'text-[12px] sm:text-[13px]';
+
+  const statusTextClass =
+    tileCount <= 2 ? 'text-[9px] sm:text-[10px]' :
+    tileCount <= 4 ? 'text-[9px] sm:text-[9.5px]' :
+    'text-[8.5px] sm:text-[9px]';
+
+  const overlayBadgeClass = tileCount >= 5 ? 'w-5 h-5' : 'w-6 h-6';
+  const overlayIconClass = tileCount >= 5 ? 'w-2.5 h-2.5' : 'w-3 h-3';
 
   return (
     <motion.div
       initial={{ opacity: 0, scale: 0.92 }}
       animate={{ opacity: 1, scale: 1 }}
       transition={{ delay: index * 0.05, type: 'spring', stiffness: 260, damping: 24 }}
-      className={`group relative rounded-3xl overflow-hidden aspect-[4/3] transition-shadow ${
+      className={`group relative rounded-2xl overflow-hidden transition-shadow flex flex-col min-h-[120px] ${
         tile.isSelf
           ? 'bg-gradient-to-br from-[#1A1410] via-[#131110] to-[#0F0D0A] border border-[#D97706]/25'
           : 'bg-gradient-to-br from-[#141220] via-[#131110] to-[#0F0D0A] border border-white/[0.06]'
       } ${showSpeaking ? 'ring-2 ring-[#22C55E]/60' : ''}`}
     >
       <div
-        className="absolute inset-0 transition-opacity duration-200"
+        className="absolute inset-0 transition-opacity duration-200 pointer-events-none"
         style={{
           opacity: showSpeaking ? 0.6 : 0.4,
           background: tile.isSelf
@@ -1867,7 +1887,9 @@ const StageTile = React.memo(function StageTile({
         <button
           type="button"
           onClick={(e) => { e.stopPropagation(); onToggleLocalMute(tile.userId); }}
-          className={`absolute top-2 right-2 z-10 w-8 h-8 rounded-full flex items-center justify-center transition-all ${
+          className={`absolute top-1.5 right-1.5 z-10 rounded-full flex items-center justify-center transition-all ${
+            tileCount >= 5 ? 'w-6 h-6' : 'w-7 h-7'
+          } ${
             isLocallyMuted
               ? 'bg-[#B91C1C]/85 text-white ring-1 ring-[#B91C1C] shadow-[0_4px_12px_-2px_rgba(185,28,28,0.6)]'
               : 'bg-black/50 backdrop-blur-sm text-white opacity-0 group-hover:opacity-100 hover:bg-black/70'
@@ -1875,13 +1897,19 @@ const StageTile = React.memo(function StageTile({
           aria-label={isLocallyMuted ? `Unmute ${tile.displayName} for you` : `Mute ${tile.displayName} for you`}
           title={isLocallyMuted ? `Unmute ${tile.displayName}` : `Mute ${tile.displayName} for you`}
         >
-          {isLocallyMuted ? <VolumeX className="w-4 h-4" /> : <Volume2 className="w-4 h-4" />}
+          {isLocallyMuted
+            ? <VolumeX className={tileCount >= 5 ? 'w-3 h-3' : 'w-3.5 h-3.5'} />
+            : <Volume2 className={tileCount >= 5 ? 'w-3 h-3' : 'w-3.5 h-3.5'} />}
         </button>
       )}
 
-      <div className={`relative h-full flex flex-col items-center justify-center gap-3 p-4 transition-opacity ${isLocallyMuted ? 'opacity-55' : ''}`}>
-        <div className="relative">
-          <div className={`absolute -inset-3 rounded-full blur-2xl transition-opacity duration-200 ${
+      <div
+        className={`relative flex-1 min-h-0 flex flex-col items-center justify-center transition-opacity ${
+          tileCount >= 5 ? 'gap-1 p-1.5' : 'gap-1.5 p-2 sm:p-3'
+        } ${isLocallyMuted ? 'opacity-55' : ''}`}
+      >
+        <div className="relative shrink-0">
+          <div className={`absolute -inset-2 rounded-full blur-2xl transition-opacity duration-200 ${
             showSpeaking ? 'opacity-90 bg-[#22C55E]/50' : 'opacity-60 ' + (tile.isSelf ? 'bg-[#D97706]/40' : 'bg-[#7C3AED]/40')
           }`} />
 
@@ -1902,46 +1930,44 @@ const StageTile = React.memo(function StageTile({
               accent={tile.isSelf}
             />
             {tile.muted && (
-              <div className="absolute -bottom-1 -right-1 w-7 h-7 rounded-full bg-[#B91C1C] ring-4 ring-[#0F0D0A] flex items-center justify-center shadow-lg">
-                <MicOff className="w-3.5 h-3.5 text-white" />
+              <div className={`absolute -bottom-0.5 -right-0.5 rounded-full bg-[#B91C1C] ring-[3px] ring-[#0F0D0A] flex items-center justify-center shadow-lg ${overlayBadgeClass}`}>
+                <MicOff className={`${overlayIconClass} text-white`} />
               </div>
             )}
             {isLocallyMuted && !tile.muted && (
-              <div className="absolute -bottom-1 -right-1 w-7 h-7 rounded-full bg-[#B91C1C]/90 ring-4 ring-[#0F0D0A] flex items-center justify-center shadow-lg">
-                <VolumeX className="w-3.5 h-3.5 text-white" />
+              <div className={`absolute -bottom-0.5 -right-0.5 rounded-full bg-[#B91C1C]/90 ring-[3px] ring-[#0F0D0A] flex items-center justify-center shadow-lg ${overlayBadgeClass}`}>
+                <VolumeX className={`${overlayIconClass} text-white`} />
               </div>
             )}
           </div>
         </div>
 
-        <div className="flex flex-col items-center gap-1.5 max-w-full">
-          <div className="flex items-center gap-1.5">
+        <div className="flex flex-col items-center gap-0.5 max-w-full min-w-0 px-1">
+          <div className="flex items-center gap-1 min-w-0 max-w-full">
             <span
-              className={`font-bold text-[#EDE5D4] truncate tracking-tight ${
-                tileCount === 1 ? 'text-[20px]' :
-                tileCount === 2 ? 'text-[17px]' :
-                'text-[15px]'
-              }`}
+              className={`font-bold text-[#EDE5D4] truncate tracking-tight ${nameClass}`}
               title={tile.isSelf ? 'You' : tile.displayName}
             >
               {tile.isSelf ? 'You' : tile.displayName}
             </span>
             {tile.isSelf && (
-              <span className="text-[9.5px] px-1.5 py-0.5 rounded-full bg-[#D97706]/20 text-[#F59E0B] font-bold uppercase tracking-wider">
+              <span className={`shrink-0 px-1 py-0.5 rounded-full bg-[#D97706]/20 text-[#F59E0B] font-bold uppercase tracking-wider ${
+                tileCount >= 5 ? 'text-[7.5px]' : 'text-[8.5px]'
+              }`}>
                 you
               </span>
             )}
           </div>
 
           <div
-            className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full ${
+            className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full max-w-full ${
               showSpeaking ? 'bg-[#22C55E]/15' :
               isLocallyMuted ? 'bg-[#F87171]/10' :
               'bg-white/[0.04]'
             }`}
           >
             <span
-              className={`w-1.5 h-1.5 rounded-full shrink-0 ${
+              className={`w-1 h-1 rounded-full shrink-0 ${
                 showSpeaking ? 'bg-[#22C55E] animate-pulse' :
                 isLocallyMuted ? 'bg-[#F87171]' :
                 tile.muted ? 'bg-[#A8A29E]' :
@@ -1949,11 +1975,11 @@ const StageTile = React.memo(function StageTile({
               }`}
             />
             <span
-              className={`text-[10.5px] font-semibold uppercase tracking-wider ${
+              className={`font-semibold uppercase tracking-wider truncate ${
                 showSpeaking ? 'text-[#22C55E]' :
                 isLocallyMuted ? 'text-[#F87171]' :
                 'text-[#A8A29E]'
-              }`}
+              } ${statusTextClass}`}
             >
               {isLocallyMuted ? 'Muted for you' : tile.muted ? 'Muted' : showSpeaking ? 'Speaking' : 'Listening'}
             </span>
@@ -2075,11 +2101,14 @@ function VoiceStage({
     return list;
   }, [currentUser, participants, muted, localStream]);
 
-  const gridClass =
-    tiles.length === 1 ? 'grid-cols-1 max-w-md mx-auto' :
-    tiles.length === 2 ? 'grid-cols-1 sm:grid-cols-2 max-w-3xl mx-auto' :
-    tiles.length <= 4 ? 'grid-cols-2 max-w-4xl mx-auto' :
-    'grid-cols-2 sm:grid-cols-3 max-w-5xl mx-auto';
+  const gridClass = (() => {
+    const n = tiles.length;
+    if (n <= 1) return 'grid-cols-1 max-w-md mx-auto';
+    if (n === 2) return 'grid-cols-1 sm:grid-cols-2 max-w-3xl mx-auto';
+    if (n === 3) return 'grid-cols-2 sm:grid-cols-3 max-w-4xl mx-auto';
+    if (n === 4) return 'grid-cols-2 max-w-3xl mx-auto';
+    return 'grid-cols-2 sm:grid-cols-3 max-w-4xl mx-auto';
+  })();
 
   const recentMessages = useMemo(() => messages.slice(-60), [messages]);
 
@@ -2134,8 +2163,11 @@ function VoiceStage({
           </header>
 
           <div className="relative flex-1 flex flex-col min-h-0">
-            <div className="flex-1 min-h-0 overflow-y-auto px-4 sm:px-6 py-6">
-              <div className={`grid gap-3 sm:gap-4 ${gridClass}`}>
+            <div className="flex-1 min-h-0 overflow-y-auto px-3 sm:px-6 py-4 sm:py-6">
+              <div
+                className={`grid gap-2 sm:gap-3 ${gridClass}`}
+                style={{ gridAutoRows: tiles.length >= 5 ? 'minmax(120px, 1fr)' : 'minmax(150px, 1fr)' }}
+              >
                 {tiles.map((tile, idx) => (
                   <StageTile
                     key={tile.key}
@@ -2153,11 +2185,11 @@ function VoiceStage({
             <AnimatePresence>
               {chatOpen && (
                 <motion.div
-                  initial={{ height: 0, opacity: 0 }} animate={{ height: 340, opacity: 1 }} exit={{ height: 0, opacity: 0 }}
+                  initial={{ height: 0, opacity: 0 }} animate={{ height: 'min(40vh, 340px)', opacity: 1 }} exit={{ height: 0, opacity: 0 }}
                   transition={{ type: 'spring', stiffness: 300, damping: 32 }}
                   className="shrink-0 border-t border-white/[0.08] bg-[#0B0A08]/95 backdrop-blur-xl overflow-hidden"
                 >
-                  <div className="h-[340px] flex flex-col">
+                  <div className="flex flex-col" style={{ height: 'min(40vh, 340px)' }}>
                     <div className="shrink-0 px-4 py-2 flex items-center justify-between border-b border-white/[0.05]">
                       <div className="flex items-center gap-2">
                         <MessageSquare className="w-3.5 h-3.5 text-[#D97706]" />
@@ -2216,7 +2248,7 @@ function VoiceStage({
               )}
             </AnimatePresence>
 
-            <div className="shrink-0 py-5 flex justify-center relative">
+            <div className={`shrink-0 flex justify-center relative ${tiles.length >= 5 ? 'py-3' : 'py-5'}`}>
               <div className="flex items-center gap-2 px-2 py-2 rounded-full bg-[#1C1A17]/95 backdrop-blur-xl border border-white/[0.1] shadow-[0_16px_48px_-12px_rgba(0,0,0,0.9)]">
                 <button type="button" onClick={onToggleMute}
                   className={`h-12 w-12 rounded-full flex items-center justify-center transition-colors ${
@@ -2303,7 +2335,7 @@ const OnlineCount = React.memo(function OnlineCount({ memberIds }: { memberIds: 
       <span className="w-1.5 h-1.5 rounded-full bg-[#22C55E]" />
       {count} online
     </span>
-  );
+  );   
 });
 
 /* ────────────────────────────────────────────────────────── */
