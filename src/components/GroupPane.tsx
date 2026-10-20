@@ -10,6 +10,9 @@ import React, {
   useRef,
   useState,
   useMemo,
+  useDeferredValue,
+  startTransition,
+  useSyncExternalStore,
 } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'motion/react';
@@ -216,7 +219,7 @@ function mergeIncomingGroup(prev: GroupMessageDto[], local: GroupMessageDto): Gr
 }
 
 /* ────────────────────────────────────────────────────────── */
-/* Speaking detector — shared AudioContext                    */
+/* Speaking detector — shared AudioContext + analyser cache   */
 /* ────────────────────────────────────────────────────────── */
 
 let sharedAudioCtx: AudioContext | null = null;
@@ -224,15 +227,19 @@ let sharedAudioCtx: AudioContext | null = null;
 function getAudioCtx(): AudioContext | null {
   if (typeof window === 'undefined') return null;
   try {
-    if (!sharedAudioCtx || sharedAudioCtx.state === 'closed') {
-      const Ctor = window.AudioContext ?? (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
-      if (!Ctor) return null;
-      sharedAudioCtx = new Ctor();
+    if (sharedAudioCtx && sharedAudioCtx.state !== 'closed') {
+      if (sharedAudioCtx.state === 'suspended') void sharedAudioCtx.resume();
+      return sharedAudioCtx;
     }
+    const Ctor = window.AudioContext ?? (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+    if (!Ctor) return null;
+    sharedAudioCtx = new Ctor();
     if (sharedAudioCtx.state === 'suspended') void sharedAudioCtx.resume();
     return sharedAudioCtx;
   } catch { return null; }
 }
+
+const analyserCache = new WeakMap<MediaStream, AnalyserNode>();
 
 function useSpeakingDetector(stream: MediaStream | null | undefined): boolean {
   const [speaking, setSpeaking] = useState(false);
@@ -249,16 +256,18 @@ function useSpeakingDetector(stream: MediaStream | null | undefined): boolean {
     const ctx = getAudioCtx();
     if (!ctx) return;
 
-    let source: MediaStreamAudioSourceNode;
-    let analyser: AnalyserNode;
-    try {
-      source = ctx.createMediaStreamSource(stream);
-      analyser = ctx.createAnalyser();
-      analyser.fftSize = 512;
-      analyser.smoothingTimeConstant = 0.4;
-      source.connect(analyser);
-    } catch {
-      return;
+    let analyser = analyserCache.get(stream);
+    if (!analyser) {
+      try {
+        const source = ctx.createMediaStreamSource(stream);
+        analyser = ctx.createAnalyser();
+        analyser.fftSize = 512;
+        analyser.smoothingTimeConstant = 0.4;
+        source.connect(analyser);
+        analyserCache.set(stream, analyser);
+      } catch {
+        return;
+      }
     }
 
     const data = new Uint8Array(analyser.frequencyBinCount);
@@ -266,8 +275,9 @@ function useSpeakingDetector(stream: MediaStream | null | undefined): boolean {
 
     const tick = () => {
       if (cancelled) return;
+      if (document.hidden) { rafRef.current = requestAnimationFrame(tick); return; }
       try {
-        analyser.getByteTimeDomainData(data);
+        analyser!.getByteTimeDomainData(data);
       } catch {
         return;
       }
@@ -292,8 +302,6 @@ function useSpeakingDetector(stream: MediaStream | null | undefined): boolean {
     return () => {
       cancelled = true;
       if (rafRef.current != null) { cancelAnimationFrame(rafRef.current); rafRef.current = null; }
-      try { source.disconnect(); } catch { /* noop */ }
-      try { analyser.disconnect(); } catch { /* noop */ }
     };
   }, [stream]);
 
@@ -301,7 +309,7 @@ function useSpeakingDetector(stream: MediaStream | null | undefined): boolean {
 }
 
 /* ────────────────────────────────────────────────────────── */
-/* Group avatar                                               */
+/* Group avatar — memoized + config cached                    */
 /* ────────────────────────────────────────────────────────── */
 
 function hash32(s: string): number {
@@ -347,6 +355,37 @@ function initialsOf(name: string): string {
   return (parts[0][0] + parts[1][0]).toUpperCase();
 }
 
+interface AvatarConfig {
+  c1: string; c2: string; c3: string;
+  shape: ShapeKind;
+  rot: number; offX: number; offY: number;
+  uid: string;
+  orb1R: number; orb2R: number;
+}
+
+const AVATAR_CACHE = new Map<string, AvatarConfig>();
+
+function getAvatarConfig(groupId: number | string, name: string): AvatarConfig {
+  const key = `${groupId}:${name}`;
+  let cfg = AVATAR_CACHE.get(key);
+  if (cfg) return cfg;
+  const seed = hash32(key);
+  const rand = mulberry32(seed);
+  const [c1, c2, c3] = PALETTES[seed % PALETTES.length];
+  const shape = SHAPES[(seed >>> 3) % SHAPES.length];
+  cfg = {
+    c1, c2, c3, shape,
+    rot: Math.floor(rand() * 360),
+    offX: (rand() - 0.5) * 0.22,
+    offY: (rand() - 0.5) * 0.22,
+    uid: `ga-${seed.toString(36)}`,
+    orb1R: 38 + rand() * 18,
+    orb2R: 24 + rand() * 14,
+  };
+  AVATAR_CACHE.set(key, cfg);
+  return cfg;
+}
+
 interface GroupAvatarProps {
   name: string;
   groupId: number | string;
@@ -355,24 +394,16 @@ interface GroupAvatarProps {
   rounded?: 'full' | 'lg';
 }
 
-function GroupAvatar({ name, groupId, src, size = 'md', rounded = 'lg' }: GroupAvatarProps) {
+const GroupAvatar = React.memo(function GroupAvatar({ name, groupId, src, size = 'md', rounded = 'lg' }: GroupAvatarProps) {
   if (src) return <Avatar name={name} src={src} size={size === 'xl' ? 'lg' : size} />;
 
-  const seed = hash32(`${groupId}:${name}`);
-  const rand = mulberry32(seed);
-  const [c1, c2, c3] = PALETTES[seed % PALETTES.length];
-  const shape = SHAPES[(seed >>> 3) % SHAPES.length];
+  const { c1, c2, c3, shape, rot, offX, offY, uid, orb1R, orb2R } = getAvatarConfig(groupId, name);
   const initials = initialsOf(name);
 
   const px = size === 'sm' ? 32 : size === 'md' ? 36 : size === 'lg' ? 56 : 72;
   const radius = rounded === 'full' ? px / 2 : Math.max(8, px * 0.3);
   const viewRadius = radius * (100 / px);
   const fontSize = initials.length >= 2 ? px * 0.36 : px * 0.44;
-
-  const rot = Math.floor(rand() * 360);
-  const offX = (rand() - 0.5) * 0.22;
-  const offY = (rand() - 0.5) * 0.22;
-  const uid = `ga-${seed.toString(36)}`;
 
   const sizeClass =
     size === 'sm' ? 'w-8 h-8' :
@@ -382,7 +413,7 @@ function GroupAvatar({ name, groupId, src, size = 'md', rounded = 'lg' }: GroupA
 
   return (
     <span className={`inline-block shrink-0 select-none ${sizeClass}`} aria-hidden>
-      <svg viewBox="0 0 100 100" width="100%" height="100%" style={{ display: 'block' }}>
+      <svg viewBox="0 0 100 100" width="100%" height="100%" style={{ display: 'block', contain: 'strict' }}>
         <defs>
           <linearGradient id={`${uid}-base`} x1="0" y1="0" x2="1" y2="1">
             <stop offset="0%" stopColor={c1} />
@@ -408,8 +439,8 @@ function GroupAvatar({ name, groupId, src, size = 'md', rounded = 'lg' }: GroupA
 
         <g clipPath={`url(#${uid}-clip)`}>
           <rect x="0" y="0" width="100" height="100" fill={`url(#${uid}-base)`} />
-          <circle cx={50 + offX * 80} cy={50 + offY * 80} r={38 + rand() * 18} fill={`url(#${uid}-orb1)`} />
-          <circle cx={50 - offX * 70} cy={50 - offY * 55} r={24 + rand() * 14} fill={`url(#${uid}-orb2)`} />
+          <circle cx={50 + offX * 80} cy={50 + offY * 80} r={orb1R} fill={`url(#${uid}-orb1)`} />
+          <circle cx={50 - offX * 70} cy={50 - offY * 55} r={orb2R} fill={`url(#${uid}-orb2)`} />
 
           {shape === 'orb' && (<circle cx="50" cy="50" r="36" fill="none" stroke="#ffffff" strokeOpacity="0.12" strokeWidth="1.5" />)}
           {shape === 'ring' && (<circle cx={50 + offX * 20} cy={50 + offY * 20} r="34" fill="none" stroke="#ffffff" strokeOpacity="0.18" strokeWidth="2" />)}
@@ -438,7 +469,13 @@ function GroupAvatar({ name, groupId, src, size = 'md', rounded = 'lg' }: GroupA
       </svg>
     </span>
   );
-}
+}, (a, b) =>
+  a.name === b.name &&
+  a.groupId === b.groupId &&
+  a.src === b.src &&
+  a.size === b.size &&
+  a.rounded === b.rounded
+);
 
 /* ────────────────────────────────────────────────────────── */
 /* Helpers                                                    */
@@ -492,8 +529,8 @@ function formatDuration(sec: number): string {
   return `${m}:${s.toString().padStart(2, '0')}`;
 }
 
-function safePlayReceive() { try { playReceive(); } catch (err) { console.warn('[sounds] receive failed', err); } }
-function safePlaySend() { try { playSend(); } catch (err) { console.warn('[sounds] send failed', err); } }
+function safePlayReceive() { if (document.hidden) return; try { playReceive(); } catch (err) { console.warn('[sounds] receive failed', err); } }
+function safePlaySend() { if (document.hidden) return; try { playSend(); } catch (err) { console.warn('[sounds] send failed', err); } }
 
 /* ────────────────────────────────────────────────────────── */
 /* Local persistence                                          */
@@ -691,6 +728,7 @@ function InlineVoiceRecorder({ onCancel, onSend, busy }: {
           const draw = () => {
             const a = analyserRef.current;
             if (!a) return;
+            if (document.hidden) { rafRef.current = requestAnimationFrame(draw); return; }
             a.getByteFrequencyData(data);
             const step = Math.floor(data.length / BAR_COUNT);
             const next: number[] = new Array(BAR_COUNT);
@@ -967,8 +1005,8 @@ const GroupMessageItem = React.memo(function GroupMessageItem({
 
           {hasMedia && !isVoice && (
             <div className="mb-2 -mx-1">
-              {message.mediaType === MediaType.Image && (<img src={message.mediaUrl ?? undefined} alt="Attachment" className="rounded-xl max-h-72 w-auto object-cover" />)}
-              {message.mediaType === MediaType.Video && (<video src={message.mediaUrl ?? undefined} controls className="rounded-xl max-h-72 w-full bg-black" />)}
+              {message.mediaType === MediaType.Image && (<img src={message.mediaUrl ?? undefined} alt="Attachment" className="rounded-xl max-h-72 w-auto object-cover" loading="lazy" decoding="async" />)}
+              {message.mediaType === MediaType.Video && (<video src={message.mediaUrl ?? undefined} controls className="rounded-xl max-h-72 w-full bg-black" preload="metadata" />)}
               {message.mediaType === MediaType.File && (
                 <a href={message.mediaUrl ?? undefined} target="_blank" rel="noreferrer" download
                   className={`inline-flex items-center gap-2 px-2.5 py-2 rounded-lg border text-[12px] ${
@@ -1571,7 +1609,6 @@ interface CallPillProps {
   activeCallers: Array<{ userId: string; displayName: string }>;
   participants: ReadonlyArray<CallPillParticipant>;
   muted: boolean;
-  /** FIX #5: deafen — I can't hear anyone (my mic is unaffected). */
   deafened: boolean;
   myName: string;
   myAvatarUrl?: string | null;
@@ -1584,7 +1621,7 @@ interface CallPillProps {
   onOpenStage: () => void;
 }
 
-function CallPill({
+const CallPill = React.memo(function CallPill({
   inCall, activeCallers, participants, muted, deafened, myName, myAvatarUrl, maxParticipants, bannerText,
   onToggleMute, onToggleDeafen, onLeave, onJoin, onOpenStage,
 }: CallPillProps) {
@@ -1666,7 +1703,6 @@ function CallPill({
               title={muted ? 'Unmute' : 'Mute'} aria-label={muted ? 'Unmute' : 'Mute'}>
               {muted ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
             </button>
-            {/* FIX #5: deafen button */}
             <button type="button"
               onClick={(e) => { e.stopPropagation(); onToggleDeafen(); }}
               className={`w-9 h-9 rounded-full flex items-center justify-center transition-colors ${
@@ -1709,7 +1745,7 @@ function CallPill({
       )}
     </div>
   );
-}
+});
 
 /* ────────────────────────────────────────────────────────── */
 /* Voice Stage                                                */
@@ -1731,9 +1767,7 @@ interface VoiceStageProps {
   inCall: boolean;
   participants: ReadonlyArray<StageParticipant>;
   muted: boolean;
-  /** FIX #5: deafen — silences all remote audio; mic unaffected. */
   deafened: boolean;
-  /** Mic stream for the self tile's speaking detector. */
   localStream?: MediaStream | null;
   locallyMuted: Set<string>;
   currentUser: { id: string; displayName: string | null | undefined; avatarUrl?: string | null } | undefined;
@@ -1758,6 +1792,8 @@ function StageTileAvatar({ name, src, size = 96, accent = false }: {
         <img
           src={resolvedSrc}
           alt={name}
+          loading="lazy"
+          decoding="async"
           className="w-full h-full object-cover"
           onError={(e) => {
             (e.currentTarget as HTMLImageElement).style.display = 'none';
@@ -1796,7 +1832,7 @@ interface StageTileProps {
   onToggleLocalMute: (userId: string) => void;
 }
 
-function StageTile({
+const StageTile = React.memo(function StageTile({
   tile, index, tileCount, currentUserDisplayName, locallyMuted, onToggleLocalMute,
 }: StageTileProps) {
   const speaking = useSpeakingDetector(tile.stream);
@@ -1926,7 +1962,7 @@ function StageTile({
       </div>
     </motion.div>
   );
-}
+});
 
 function VoiceStage({
   open, onClose, groupId, groupName, inCall, participants, muted, deafened, localStream, locallyMuted,
@@ -2190,7 +2226,6 @@ function VoiceStage({
                   title={muted ? 'Unmute' : 'Mute'} aria-label={muted ? 'Unmute' : 'Mute'}>
                   {muted ? <MicOff className="w-5 h-5" /> : <Mic className="w-5 h-5" />}
                 </button>
-                {/* FIX #5: deafen button in stage */}
                 <button type="button" onClick={onToggleDeafen}
                   className={`h-12 w-12 rounded-full flex items-center justify-center transition-colors ${
                     deafened ? 'bg-[#B91C1C]/25 text-[#F87171] hover:bg-[#B91C1C]/35 ring-1 ring-[#B91C1C]/40'
@@ -2241,6 +2276,91 @@ function VoiceStage({
 }
 
 /* ────────────────────────────────────────────────────────── */
+/* Isolated presence count (no more presenceTick in parent)   */
+/* ────────────────────────────────────────────────────────── */
+
+const OnlineCount = React.memo(function OnlineCount({ memberIds }: { memberIds: string[] }) {
+  const count = useSyncExternalStore(
+    presenceStore.subscribe,
+    () => memberIds.reduce((n, id) => n + (presenceStore.isOnline(id) ? 1 : 0), 0),
+    () => 0,
+  );
+  if (count === 0) return null;
+  return (
+    <span className="inline-flex items-center gap-1">
+      <span className="w-1.5 h-1.5 rounded-full bg-[#22C55E]" />
+      {count} online
+    </span>
+  );
+});
+
+/* ────────────────────────────────────────────────────────── */
+/* Isolated typing indicator                                  */
+/* ────────────────────────────────────────────────────────── */
+
+const TypingIndicator = React.memo(function TypingIndicator({
+  users,
+}: { users: Array<{ userId: string; handle?: string }> }) {
+  if (users.length === 0) return null;
+  const label =
+    users.length === 1 ? `${users[0].handle || 'Someone'} is typing…` :
+    users.length === 2 ? `${users[0].handle}, ${users[1].handle} are typing…` :
+    `${users.length} people are typing…`;
+  return (
+    <div className="px-4 sm:px-6 pb-2 flex items-center gap-2">
+      <div className="flex -space-x-2">
+        {users.slice(0, 3).map((u) => (
+          <div key={u.userId} className="rounded-full ring-2 ring-[#0B0A08]">
+            <Avatar name={u.handle || 'User'} size="sm" />
+          </div>
+        ))}
+      </div>
+      <div className="flex items-center gap-1 px-2 py-1.5 rounded-full bg-[#1A1816] border border-white/[0.04]">
+        <span className="w-1 h-1 rounded-full bg-[#6B6259] animate-bounce [animation-delay:-0.3s]" />
+        <span className="w-1 h-1 rounded-full bg-[#6B6259] animate-bounce [animation-delay:-0.15s]" />
+        <span className="w-1 h-1 rounded-full bg-[#6B6259] animate-bounce" />
+      </div>
+      <span className="text-[11px] text-[#6B6259]">{label}</span>
+    </div>
+  );
+});
+
+/* ────────────────────────────────────────────────────────── */
+/* Sidebar row (memoized, stable callbacks)                   */
+/* ────────────────────────────────────────────────────────── */
+
+interface SidebarRowProps {
+  group: GroupDto;
+  isSelected: boolean;
+  pinned: boolean;
+  muted: boolean;
+  onOpen: (id: number) => void;
+  onMenu: (g: GroupDto) => void;
+}
+
+const SidebarRow = React.memo(function SidebarRow({
+  group, isSelected, pinned, muted, onOpen, onMenu,
+}: SidebarRowProps) {
+  return (
+    <button onClick={() => onOpen(group.id)}
+      onContextMenu={(e) => { e.preventDefault(); onMenu(group); }}
+      className={`group w-full flex items-center gap-3 px-2.5 py-2 rounded-xl text-left transition-all duration-150 ${
+        isSelected ? 'bg-[#D97706]/[0.12] ring-1 ring-inset ring-[#D97706]/25' : 'hover:bg-white/[0.04]'
+      }`}>
+      <GroupAvatar name={group.name} groupId={group.id} />
+      <div className="min-w-0 flex-1">
+        <div className="flex items-center gap-1.5 min-w-0">
+          {pinned && <Pin className="w-3 h-3 text-[#D97706] shrink-0" />}
+          <p className={`text-[13.5px] ${isSelected ? 'font-semibold' : 'font-medium'} text-[#EDE5D4] truncate`}>{group.name}</p>
+          {muted && <BellOff className="w-3 h-3 text-[#6B6259] shrink-0" />}
+        </div>
+        <p className="text-[11px] text-[#6B6259] truncate mt-0.5">{group.memberCount} {group.memberCount === 1 ? 'member' : 'members'}</p>
+      </div>
+    </button>
+  );
+});
+
+/* ────────────────────────────────────────────────────────── */
 /* Main GroupPane                                             */
 /* ────────────────────────────────────────────────────────── */
 
@@ -2286,10 +2406,6 @@ export default function GroupPane(): React.JSX.Element {
     if (!call.inCall) setCallExpanded(false);
   }, [call.inCall]);
 
-  /* ── FIX #5: deafen state ────────────────────────────────── */
-  // Deafened means "silence all remote audio". My mic is unaffected.
-  // Auto-clear when the call ends (stale deafen shouldn't persist
-  // into a future call the user starts fresh).
   const [deafened, setDeafened] = useState(false);
   useEffect(() => {
     if (!call.inCall) setDeafened(false);
@@ -2363,6 +2479,7 @@ export default function GroupPane(): React.JSX.Element {
   const [menuMessage, setMenuMessage] = useState<GroupMessageDto | null>(null);
   const [replyTo, setReplyTo] = useState<GroupMessageDto | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
+  const deferredSearch = useDeferredValue(searchQuery);
   const [highlightedMessageId, setHighlightedMessageId] = useState<number | null>(null);
   const [showJumpToLatest, setShowJumpToLatest] = useState(false);
   const [unreadWhileScrolled, setUnreadWhileScrolled] = useState(0);
@@ -2391,14 +2508,47 @@ export default function GroupPane(): React.JSX.Element {
     });
   }, [user?.id]);
 
+  /* ── Imperative audio element manager (no more inline refs) ── */
   const audioElsRef = useRef<Map<string, HTMLAudioElement>>(new Map());
-  /* ── FIX #4 + #5: update mute state on all audio elements when
-     either per-user mute or deafen changes. */
   useEffect(() => {
-    for (const [userId, el] of audioElsRef.current) {
-      el.muted = deafened || locallyMuted.has(userId);
+    if (!call.inCall) {
+      for (const el of audioElsRef.current.values()) {
+        try { el.srcObject = null; el.remove(); } catch { /* noop */ }
+      }
+      audioElsRef.current.clear();
+      return;
     }
-  }, [locallyMuted, deafened]);
+    const seen = new Set<string>();
+    const remote = call.participants.filter((p) => p.userId !== user?.id && p.stream);
+    for (const p of remote) {
+      seen.add(p.userId);
+      let el = audioElsRef.current.get(p.userId);
+      if (!el) {
+        el = document.createElement('audio');
+        el.autoplay = true;
+        el.setAttribute('playsinline', '');
+        el.style.display = 'none';
+        document.body.appendChild(el);
+        audioElsRef.current.set(p.userId, el);
+      }
+      if (el.srcObject !== p.stream) {
+        el.srcObject = p.stream as MediaStream;
+        void el.play().catch((e) => console.warn('[call] audio play blocked', e));
+      }
+      el.muted = deafened || locallyMuted.has(p.userId);
+    }
+    for (const [id, el] of audioElsRef.current) {
+      if (!seen.has(id)) { try { el.srcObject = null; el.remove(); } catch { /* noop */ } audioElsRef.current.delete(id); }
+    }
+  }, [call.inCall, call.participants, user?.id, deafened, locallyMuted]);
+  useEffect(() => {
+    return () => {
+      for (const el of audioElsRef.current.values()) {
+        try { el.srcObject = null; el.remove(); } catch { /* noop */ }
+      }
+      audioElsRef.current.clear();
+    };
+  }, []);
 
   useEffect(() => {
     setPinnedIds(readPinned(user?.id));
@@ -2420,12 +2570,6 @@ export default function GroupPane(): React.JSX.Element {
   const anchorRef = useRef<number | null>(null);
 
   const typingUsers = useGroupTypingReceiver(activeGroupId, user?.id);
-
-  const [, setPresenceTick] = useState(0);
-  useEffect(() => {
-    const unsub = presenceStore.subscribe(() => setPresenceTick((v) => v + 1));
-    return () => unsub();
-  }, []);
 
   useEffect(() => {
     setMessages([]); setReplyTo(null); setHasMore(true); setHistoryError(null);
@@ -2451,8 +2595,10 @@ export default function GroupPane(): React.JSX.Element {
   }, []);
 
   const fetchGroups = useCallback(async () => {
-    try { const data = await apiService.getMyGroups(); setGroups(data); }
-    catch (err) { console.error('Failed to load groups:', err); }
+    try {
+      const data = await apiService.getMyGroups();
+      startTransition(() => setGroups(data));
+    } catch (err) { console.error('Failed to load groups:', err); }
   }, []);
 
   useEffect(() => { void fetchGroups(); }, [fetchGroups]);
@@ -2464,7 +2610,7 @@ export default function GroupPane(): React.JSX.Element {
       setLoadingHistory(true); setHistoryError(null);
       try {
         const detail = await apiService.getGroupDetail(activeGroupId);
-        if (active) setActiveGroup(detail);
+        if (active) startTransition(() => setActiveGroup(detail));
         await signalRService.joinGroupChannel(activeGroupId);
         const res = await apiService.getGroupMessages(activeGroupId, PAGE_SIZE);
         const msgs = applyPresignedUrls(res.messages, res.presignedUrls);
@@ -2485,9 +2631,11 @@ export default function GroupPane(): React.JSX.Element {
         const filtered = visible.filter((m) => !deletedSet.has(Number(m.id)));
 
         processedIdsRef.current = new Set(sorted.map((m) => m.id));
-        setMessages(filtered);
-        if (reactionEvents.length > 0) setReactions((prev) => applyReactionEvents(prev, reactionEvents));
-        setHasMore(msgs.length >= PAGE_SIZE);
+        startTransition(() => {
+          setMessages(filtered);
+          if (reactionEvents.length > 0) setReactions((prev) => applyReactionEvents(prev, reactionEvents));
+          setHasMore(msgs.length >= PAGE_SIZE);
+        });
       } catch (err) {
         if (active) setHistoryError(extractErrorMessage(err, 'Could not load messages.'));
       } finally {
@@ -2523,9 +2671,11 @@ export default function GroupPane(): React.JSX.Element {
         const deletedSet = new Set(deleteEvents);
         const filtered = visible.filter((m) => !deletedSet.has(Number(m.id)));
 
-        setMessages((prev) => [...filtered, ...prev]);
-        if (reactionEvents.length > 0) setReactions((prev) => applyReactionEvents(prev, reactionEvents));
-        setHasMore(earlier.length >= PAGE_SIZE);
+        startTransition(() => {
+          setMessages((prev) => [...filtered, ...prev]);
+          if (reactionEvents.length > 0) setReactions((prev) => applyReactionEvents(prev, reactionEvents));
+          setHasMore(earlier.length >= PAGE_SIZE);
+        });
       } else {
         setHasMore(false);
       }
@@ -2557,19 +2707,25 @@ export default function GroupPane(): React.JSX.Element {
         processedIdsRef.current.add(msg.id);
 
         const isOwnEcho = msg.senderId === user?.id;
-        let mediaUrl = msg.mediaUrl;
-        if (msg.mediaKey && !mediaUrl && !isOwnEcho) {
-          try {
-            const urls = await apiService.presignDownload([msg.mediaKey]);
-            if (urls[msg.mediaKey]) mediaUrl = urls[msg.mediaKey];
-          } catch { /* silent */ }
-        }
+        const decorated = { ...msg, content: d.body, replyToId: d.replyToId } as GroupMessageDto & { replyToId?: number | null };
 
-        const decorated = { ...msg, content: d.body, mediaUrl, replyToId: d.replyToId } as GroupMessageDto & { replyToId?: number | null };
-        setMessages((prev) => mergeIncomingGroup(prev, decorated));
+        // Optimistic insert — resolve media URL in background without blocking render.
+        startTransition(() => setMessages((prev) => mergeIncomingGroup(prev, decorated)));
         if (msg.senderId !== user?.id) {
           safePlayReceive();
           if (!stickRef.current) setUnreadWhileScrolled((c) => c + 1);
+        }
+
+        if (msg.mediaKey && !msg.mediaUrl && !isOwnEcho) {
+          apiService.presignDownload([msg.mediaKey])
+            .then((urls) => {
+              const url = urls[msg.mediaKey!];
+              if (!url) return;
+              startTransition(() => {
+                setMessages((prev) => prev.map((m) => m.id === msg.id ? { ...m, mediaUrl: url } : m));
+              });
+            })
+            .catch(() => { /* silent */ });
         }
       }
     });
@@ -2601,20 +2757,26 @@ export default function GroupPane(): React.JSX.Element {
     if (!el) return;
     if (anchorRef.current != null) { el.scrollTop += el.scrollHeight - anchorRef.current; anchorRef.current = null; }
     else if (stickRef.current) el.scrollTop = el.scrollHeight;
-  }, [messages, typingUsers.length]);
+  }, [messages]);
 
   const scrollToBottom = useCallback(() => {
     const el = messagesContainerRef.current;
     if (el) el.scrollTop = el.scrollHeight;
   }, []);
 
-  const handleMessagesScroll = (e: React.UIEvent<HTMLDivElement>) => {
+  const rafScrollRef = useRef<number | null>(null);
+  const handleMessagesScroll = useCallback((e: React.UIEvent<HTMLDivElement>) => {
+    if (rafScrollRef.current != null) return;
     const el = e.currentTarget;
-    const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 120;
-    stickRef.current = nearBottom;
-    setShowJumpToLatest(!nearBottom);
-    if (nearBottom) setUnreadWhileScrolled(0);
-  };
+    rafScrollRef.current = requestAnimationFrame(() => {
+      rafScrollRef.current = null;
+      const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 120;
+      if (stickRef.current !== nearBottom) stickRef.current = nearBottom;
+      setShowJumpToLatest(prev => prev === !nearBottom ? prev : !nearBottom);
+      if (nearBottom) setUnreadWhileScrolled(prev => prev === 0 ? prev : 0);
+    });
+  }, []);
+  useEffect(() => () => { if (rafScrollRef.current != null) cancelAnimationFrame(rafScrollRef.current); }, []);
 
   const handleJumpToLatest = () => {
     stickRef.current = true; scrollToBottom(); setShowJumpToLatest(false); setUnreadWhileScrolled(0);
@@ -2646,12 +2808,12 @@ export default function GroupPane(): React.JSX.Element {
     await apiService.uploadToR2(presign.uploadUrl, file, contentType);
     const blobUrl = URL.createObjectURL(file);
     const tempId = -Date.now();
-    setMessages((prev) => [...prev, {
+    startTransition(() => setMessages((prev) => [...prev, {
       id: tempId as unknown as number, groupId: activeGroupId, senderId: user.id,
       senderDisplayName: user.displayName ?? '', senderAvatarUrl: user.avatarUrl ?? undefined,
       content: '', mediaUrl: blobUrl, mediaKey: presign.mediaKey, mediaType: validation.mediaType,
       sentAt: new Date().toISOString(),
-    }]);
+    }]));
     try {
       await signalRService.sendGroupMessage({ groupId: activeGroupId, content: '', mediaUrl: undefined, mediaKey: presign.mediaKey, mediaType: validation.mediaType });
       safePlaySend();
@@ -2674,12 +2836,12 @@ export default function GroupPane(): React.JSX.Element {
     await apiService.uploadToR2(presign.uploadUrl, file, contentType);
     const blobUrl = URL.createObjectURL(file);
     const tempId = -Date.now();
-    setMessages((prev) => [...prev, {
+    startTransition(() => setMessages((prev) => [...prev, {
       id: tempId as unknown as number, groupId: activeGroupId, senderId: user.id,
       senderDisplayName: user.displayName ?? '', senderAvatarUrl: user.avatarUrl ?? undefined,
       content: '', mediaUrl: blobUrl, mediaKey: presign.mediaKey, mediaType: MediaType.Audio,
       sentAt: new Date().toISOString(),
-    }]);
+    }]));
     try {
       await signalRService.sendGroupMessage({ groupId: activeGroupId, content: '', mediaUrl: undefined, mediaKey: presign.mediaKey, mediaType: MediaType.Audio });
       safePlaySend();
@@ -2745,17 +2907,15 @@ export default function GroupPane(): React.JSX.Element {
     if (!activeGroupId) return;
     await apiService.removeGroupMember(activeGroupId, targetUserId);
     const detail = await apiService.getGroupDetail(activeGroupId);
-    setActiveGroup(detail);
+    startTransition(() => setActiveGroup(detail));
   };
 
   const handleAddMember = async (userId: string) => {
     if (!activeGroupId) return;
     await apiService.addGroupMember(activeGroupId, userId);
     const detail = await apiService.getGroupDetail(activeGroupId);
-    setActiveGroup(detail);
+    startTransition(() => setActiveGroup(detail));
   };
-
-  /* ── Call guard helpers ─────────────────────────────────── */
 
   const end1on1Call = useCallback((): boolean => {
     const c = call1on1 as unknown as Record<string, unknown>;
@@ -2891,13 +3051,13 @@ export default function GroupPane(): React.JSX.Element {
     return map;
   }, [visibleMessages]);
 
-  const onlineMembers = useMemo(() => {
-    if (!activeGroup) return 0;
-    return (activeGroup.members ?? []).filter((m) => presenceStore.isOnline(m.id)).length;
-  }, [activeGroup]);
+  const memberIds = useMemo(
+    () => (activeGroup?.members ?? []).map((m) => m.id),
+    [activeGroup],
+  );
 
   const filteredGroups = useMemo(() => {
-    const q = searchQuery.trim().toLowerCase();
+    const q = deferredSearch.trim().toLowerCase();
     const base = [...groups];
     const list = q ? base.filter((g) => g.name.toLowerCase().includes(q)) : base;
     list.sort((a, b) => {
@@ -2907,14 +3067,16 @@ export default function GroupPane(): React.JSX.Element {
       return a.name.localeCompare(b.name);
     });
     return list;
-  }, [groups, searchQuery, pinnedIds]);
+  }, [groups, deferredSearch, pinnedIds]);
 
   const hasActiveGroup = Boolean(activeGroupId && activeGroup);
 
   const enrichedParticipants = useMemo(() => {
+    // Iterate messages backwards — grab only the latest avatar per sender.
     const fromMessages = new Map<string, string>();
-    for (const msg of messages) {
-      if (msg.senderId && msg.senderAvatarUrl) {
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const msg = messages[i];
+      if (msg.senderId && msg.senderAvatarUrl && !fromMessages.has(msg.senderId)) {
         fromMessages.set(msg.senderId, msg.senderAvatarUrl);
       }
     }
@@ -2942,23 +3104,23 @@ export default function GroupPane(): React.JSX.Element {
     });
   }, [call.participants, messages, activeGroup, user?.id, user?.avatarUrl, myFreshProfile?.avatarUrl]);
 
-  const typingLabel = useMemo(() => {
-    if (typingUsers.length === 0) return null;
-    if (typingUsers.length === 1) return `${typingUsers[0].handle || 'Someone'} is typing…`;
-    if (typingUsers.length === 2) return `${typingUsers[0].handle}, ${typingUsers[1].handle} are typing…`;
-    return `${typingUsers.length} people are typing…`;
-  }, [typingUsers]);
+  const togglePin = useCallback((id: string) => {
+    setPinnedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      writePinned(user?.id, next);
+      return next;
+    });
+  }, [user?.id]);
 
-  const togglePin = (id: string) => {
-    const next = new Set(pinnedIds);
-    if (next.has(id)) next.delete(id); else next.add(id);
-    setPinnedIds(next); writePinned(user?.id, next);
-  };
-  const toggleMute = (id: string) => {
-    const next = new Set(mutedIds);
-    if (next.has(id)) next.delete(id); else next.add(id);
-    setMutedIds(next); writeMuted(user?.id, next);
-  };
+  const toggleMute = useCallback((id: string) => {
+    setMutedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      writeMuted(user?.id, next);
+      return next;
+    });
+  }, [user?.id]);
 
   const activeCallBanner = useMemo(() => {
     if (call.activeCallers.length === 0) return null;
@@ -2967,6 +3129,9 @@ export default function GroupPane(): React.JSX.Element {
     if (names.length === 2) return { title: `${names[0]} and ${names[1]} are in a call`, sub: 'Tap to join' };
     return { title: `${names[0]} + ${names.length - 1} others are in a call`, sub: 'Tap to join' };
   }, [call.activeCallers]);
+
+  const openGroup = useCallback((id: number) => navigate(`/app/groups/${id}`), [navigate]);
+  const openMenu = useCallback((g: GroupDto) => setChatMenuGroup(g), []);
 
   return (
     <div className="flex h-full w-full bg-[#0B0A08] text-[#EDE5D4] overflow-hidden">
@@ -2996,28 +3161,17 @@ export default function GroupPane(): React.JSX.Element {
               {groups.length === 0 ? 'No groups yet. Click + to create one.' : 'No matches found.'}
             </div>
           ) : (
-            filteredGroups.map((group) => {
-              const isSelected = group.id === activeGroupId;
-              const pinned = pinnedIds.has(String(group.id));
-              const muted = mutedIds.has(String(group.id));
-              return (
-                <button key={group.id} onClick={() => navigate(`/app/groups/${group.id}`)}
-                  onContextMenu={(e) => { e.preventDefault(); setChatMenuGroup(group); }}
-                  className={`group w-full flex items-center gap-3 px-2.5 py-2 rounded-xl text-left transition-all duration-150 ${
-                    isSelected ? 'bg-[#D97706]/[0.12] ring-1 ring-inset ring-[#D97706]/25' : 'hover:bg-white/[0.04]'
-                  }`}>
-                  <GroupAvatar name={group.name} groupId={group.id} />
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-center gap-1.5 min-w-0">
-                      {pinned && <Pin className="w-3 h-3 text-[#D97706] shrink-0" />}
-                      <p className={`text-[13.5px] ${isSelected ? 'font-semibold' : 'font-medium'} text-[#EDE5D4] truncate`}>{group.name}</p>
-                      {muted && <BellOff className="w-3 h-3 text-[#6B6259] shrink-0" />}
-                    </div>
-                    <p className="text-[11px] text-[#6B6259] truncate mt-0.5">{group.memberCount} {group.memberCount === 1 ? 'member' : 'members'}</p>
-                  </div>
-                </button>
-              );
-            })
+            filteredGroups.map((group) => (
+              <SidebarRow
+                key={group.id}
+                group={group}
+                isSelected={group.id === activeGroupId}
+                pinned={pinnedIds.has(String(group.id))}
+                muted={mutedIds.has(String(group.id))}
+                onOpen={openGroup}
+                onMenu={openMenu}
+              />
+            ))
           )}
         </div>
       </div>
@@ -3040,15 +3194,8 @@ export default function GroupPane(): React.JSX.Element {
                 <div className="min-w-0">
                   <h3 className="text-[14px] sm:text-[14.5px] font-semibold text-[#EDE5D4] truncate tracking-tight">{activeGroup.name}</h3>
                   <p className="text-[11px] sm:text-[11.5px] text-[#6B6259] truncate mt-0.5 flex items-center gap-1.5">
-                    {onlineMembers > 0 && (
-                      <>
-                        <span className="inline-flex items-center gap-1">
-                          <span className="w-1.5 h-1.5 rounded-full bg-[#22C55E]" />
-                          {onlineMembers} online
-                        </span>
-                        <span className="opacity-50">·</span>
-                      </>
-                    )}
+                    <OnlineCount memberIds={memberIds} />
+                    {onlineMembersSafe(memberIds) > 0 && <span className="opacity-50">·</span>}
                     <span>{activeGroup.memberCount} {activeGroup.memberCount === 1 ? 'member' : 'members'}</span>
                   </p>
                 </div>
@@ -3195,23 +3342,7 @@ export default function GroupPane(): React.JSX.Element {
               </button>
             )}
 
-            {typingUsers.length > 0 && (
-              <div className="px-4 sm:px-6 pb-2 flex items-center gap-2">
-                <div className="flex -space-x-2">
-                  {typingUsers.slice(0, 3).map((u) => (
-                    <div key={u.userId} className="rounded-full ring-2 ring-[#0B0A08]">
-                      <Avatar name={u.handle || 'User'} size="sm" />
-                    </div>
-                  ))}
-                </div>
-                <div className="flex items-center gap-1 px-2 py-1.5 rounded-full bg-[#1A1816] border border-white/[0.04]">
-                  <span className="w-1 h-1 rounded-full bg-[#6B6259] animate-bounce [animation-delay:-0.3s]" />
-                  <span className="w-1 h-1 rounded-full bg-[#6B6259] animate-bounce [animation-delay:-0.15s]" />
-                  <span className="w-1 h-1 rounded-full bg-[#6B6259] animate-bounce" />
-                </div>
-                <span className="text-[11px] text-[#6B6259]">{typingLabel}</span>
-              </div>
-            )}
+            <TypingIndicator users={typingUsers} />
 
             {call.error && !call.inCall && (
               <div className="px-3 sm:px-5 py-2 border-t border-white/[0.05] bg-[#131110]">
@@ -3229,38 +3360,6 @@ export default function GroupPane(): React.JSX.Element {
             <GroupComposer key={activeGroupId} groupId={activeGroupId} targetName={activeGroup.name}
               replyTo={replyTo} onCancelReply={handleCancelReply}
               onSendText={handleSendText} onSendFile={handleSendFile} onSendVoice={handleSendVoice} />
-
-            {/* ── FIX #4 + #5: explicit play + deafen-aware muting ── */}
-            {call.inCall && enrichedParticipants
-              .filter((p) => p.userId !== user?.id && p.stream)
-              .map((p) => (
-                <audio
-                  key={`${p.userId}:${(p.stream as MediaStream).id}`}
-                  autoPlay
-                  playsInline
-                  ref={(el) => {
-                    if (el) {
-                      const wantMuted = deafened || locallyMuted.has(p.userId);
-                      if (el.srcObject !== (p.stream as MediaStream)) {
-                        el.srcObject = p.stream as MediaStream;
-                        el.muted = wantMuted;
-                        // FIX #4: don't rely on autoPlay alone — call play()
-                        // explicitly. .catch() swallows browser autoplay
-                        // blocks (which shouldn't happen during a live call
-                        // with user-gesture activation, but belt-and-braces).
-                        void el.play().catch((e) =>
-                          console.warn('[call] audio play blocked', e),
-                        );
-                      } else {
-                        el.muted = wantMuted;
-                      }
-                      audioElsRef.current.set(p.userId, el);
-                    } else {
-                      audioElsRef.current.delete(p.userId);
-                    }
-                  }}
-                />
-              ))}
           </>
         ) : (
           <div className="h-full flex flex-col items-center justify-center text-center gap-3 p-6">
@@ -3427,4 +3526,11 @@ export default function GroupPane(): React.JSX.Element {
       <audio ref={disconnectRef} src="/sounds/disconnect.mp3" preload="none" />
     </div>
   );
+}
+
+/* tiny helper — presence check without needing full store subscription in parent */
+function onlineMembersSafe(memberIds: string[]): number {
+  let count = 0;
+  for (const id of memberIds) if (presenceStore.isOnline(id)) count++;
+  return count;
 }
