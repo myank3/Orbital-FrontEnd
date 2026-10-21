@@ -301,9 +301,9 @@ function NotificationsPane(): React.JSX.Element {
     }
   };
 
-  /* ── HARDENED DOWNLOAD HANDLER ────────────────────────────── */
+  /* ── NATIVE & WEB DOWNLOAD HANDLER ────────────────────────── */
   const handleNativeDownload = async (url: string, kind: string) => {
-    // 1. WebToNative Native Downloader
+    // 1. Check if running inside the WebToNative app
     if (typeof window !== 'undefined' && (window as any).WTN) {
       let ext = 'bin';
       if (kind === 'image') ext = 'jpg';
@@ -318,29 +318,21 @@ function NotificationsPane(): React.JSX.Element {
         }
       }
 
-      const fileName = `Orbital_${Date.now()}.${ext}`;
-
       (window as any).WTN.downloadFile({
         url: url,
-        fileName: fileName,
+        fileName: `Orbital_${Date.now()}.${ext}`,
         callback: (response: any) => {
-          if (response.success) {
-            console.log("Download successful!");
-          } else {
-            console.error("Download failed", response);
-          }
+          if (!response.success) console.error("Download failed", response);
         }
       });
       return;
     }
 
-    // 2. Standard Web Browser Fallback
+    // 2. Standard Web Browser Fallback (Bypass CORS)
     try {
-      // Try a standard CORS fetch first
-      const response = await fetch(url, { method: 'GET', mode: 'cors' });
-      
-      if (!response.ok) throw new Error(`Network response was not ok: ${response.status}`);
-      
+      // Use 'no-cors' mode to allow downloading cross-origin files
+      // even if Cloudflare R2 hasn't been configured for CORS.
+      const response = await fetch(url, { mode: 'no-cors' });
       const blob = await response.blob();
       const blobUrl = window.URL.createObjectURL(blob);
       
@@ -366,41 +358,8 @@ function NotificationsPane(): React.JSX.Element {
       window.URL.revokeObjectURL(blobUrl);
       
     } catch (error) {
-      console.warn('Standard CORS fetch failed (likely CORS). Trying opaque fetch...', error);
-      
-      // 3. Opaque Fetch Workaround (Bypasses CORS restrictions for reading)
-      try {
-        const response = await fetch(url, { method: 'GET', mode: 'no-cors' });
-        const blob = await response.blob();
-        const blobUrl = window.URL.createObjectURL(blob);
-        
-        let ext = 'bin';
-        if (kind === 'image') ext = 'jpg';
-        else if (kind === 'video') ext = 'mp4';
-        else if (kind === 'audio') ext = 'mp3';
-        else if (kind === 'file') {
-          try {
-            const urlObj = new URL(url);
-            ext = urlObj.pathname.split('.').pop() || 'bin';
-          } catch { ext = 'bin'; }
-        }
-
-        const a = document.createElement('a');
-        a.href = blobUrl;
-        a.download = `Orbital_${Date.now()}.${ext}`;
-        
-        document.body.appendChild(a);
-        a.click();
-        
-        document.body.removeChild(a);
-        window.URL.revokeObjectURL(blobUrl);
-        console.log('Download successful via opaque fetch.');
-        
-      } catch (opaqueError) {
-        console.error('Opaque fetch also failed. Falling back to new tab.', opaqueError);
-        // 4. Final Fallback: Open in new tab (user will see the Cloudflare link)
-        window.open(url, '_blank');
-      }
+      console.warn('CORS fetch failed, falling back to new tab', error);
+      window.open(url, '_blank');
     }
   };
   /* ────────────────────────────────────────────────────────── */
@@ -438,41 +397,11 @@ function NotificationsPane(): React.JSX.Element {
       {/* Tabs + search */}
       <div className="px-4 sm:px-6 py-3 border-b border-white/[0.05] flex flex-col sm:flex-row sm:items-center gap-3 shrink-0">
         <div className="flex items-center gap-1 overflow-x-auto">
-          <Tab
-            label="All"
-            icon={Inbox}
-            active={tab === 'all'}
-            count={counts.all}
-            onClick={() => setTab('all')}
-          />
-          <Tab
-            label="Images"
-            icon={ImageIcon}
-            active={tab === 'image'}
-            count={counts.image}
-            onClick={() => setTab('image')}
-          />
-          <Tab
-            label="Videos"
-            icon={VideoIcon}
-            active={tab === 'video'}
-            count={counts.video}
-            onClick={() => setTab('video')}
-          />
-          <Tab
-            label="Audio"
-            icon={Music}
-            active={tab === 'audio'}
-            count={counts.audio}
-            onClick={() => setTab('audio')}
-          />
-          <Tab
-            label="Files"
-            icon={FileText}
-            active={tab === 'file'}
-            count={counts.file}
-            onClick={() => setTab('file')}
-          />
+          <Tab label="All" icon={Inbox} active={tab === 'all'} count={counts.all} onClick={() => setTab('all')} />
+          <Tab label="Images" icon={ImageIcon} active={tab === 'image'} count={counts.image} onClick={() => setTab('image')} />
+          <Tab label="Videos" icon={VideoIcon} active={tab === 'video'} count={counts.video} onClick={() => setTab('video')} />
+          <Tab label="Audio" icon={Music} active={tab === 'audio'} count={counts.audio} onClick={() => setTab('audio')} />
+          <Tab label="Files" icon={FileText} active={tab === 'file'} count={counts.file} onClick={() => setTab('file')} />
         </div>
 
         <div className="flex-1 sm:max-w-xs sm:ml-auto flex items-center gap-2 px-2.5 py-1.5 rounded-lg bg-[#0F0D0A] border border-white/[0.08] focus-within:border-[#D97706]/50 transition-colors">
@@ -485,10 +414,7 @@ function NotificationsPane(): React.JSX.Element {
             className="flex-1 bg-transparent text-[12.5px] text-[#EDE5D4] placeholder-[#6B6259] outline-none"
           />
           {query && (
-            <button
-              onClick={() => setQuery('')}
-              className="p-0.5 rounded text-[#6B6259] hover:text-[#EDE5D4]"
-            >
+            <button onClick={() => setQuery('')} className="p-0.5 rounded text-[#6B6259] hover:text-[#EDE5D4]">
               <X className="w-3.5 h-3.5" />
             </button>
           )}
@@ -511,26 +437,17 @@ function NotificationsPane(): React.JSX.Element {
                 disabled={selectableItems.length === 0}
                 className="h-8 px-3 rounded-lg bg-white/[0.04] hover:bg-white/[0.08] disabled:opacity-40 text-[12.5px] text-[#EDE5D4] font-medium inline-flex items-center gap-1.5 transition-colors"
               >
-                {allSelectableSelected ? (
-                  <Square className="w-3.5 h-3.5" />
-                ) : (
-                  <CheckSquare className="w-3.5 h-3.5" />
-                )}
+                {allSelectableSelected ? <Square className="w-3.5 h-3.5" /> : <CheckSquare className="w-3.5 h-3.5" />}
                 <span>{allSelectableSelected ? 'Deselect all' : 'Select all'}</span>
               </button>
 
               <span className="text-[12.5px] text-[#A8A29E] tabular-nums">
-                <span className="text-[#EDE5D4] font-semibold">{selectedIds.size}</span>{' '}
-                selected
+                <span className="text-[#EDE5D4] font-semibold">{selectedIds.size}</span> selected
               </span>
 
               {unselectableCount > 0 && (
-                <span
-                  className="text-[11px] text-[#6B6259] hidden sm:inline"
-                  title="Group messages can't be deleted from this page"
-                >
-                  · {unselectableCount} group item
-                  {unselectableCount === 1 ? '' : 's'} not selectable
+                <span className="text-[11px] text-[#6B6259] hidden sm:inline" title="Group messages can't be deleted from this page">
+                  · {unselectableCount} group item{unselectableCount === 1 ? '' : 's'} not selectable
                 </span>
               )}
 
@@ -550,9 +467,7 @@ function NotificationsPane(): React.JSX.Element {
                 className="h-8 px-3 rounded-lg bg-[#B91C1C] hover:bg-[#991B1B] disabled:opacity-40 disabled:cursor-not-allowed text-white text-[12.5px] font-medium inline-flex items-center gap-1.5 transition-colors"
               >
                 <Trash2 className="w-3.5 h-3.5" />
-                <span>
-                  Delete{selectedIds.size > 0 ? ` (${selectedIds.size})` : ''}
-                </span>
+                <span>Delete{selectedIds.size > 0 ? ` (${selectedIds.size})` : ''}</span>
               </button>
             </div>
 
@@ -575,9 +490,7 @@ function NotificationsPane(): React.JSX.Element {
             <div className="w-16 h-16 rounded-2xl bg-[#B91C1C]/10 border border-[#B91C1C]/20 flex items-center justify-center mx-auto">
               <X className="w-7 h-7 text-[#F87171]" />
             </div>
-            <p className="text-[14.5px] text-[#F87171] font-semibold tracking-tight mt-4">
-              Could not load media
-            </p>
+            <p className="text-[14.5px] text-[#F87171] font-semibold tracking-tight mt-4">Could not load media</p>
             <p className="text-[12.5px] text-[#6B6259] mt-1">{error}</p>
           </div>
         ) : loading ? (
@@ -637,9 +550,9 @@ function NotificationsPane(): React.JSX.Element {
 
       {/* Preview modal */}
       {preview && (
-        <PreviewModal 
-          item={preview} 
-          onClose={() => setPreview(null)} 
+        <PreviewModal
+          item={preview}
+          onClose={() => setPreview(null)}
           onDownload={() => handleNativeDownload(preview.url, preview.kind)}
         />
       )}
@@ -810,6 +723,7 @@ function MediaTile({
         <p className="text-[10px] text-white/60 truncate">{item.context}</p>
       </div>
 
+      {/* Selection checkbox */}
       {selectionMode && selectable && (
         <div
           role="checkbox"
@@ -842,12 +756,14 @@ function MediaTile({
         </div>
       )}
 
+      {/* Group label when unselectable and selecting */}
       {selectionMode && !selectable && (
         <span className="absolute top-2 left-2 px-2 py-0.5 rounded-md bg-black/60 backdrop-blur text-[9.5px] text-white/70 uppercase tracking-wider font-medium">
           Group
         </span>
       )}
 
+      {/* Download (hidden in selection mode) */}
       {!selectionMode && (
         <button
           onClick={(e) => {
