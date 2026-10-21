@@ -301,7 +301,7 @@ function NotificationsPane(): React.JSX.Element {
     }
   };
 
-  /* ── NATIVE & WEB DOWNLOAD HANDLER ────────────────────────── */
+  /* ── NATIVE & WEB DOWNLOAD HANDLER (CLEAN) ────────────────── */
   const handleNativeDownload = async (url: string, kind: string) => {
     // 1. Check if running inside the WebToNative app
     if (typeof window !== 'undefined' && (window as any).WTN) {
@@ -328,11 +328,14 @@ function NotificationsPane(): React.JSX.Element {
       return;
     }
 
-    // 2. Standard Web Browser Fallback (Bypass CORS)
+    // 2. Standard Web Browser Fallback
     try {
-      // Use 'no-cors' mode to allow downloading cross-origin files
-      // even if Cloudflare R2 hasn't been configured for CORS.
-      const response = await fetch(url, { mode: 'no-cors' });
+      // CORS is now configured on Cloudflare R2, so this standard
+      // fetch will work perfectly without needing a proxy.
+      const response = await fetch(url);
+      
+      if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+      
       const blob = await response.blob();
       const blobUrl = window.URL.createObjectURL(blob);
       
@@ -358,7 +361,7 @@ function NotificationsPane(): React.JSX.Element {
       window.URL.revokeObjectURL(blobUrl);
       
     } catch (error) {
-      console.warn('CORS fetch failed, falling back to new tab', error);
+      console.warn('Download failed, falling back to new tab', error);
       window.open(url, '_blank');
     }
   };
