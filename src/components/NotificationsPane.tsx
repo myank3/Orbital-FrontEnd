@@ -73,10 +73,6 @@ function mediaKindOf(mediaType: number): MediaKind | null {
  * Normalize whatever `getDmHistory` / `getGroupMessages` returns into
  * a flat array with `mediaUrl` populated for both R2 rows and legacy
  * external URLs.
- *
- * Accepts either:
- *   - a bare `Message[]` (legacy backend shape), or
- *   - `{ messages, presignedUrls }` (Phase 3 / R2 shape).
  */
 function applyHistoryPresign(raw: any): any[] {
   if (Array.isArray(raw)) return raw;
@@ -316,6 +312,50 @@ function NotificationsPane(): React.JSX.Element {
     }
   };
 
+  /* ── THE FIX: Native Download Handler ─────────────────────── */
+  const handleNativeDownload = (url: string, kind: string) => {
+    if (typeof window !== 'undefined' && (window as any).WTN) {
+      // Determine a clean file extension
+      let ext = 'bin';
+      if (kind === 'image') ext = 'jpg';
+      else if (kind === 'video') ext = 'mp4';
+      else if (kind === 'audio') ext = 'mp3';
+      else if (kind === 'file') {
+        try {
+          const urlObj = new URL(url);
+          ext = urlObj.pathname.split('.').pop() || 'bin';
+        } catch {
+          ext = 'bin';
+        }
+      }
+
+      const fileName = `Orbital_${Date.now()}.${ext}`;
+
+      // Trigger WebToNative's Native Downloader
+      (window as any).WTN.downloadFile({
+        url: url,
+        fileName: fileName,
+        callback: (response: any) => {
+          if (response.success) {
+            console.log("Download successful!");
+          } else {
+            console.error("Download failed", response);
+          }
+        }
+      });
+    } else {
+      // Fallback for standard Web Browsers
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = '';
+      a.target = '_blank';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+    }
+  };
+  /* ────────────────────────────────────────────────────────── */
+
   return (
     <div className="h-full flex flex-col bg-[#0B0A08] text-[#EDE5D4] overflow-hidden">
       {/* Header */}
@@ -530,6 +570,7 @@ function NotificationsPane(): React.JSX.Element {
                   selectionMode={selectionMode}
                   selected={selectedIds.has(item.id)}
                   selectable={selectable}
+                  onDownload={() => handleNativeDownload(item.url, item.kind)}
                   onOpen={() => {
                     if (selectionMode) {
                       if (selectable) toggleSelect(item.id);
@@ -546,7 +587,13 @@ function NotificationsPane(): React.JSX.Element {
       </div>
 
       {/* Preview modal */}
-      {preview && <PreviewModal item={preview} onClose={() => setPreview(null)} />}
+      {preview && (
+        <PreviewModal 
+          item={preview} 
+          onClose={() => setPreview(null)} 
+          onDownload={() => handleNativeDownload(preview.url, preview.kind)}
+        />
+      )}
 
       {/* Delete confirmation */}
       <AnimatePresence>
@@ -645,6 +692,7 @@ function Tab({
 function MediaTile({
   item,
   onOpen,
+  onDownload,
   selectionMode,
   selected,
   selectable,
@@ -652,6 +700,7 @@ function MediaTile({
 }: {
   item: MediaItem;
   onOpen: () => void;
+  onDownload: () => void;
   selectionMode: boolean;
   selected: boolean;
   selectable: boolean;
@@ -754,17 +803,16 @@ function MediaTile({
 
       {/* Download (hidden in selection mode) */}
       {!selectionMode && (
-        <a
-          href={item.url}
-          target="_blank"
-          rel="noreferrer"
-          download
-          onClick={(e) => e.stopPropagation()}
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            onDownload();
+          }}
           className="absolute top-2 right-2 w-7 h-7 rounded-lg bg-black/60 backdrop-blur flex items-center justify-center text-white opacity-0 group-hover:opacity-100 transition-opacity"
           title="Download"
         >
           <Download className="w-3.5 h-3.5" />
-        </a>
+        </button>
       )}
     </button>
   );
@@ -777,9 +825,11 @@ function MediaTile({
 function PreviewModal({
   item,
   onClose,
+  onDownload,
 }: {
   item: MediaItem;
   onClose: () => void;
+  onDownload: () => void;
 }) {
   return (
     <div
@@ -810,16 +860,13 @@ function PreviewModal({
           </div>
 
           <div className="flex items-center gap-2 shrink-0">
-            <a
-              href={item.url}
-              target="_blank"
-              rel="noreferrer"
-              download
+            <button
+              onClick={onDownload}
               className="h-9 px-3 rounded-lg bg-white/10 hover:bg-white/20 text-white text-[12.5px] font-medium inline-flex items-center gap-1.5 transition-colors"
             >
               <Download className="w-3.5 h-3.5" />
               <span className="hidden sm:inline">Download</span>
-            </a>
+            </button>
             <button
               onClick={onClose}
               className="w-9 h-9 rounded-lg bg-white/10 hover:bg-white/20 text-white flex items-center justify-center transition-colors"
@@ -858,16 +905,13 @@ function PreviewModal({
               <p className="text-[11.5px] text-[#6B6259] mb-4 break-all max-w-md">
                 {item.url}
               </p>
-              <a
-                href={item.url}
-                target="_blank"
-                rel="noreferrer"
-                download
+              <button
+                onClick={onDownload}
                 className="h-9 px-4 rounded-lg bg-[#D97706] hover:bg-[#B45309] text-[#0F0D0A] text-[12.5px] font-semibold inline-flex items-center gap-1.5 transition-colors"
               >
                 <Download className="w-3.5 h-3.5" />
                 <span>Download</span>
-              </a>
+              </button>
             </div>
           )}
         </div>
