@@ -40,8 +40,8 @@ import {
 type MediaKind = 'image' | 'video' | 'audio' | 'file';
 
 interface MediaItem {
-  id: string;                 // UI key, e.g. `dm-123` or `grp-45`
-  rawId: string | number;     // the underlying message id, for delete calls
+  id: string;
+  rawId: string | number;
   url: string;
   kind: MediaKind;
   mediaType: number;
@@ -69,11 +69,6 @@ function mediaKindOf(mediaType: number): MediaKind | null {
   }
 }
 
-/**
- * Normalize whatever `getDmHistory` / `getGroupMessages` returns into
- * a flat array with `mediaUrl` populated for both R2 rows and legacy
- * external URLs.
- */
 function applyHistoryPresign(raw: any): any[] {
   if (Array.isArray(raw)) return raw;
   const messages = raw?.messages ?? [];
@@ -98,14 +93,12 @@ function NotificationsPane(): React.JSX.Element {
   const [query, setQuery] = useState('');
   const [preview, setPreview] = useState<MediaItem | null>(null);
 
-  /* Selection state */
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
 
-  /* ── Load every DM + group, collect media ─────────────── */
   useEffect(() => {
     let cancelled = false;
 
@@ -121,7 +114,6 @@ function NotificationsPane(): React.JSX.Element {
         setProgress('Loading groups…');
         const groups: GroupDto[] = await apiService.getMyGroups().catch(() => []);
 
-        // DM media
         let dmDone = 0;
         if (friends.length > 0) {
           setProgress(`Loading DMs (0/${friends.length})…`);
@@ -164,7 +156,6 @@ function NotificationsPane(): React.JSX.Element {
           );
         }
 
-        // Group media
         let grpDone = 0;
         if (groups.length > 0) {
           setProgress(`Loading groups (0/${groups.length})…`);
@@ -249,7 +240,6 @@ function NotificationsPane(): React.JSX.Element {
     });
   }, [items, tab, query]);
 
-  /* Only DM items are selectable — no group-message delete API */
   const selectableItems = useMemo(
     () => filtered.filter((i) => i.contextKind === 'dm'),
     [filtered],
@@ -306,15 +296,14 @@ function NotificationsPane(): React.JSX.Element {
       setDeleteError(
         `${failures} item${failures === 1 ? '' : 's'} could not be deleted.`,
       );
-      // Keep selection mode on so user sees what failed
     } else {
       setSelectionMode(false);
     }
   };
 
-  /* ── THE FIX: Native & Web Download Handler ───────────────── */
+  /* ── HARDENED DOWNLOAD HANDLER ────────────────────────────── */
   const handleNativeDownload = async (url: string, kind: string) => {
-    // 1. Check if running inside the WebToNative app
+    // 1. WebToNative Native Downloader
     if (typeof window !== 'undefined' && (window as any).WTN) {
       let ext = 'bin';
       if (kind === 'image') ext = 'jpg';
@@ -331,7 +320,6 @@ function NotificationsPane(): React.JSX.Element {
 
       const fileName = `Orbital_${Date.now()}.${ext}`;
 
-      // Trigger WebToNative's Native Downloader
       (window as any).WTN.downloadFile({
         url: url,
         fileName: fileName,
@@ -343,12 +331,46 @@ function NotificationsPane(): React.JSX.Element {
           }
         }
       });
-    } else {
-      // 2. Fallback for standard Web Browsers (The Blob Fix)
+      return;
+    }
+
+    // 2. Standard Web Browser Fallback
+    try {
+      // Try a standard CORS fetch first
+      const response = await fetch(url, { method: 'GET', mode: 'cors' });
+      
+      if (!response.ok) throw new Error(`Network response was not ok: ${response.status}`);
+      
+      const blob = await response.blob();
+      const blobUrl = window.URL.createObjectURL(blob);
+      
+      let ext = 'bin';
+      if (kind === 'image') ext = 'jpg';
+      else if (kind === 'video') ext = 'mp4';
+      else if (kind === 'audio') ext = 'mp3';
+      else if (kind === 'file') {
+        try {
+          const urlObj = new URL(url);
+          ext = urlObj.pathname.split('.').pop() || 'bin';
+        } catch { ext = 'bin'; }
+      }
+
+      const a = document.createElement('a');
+      a.href = blobUrl;
+      a.download = `Orbital_${Date.now()}.${ext}`;
+      
+      document.body.appendChild(a);
+      a.click();
+      
+      document.body.removeChild(a);
+      window.URL.revokeObjectURL(blobUrl);
+      
+    } catch (error) {
+      console.warn('Standard CORS fetch failed (likely CORS). Trying opaque fetch...', error);
+      
+      // 3. Opaque Fetch Workaround (Bypasses CORS restrictions for reading)
       try {
-        const response = await fetch(url);
-        if (!response.ok) throw new Error('Network response was not ok');
-        
+        const response = await fetch(url, { method: 'GET', mode: 'no-cors' });
         const blob = await response.blob();
         const blobUrl = window.URL.createObjectURL(blob);
         
@@ -372,9 +394,11 @@ function NotificationsPane(): React.JSX.Element {
         
         document.body.removeChild(a);
         window.URL.revokeObjectURL(blobUrl);
-      } catch (error) {
-        console.error('Download failed:', error);
-        // Fallback: just open the URL in a new tab if fetch fails
+        console.log('Download successful via opaque fetch.');
+        
+      } catch (opaqueError) {
+        console.error('Opaque fetch also failed. Falling back to new tab.', opaqueError);
+        // 4. Final Fallback: Open in new tab (user will see the Cloudflare link)
         window.open(url, '_blank');
       }
     }
@@ -411,7 +435,7 @@ function NotificationsPane(): React.JSX.Element {
         )}
       </div>
 
-      {/* Tabs + search — always visible */}
+      {/* Tabs + search */}
       <div className="px-4 sm:px-6 py-3 border-b border-white/[0.05] flex flex-col sm:flex-row sm:items-center gap-3 shrink-0">
         <div className="flex items-center gap-1 overflow-x-auto">
           <Tab
@@ -786,7 +810,6 @@ function MediaTile({
         <p className="text-[10px] text-white/60 truncate">{item.context}</p>
       </div>
 
-      {/* Selection checkbox */}
       {selectionMode && selectable && (
         <div
           role="checkbox"
@@ -819,14 +842,12 @@ function MediaTile({
         </div>
       )}
 
-      {/* Group label when unselectable and selecting */}
       {selectionMode && !selectable && (
         <span className="absolute top-2 left-2 px-2 py-0.5 rounded-md bg-black/60 backdrop-blur text-[9.5px] text-white/70 uppercase tracking-wider font-medium">
           Group
         </span>
       )}
 
-      {/* Download (hidden in selection mode) */}
       {!selectionMode && (
         <button
           onClick={(e) => {
