@@ -312,10 +312,10 @@ function NotificationsPane(): React.JSX.Element {
     }
   };
 
-  /* ── THE FIX: Native Download Handler ─────────────────────── */
-  const handleNativeDownload = (url: string, kind: string) => {
+  /* ── THE FIX: Native & Web Download Handler ───────────────── */
+  const handleNativeDownload = async (url: string, kind: string) => {
+    // 1. Check if running inside the WebToNative app
     if (typeof window !== 'undefined' && (window as any).WTN) {
-      // Determine a clean file extension
       let ext = 'bin';
       if (kind === 'image') ext = 'jpg';
       else if (kind === 'video') ext = 'mp4';
@@ -344,14 +344,39 @@ function NotificationsPane(): React.JSX.Element {
         }
       });
     } else {
-      // Fallback for standard Web Browsers
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = '';
-      a.target = '_blank';
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
+      // 2. Fallback for standard Web Browsers (The Blob Fix)
+      try {
+        const response = await fetch(url);
+        if (!response.ok) throw new Error('Network response was not ok');
+        
+        const blob = await response.blob();
+        const blobUrl = window.URL.createObjectURL(blob);
+        
+        let ext = 'bin';
+        if (kind === 'image') ext = 'jpg';
+        else if (kind === 'video') ext = 'mp4';
+        else if (kind === 'audio') ext = 'mp3';
+        else if (kind === 'file') {
+          try {
+            const urlObj = new URL(url);
+            ext = urlObj.pathname.split('.').pop() || 'bin';
+          } catch { ext = 'bin'; }
+        }
+
+        const a = document.createElement('a');
+        a.href = blobUrl;
+        a.download = `Orbital_${Date.now()}.${ext}`;
+        
+        document.body.appendChild(a);
+        a.click();
+        
+        document.body.removeChild(a);
+        window.URL.revokeObjectURL(blobUrl);
+      } catch (error) {
+        console.error('Download failed:', error);
+        // Fallback: just open the URL in a new tab if fetch fails
+        window.open(url, '_blank');
+      }
     }
   };
   /* ────────────────────────────────────────────────────────── */
