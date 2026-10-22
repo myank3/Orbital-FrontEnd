@@ -2246,55 +2246,114 @@ interface FriendRowProps {
   onSelect: (userId: string) => void;
   onMenu: (friend: FriendDto) => void;
 }
-
 const FriendRow = React.memo(function FriendRow({
   friend, selected, online, unread, last, myId, pinned, muted, theme, onSelect, onMenu,
 }: FriendRowProps) {
   const timer = useRef<number | null>(null);
+  const longPressedRef = useRef(false);
   const preview = last && myId ? previewText(last, myId) : null;
 
+  // Long-press opens the context menu; the click that follows
+  // on release must NOT navigate into the chat.
   const start = () => {
+    longPressedRef.current = false;
     if (timer.current != null) window.clearTimeout(timer.current);
-    timer.current = window.setTimeout(() => onMenu(friend), 500);
+    timer.current = window.setTimeout(() => {
+      longPressedRef.current = true;
+      onMenu(friend);
+      if (navigator.vibrate) navigator.vibrate(10);
+    }, 500);
   };
+
   const end = () => {
-    if (timer.current != null) { window.clearTimeout(timer.current); timer.current = null; }
+    if (timer.current != null) {
+      window.clearTimeout(timer.current);
+      timer.current = null;
+    }
+  };
+
+  const handleClick = () => {
+    if (longPressedRef.current) {
+      longPressedRef.current = false;
+      return;
+    }
+    onSelect(friend.userId);
   };
 
   return (
     <button
-      onClick={() => onSelect(friend.userId)}
+      onClick={handleClick}
       onContextMenu={(e) => { e.preventDefault(); onMenu(friend); }}
       onTouchStart={start}
       onTouchEnd={end}
       onTouchMove={end}
       onTouchCancel={end}
-      className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-2xl text-left ${
-        selected ? theme.sidebarActive : theme.hoverBg
+      className={`group/row relative w-full flex items-center gap-3 pl-3.5 pr-3 py-2.5 rounded-2xl text-left transition-colors duration-150 touch-manipulation ${
+        selected ? theme.sidebarActive : `${theme.hoverBg} active:bg-white/[0.06]`
       }`}
     >
-      <Avatar name={friend.displayName} src={friend.avatarUrl} size="md" isOnline={online} />
+      {/* Selected left accent bar — uses theme accent via currentColor */}
+      {selected && (
+        <span
+          aria-hidden
+          className={`absolute left-0 top-1/2 -translate-y-1/2 h-7 w-[3px] rounded-r-full bg-current ${theme.accentText}`}
+        />
+      )}
+
+      {/* Avatar (keeps built-in online dot from Avatar) */}
+      <Avatar
+        name={friend.displayName}
+        src={friend.avatarUrl}
+        size="md"
+        isOnline={online}
+      />
+
+      {/* Content */}
       <div className="min-w-0 flex-1">
+        {/* Top row: name + timestamp */}
         <div className="flex items-center justify-between gap-2">
           <div className="flex items-center gap-1.5 min-w-0">
-            {pinned && <Pin className={`w-3.5 h-3.5 shrink-0 ${theme.accentText}`} />}
-            <p className={`text-[14px] font-bold truncate tracking-tight ${theme.textPrimary}`}>{friend.displayName}</p>
-            {muted && <BellOff className={`w-3 h-3 shrink-0 ${theme.textSecondary}`} />}
+            {pinned && (
+              <Pin className={`w-3 h-3 shrink-0 ${theme.accentText}`} />
+            )}
+            <p className={`text-[14px] font-semibold truncate tracking-[-0.01em] ${theme.textPrimary}`}>
+              {friend.displayName}
+            </p>
+            {muted && (
+              <BellOff className={`w-3 h-3 shrink-0 ${theme.textSecondary} opacity-70`} />
+            )}
           </div>
           {preview && preview.text && (
-            <span className={`shrink-0 text-[10.5px] tabular-nums font-medium ${theme.textSecondary}`}>
+            <span
+              className={`shrink-0 text-[10.5px] tabular-nums font-medium ${
+                unread > 0 ? theme.accentText : theme.textSecondary
+              }`}
+            >
               {formatRelativeShort(preview.sentAt)}
             </span>
           )}
         </div>
-        <div className="flex items-center justify-between gap-2 mt-0.5">
-          <p className={`text-[12px] truncate ${unread > 0 ? `${theme.textPrimary} font-semibold` : theme.textSecondary}`}>
-            {preview && preview.text
-              ? `${preview.isMe ? 'You: ' : ''}${preview.text}`
-              : `@${friend.handle}`}
+
+        {/* Bottom row: preview + unread badge */}
+        <div className="flex items-center justify-between gap-2 mt-1">
+          <p
+            className={`text-[12.5px] truncate leading-tight ${
+              unread > 0 ? `${theme.textPrimary} font-medium` : theme.textSecondary
+            }`}
+          >
+            {preview && preview.text ? (
+              <>
+                {preview.isMe && <span className="opacity-70">You: </span>}
+                {preview.text}
+              </>
+            ) : (
+              <span className="opacity-70">@{friend.handle}</span>
+            )}
           </p>
           {unread > 0 && (
-            <span className={`shrink-0 min-w-[20px] h-5 px-1.5 rounded-full ${theme.accent} text-[10.5px] font-bold tabular-nums flex items-center justify-center`}>
+            <span
+              className={`shrink-0 min-w-[20px] h-5 px-1.5 rounded-full ${theme.accent} text-[10.5px] font-bold tabular-nums flex items-center justify-center`}
+            >
               {unread > 99 ? '99+' : unread}
             </span>
           )}
@@ -2303,7 +2362,6 @@ const FriendRow = React.memo(function FriendRow({
     </button>
   );
 });
-
 /* ────────────────────────────────────────────────────────── */
 /* InfoModal                                                  */
 /* ────────────────────────────────────────────────────────── */
@@ -4141,56 +4199,149 @@ export function DirectMessagePane(): React.JSX.Element {
   return (
     <div className={`flex h-full w-full ${theme.bg} overflow-hidden relative`}>
       {/* Sidebar */}
-      <div className={`${hasActiveChat ? 'hidden md:flex' : 'flex'} w-full md:w-[340px] md:shrink-0 border-r ${theme.subtleBorder} ${theme.sidebarBg} flex-col h-full`}>
-        <div className="h-[68px] px-5 flex items-center justify-between shrink-0">
-          <div className="flex items-baseline gap-2">
-            <h2 className={`text-[22px] font-bold tracking-tight ${theme.textPrimary}`}>Chats</h2>
-            <span className={`text-[12px] tabular-nums font-semibold ${theme.textSecondary}`}>{filteredFriends.length}</span>
-          </div>
-        </div>
+      {/* ─── Sidebar ─────────────────────────────────────────── */}
+<div
+  className={`${hasActiveChat ? 'hidden md:flex' : 'flex'} dm-sidebar w-full md:w-[360px] md:shrink-0 border-r ${theme.subtleBorder} ${theme.sidebarBg} flex-col h-full relative overflow-hidden`}
+>
+  {/* Scoped styles: scrollbar + input refinements */}
+  <style>{`
+    .dm-sidebar-scroll {
+      scrollbar-width: thin;
+      scrollbar-color: rgba(255,255,255,0.08) transparent;
+      -webkit-overflow-scrolling: touch;
+    }
+    .dm-sidebar-scroll::-webkit-scrollbar { width: 4px; }
+    .dm-sidebar-scroll::-webkit-scrollbar-track { background: transparent; }
+    .dm-sidebar-scroll::-webkit-scrollbar-thumb {
+      background: rgba(255,255,255,0.08);
+      border-radius: 999px;
+    }
+    .dm-sidebar-scroll::-webkit-scrollbar-thumb:hover {
+      background: rgba(255,255,255,0.16);
+    }
+    .dm-sidebar-scroll::-webkit-scrollbar-thumb:active {
+      background: rgba(255,255,255,0.24);
+    }
+    .dm-sidebar input::placeholder { opacity: 0.5; }
+    .dm-sidebar input:focus { outline: none; }
+  `}</style>
 
-        <div className="px-4 pb-3">
-          <div className="relative">
-            <Search className={`absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 pointer-events-none ${theme.textSecondary}`} />
-            <input
-              type="text"
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Search conversations"
-              className={`w-full h-11 pl-10 pr-3 rounded-2xl ${theme.subtleBg} border ${theme.subtleBorder} text-[13.5px] ${theme.textPrimary} focus:outline-none placeholder:opacity-60`}
-            />
-          </div>
-        </div>
+  {/* Ambient glow (theme-aware, static — zero runtime cost) */}
+  <div
+    aria-hidden
+    className="pointer-events-none absolute inset-0"
+    style={{
+      background: theme.isLight
+        ? 'radial-gradient(600px 380px at 0% 0%, rgba(184,137,74,0.06), transparent 65%)'
+        : 'radial-gradient(600px 380px at 0% 0%, rgba(217,119,6,0.07), transparent 65%)',
+    }}
+  />
 
-        <div className="flex-1 overflow-y-auto px-2.5 pb-2 space-y-0.5">
-          {filteredFriends.length === 0 ? (
-            <div className={`p-8 text-center text-[13px] font-medium ${theme.textSecondary}`}>
-              {friends.length === 0
-                ? 'No contacts yet.'
-                : searchQuery
-                ? 'No matches found.'
-                : 'No conversations. Start one from Friends.'}
-            </div>
-          ) : (
-            filteredFriends.map((friend) => (
-              <FriendRow
-                key={friend.friendshipId}
-                friend={friend}
-                selected={friend.userId === userId}
-                online={presenceStore.isOnline(friend.userId)}
-                unread={unreadCounts[friend.userId] ?? 0}
-                last={lastMessages[friend.userId]}
-                myId={user?.id}
-                pinned={pinnedIds.has(friend.userId)}
-                muted={mutedIds.has(friend.userId)}
-                theme={theme}
-                onSelect={handleSelectFriend}
-                onMenu={handleFriendMenu}
-              />
-            ))
-          )}
+  {/* Header */}
+  <div className="relative z-10 h-[72px] px-5 flex items-center justify-between shrink-0">
+    <div className="flex items-baseline gap-2.5 min-w-0">
+      <h2
+        className={`text-[26px] font-bold tracking-[-0.02em] leading-none ${theme.textPrimary}`}
+        style={{ fontFamily: '"Instrument Serif", Georgia, serif' }}
+      >
+        Chats
+      </h2>
+      <span
+        className={`text-[11px] tabular-nums font-bold px-2 py-0.5 rounded-full ${theme.subtleBg} border ${theme.subtleBorder} ${theme.textSecondary}`}
+      >
+        {filteredFriends.length}
+      </span>
+    </div>
+  </div>
+
+  {/* Search */}
+  <div className="relative z-10 px-4 pb-3">
+    <div className="relative">
+      <Search
+        className={`absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 pointer-events-none ${theme.textSecondary}`}
+      />
+      <input
+        type="text"
+        value={searchQuery}
+        onChange={(e) => setSearchQuery(e.target.value)}
+        placeholder="Search conversations"
+        className={`w-full h-11 pl-11 pr-10 rounded-2xl ${theme.subtleBg} border ${theme.subtleBorder} text-[13.5px] ${theme.textPrimary} transition-colors focus:ring-2 focus:ring-inset focus:ring-[#D97706]/25 focus:border-[#D97706]/40 touch-manipulation`}
+      />
+      {searchQuery && (
+        <button
+          type="button"
+          onClick={() => setSearchQuery('')}
+          className={`absolute right-2.5 top-1/2 -translate-y-1/2 w-6 h-6 rounded-full flex items-center justify-center ${theme.textSecondary} ${theme.hoverBg} touch-manipulation`}
+          aria-label="Clear search"
+        >
+          <X className="w-3.5 h-3.5" />
+        </button>
+      )}
+    </div>
+  </div>
+
+  {/* Divider */}
+  <div
+    aria-hidden
+    className={`relative z-10 h-px mx-4 ${theme.isLight ? 'bg-black/[0.06]' : 'bg-white/[0.06]'}`}
+  />
+
+  {/* List */}
+  <div
+    className={`dm-sidebar-scroll relative z-10 flex-1 overflow-y-auto px-2 py-2 space-y-0.5`}
+    style={{ overscrollBehavior: 'contain' }}
+  >
+    {filteredFriends.length === 0 ? (
+      <div className="flex flex-col items-center justify-center text-center px-4 py-12 gap-2.5">
+        <div
+          className={`w-12 h-12 rounded-full ${theme.subtleBg} border ${theme.subtleBorder} flex items-center justify-center`}
+        >
+          <Search className={`w-5 h-5 opacity-50 ${theme.textSecondary}`} />
         </div>
+        <p className={`text-[13px] font-medium ${theme.textPrimary} opacity-90`}>
+          {friends.length === 0
+            ? 'No contacts yet'
+            : searchQuery
+            ? 'No matches found'
+            : 'No conversations yet'}
+        </p>
+        <p className={`text-[11.5px] ${theme.textSecondary} max-w-[220px] leading-snug`}>
+          {friends.length === 0
+            ? 'Add friends to start messaging.'
+            : searchQuery
+            ? `Nothing matched "${searchQuery}".`
+            : 'Start a chat from your friends list.'}
+        </p>
+        {searchQuery && (
+          <button
+            type="button"
+            onClick={() => setSearchQuery('')}
+            className={`mt-1 h-8 px-3.5 rounded-full text-[12px] font-semibold ${theme.accent} touch-manipulation`}
+          >
+            Clear search
+          </button>
+        )}
       </div>
+    ) : (
+      filteredFriends.map((friend) => (
+        <FriendRow
+          key={friend.friendshipId}
+          friend={friend}
+          selected={friend.userId === userId}
+          online={presenceStore.isOnline(friend.userId)}
+          unread={unreadCounts[friend.userId] ?? 0}
+          last={lastMessages[friend.userId]}
+          myId={user?.id}
+          pinned={pinnedIds.has(friend.userId)}
+          muted={mutedIds.has(friend.userId)}
+          theme={theme}
+          onSelect={handleSelectFriend}
+          onMenu={handleFriendMenu}
+        />
+      ))
+    )}
+  </div>
+</div>
 
       {/* Chat pane */}
       <div className={`${hasActiveChat ? 'flex' : 'hidden md:flex'} flex-1 flex-col h-full min-w-0 ${theme.bg} relative`}>

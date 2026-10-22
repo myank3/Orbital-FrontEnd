@@ -2381,29 +2381,88 @@ interface SidebarRowProps {
   onOpen: (id: number) => void;
   onMenu: (g: GroupDto) => void;
 }
-
 const SidebarRow = React.memo(function SidebarRow({
   group, isSelected, pinned, muted, onOpen, onMenu,
 }: SidebarRowProps) {
+  const timer = useRef<number | null>(null);
+  const longPressedRef = useRef(false);
+
+  // Long-press opens the context menu; the click that follows
+  // on release must NOT navigate into the chat.
+  const start = () => {
+    longPressedRef.current = false;
+    if (timer.current != null) window.clearTimeout(timer.current);
+    timer.current = window.setTimeout(() => {
+      longPressedRef.current = true;
+      onMenu(group);
+      if (navigator.vibrate) navigator.vibrate(10);
+    }, 500);
+  };
+  const end = () => {
+    if (timer.current != null) {
+      window.clearTimeout(timer.current);
+      timer.current = null;
+    }
+  };
+  const handleClick = () => {
+    if (longPressedRef.current) {
+      longPressedRef.current = false;
+      return;
+    }
+    onOpen(group.id);
+  };
+
   return (
-    <button onClick={() => onOpen(group.id)}
-      onContextMenu={(e) => { e.preventDefault(); onMenu(group); }}
-      className={`group w-full flex items-center gap-3 px-2.5 py-2 rounded-xl text-left transition-all duration-150 ${
-        isSelected ? 'bg-[#D97706]/[0.12] ring-1 ring-inset ring-[#D97706]/25' : 'hover:bg-white/[0.04]'
-      }`}>
+    <button
+      onClick={handleClick}
+      onContextMenu={(e) => {
+        e.preventDefault();
+        onMenu(group);
+      }}
+      onTouchStart={start}
+      onTouchEnd={end}
+      onTouchMove={end}
+      onTouchCancel={end}
+      className={`group/row relative w-full flex items-center gap-3 pl-3.5 pr-3 py-2.5 rounded-2xl text-left transition-colors duration-150 touch-manipulation ${
+        isSelected
+          ? 'bg-gradient-to-r from-[#D97706]/[0.12] via-[#D97706]/[0.04] to-transparent ring-1 ring-inset ring-[#D97706]/20'
+          : 'hover:bg-white/[0.04] active:bg-white/[0.06]'
+      }`}
+    >
+      {/* Selected accent bar */}
+      {isSelected && (
+        <span
+          aria-hidden
+          className="absolute left-0 top-1/2 -translate-y-1/2 h-7 w-[3px] rounded-r-full bg-[#D97706] shadow-[0_0_12px_rgba(217,119,6,0.9)]"
+        />
+      )}
+
       <GroupAvatar name={group.name} groupId={group.id} />
+
       <div className="min-w-0 flex-1">
-        <div className="flex items-center gap-1.5 min-w-0">
-          {pinned && <Pin className="w-3 h-3 text-[#D97706] shrink-0" />}
-          <p className={`text-[13.5px] ${isSelected ? 'font-semibold' : 'font-medium'} text-[#EDE5D4] truncate`}>{group.name}</p>
-          {muted && <BellOff className="w-3 h-3 text-[#6B6259] shrink-0" />}
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex items-center gap-1.5 min-w-0">
+            {pinned && (
+              <Pin className="w-3 h-3 shrink-0 text-[#D97706]" />
+            )}
+            <p
+              className={`text-[14px] font-semibold truncate tracking-[-0.01em] text-[#EDE5D4]`}
+            >
+              {group.name}
+            </p>
+            {muted && (
+              <BellOff className="w-3 h-3 shrink-0 text-[#6B6259] opacity-70" />
+            )}
+          </div>
         </div>
-        <p className="text-[11px] text-[#6B6259] truncate mt-0.5">{group.memberCount} {group.memberCount === 1 ? 'member' : 'members'}</p>
+        <p className="text-[12.5px] text-[#6B6259] truncate leading-tight mt-1">
+          {group.memberCount}{' '}
+          {group.memberCount === 1 ? 'member' : 'members'}
+        </p>
       </div>
     </button>
   );
 });
-
 /* ────────────────────────────────────────────────────────── */
 /* Main GroupPane                                             */
 /* ────────────────────────────────────────────────────────── */
@@ -3179,47 +3238,154 @@ export default function GroupPane(): React.JSX.Element {
 
   return (
     <div className="flex h-full w-full bg-[#0B0A08] text-[#EDE5D4] overflow-hidden">
-      {/* LEFT: Groups list */}
-      <div className={`${hasActiveGroup ? 'hidden md:flex' : 'flex'} w-full md:w-[320px] md:shrink-0 border-r border-white/[0.05] bg-[#0F0D0A] flex-col h-full`}>
-        <div className="h-16 px-4 flex items-center justify-between shrink-0 border-b border-white/[0.05]">
-          <div className="flex items-baseline gap-2">
-            <h2 className="text-[18px] font-semibold text-[#EDE5D4] tracking-tight">Groups</h2>
-            <span className="text-[11.5px] text-[#6B6259] tabular-nums font-mono">{groups.length}</span>
-          </div>
-          <button onClick={() => setCreateModalOpen(true)}
-            className="w-8 h-8 rounded-lg bg-white/[0.04] hover:bg-white/[0.08] border border-white/[0.06] flex items-center justify-center text-[#A8A29E] hover:text-[#EDE5D4] transition-colors"
-            title="Create group">
-            <Plus className="w-4 h-4" />
-          </button>
-        </div>
-        <div className="px-3 py-2">
-          <div className="relative">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-[#6B6259] pointer-events-none" />
-            <input type="text" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} placeholder="Search groups"
-              className="w-full h-9 pl-9 pr-3 rounded-lg bg-white/[0.03] border border-white/[0.06] text-[12.5px] text-[#EDE5D4] focus:outline-none focus:border-[#D97706]/40 transition-colors placeholder-[#6B6259]" />
-          </div>
-        </div>
-        <div className="flex-1 overflow-y-auto px-2 pb-2 space-y-0.5">
-          {filteredGroups.length === 0 ? (
-            <div className="p-8 text-center text-[12.5px] text-[#6B6259]">
-              {groups.length === 0 ? 'No groups yet. Click + to create one.' : 'No matches found.'}
-            </div>
+     {/* ─── LEFT: Groups list ────────────────────────────── */}
+<div
+  className={`${hasActiveGroup ? 'hidden md:flex' : 'flex'} groups-sidebar w-full md:w-[340px] md:shrink-0 border-r border-white/[0.05] bg-[#0F0D0A] flex-col h-full relative overflow-hidden`}
+>
+  {/* Scoped scrollbar + input refinements */}
+  <style>{`
+    .groups-sidebar-scroll {
+      scrollbar-width: thin;
+      scrollbar-color: rgba(255,255,255,0.08) transparent;
+      -webkit-overflow-scrolling: touch;
+    }
+    .groups-sidebar-scroll::-webkit-scrollbar { width: 4px; }
+    .groups-sidebar-scroll::-webkit-scrollbar-track { background: transparent; }
+    .groups-sidebar-scroll::-webkit-scrollbar-thumb {
+      background: rgba(255,255,255,0.08);
+      border-radius: 999px;
+    }
+    .groups-sidebar-scroll::-webkit-scrollbar-thumb:hover {
+      background: rgba(255,255,255,0.16);
+    }
+    .groups-sidebar-scroll::-webkit-scrollbar-thumb:active {
+      background: rgba(255,255,255,0.24);
+    }
+    .groups-sidebar input::placeholder { opacity: 0.55; }
+    .groups-sidebar input:focus { outline: none; }
+  `}</style>
+
+  {/* Ambient glow (static, zero runtime cost) */}
+  <div
+    aria-hidden
+    className="pointer-events-none absolute inset-0"
+    style={{
+      background:
+        'radial-gradient(600px 380px at 0% 0%, rgba(217,119,6,0.07), transparent 65%)',
+    }}
+  />
+
+  {/* Header */}
+  <div className="relative z-10 h-[72px] px-5 flex items-center justify-between shrink-0">
+    <div className="flex items-baseline gap-2.5 min-w-0">
+      <h2
+        className="text-[26px] font-bold tracking-[-0.02em] leading-none text-[#EDE5D4]"
+        style={{ fontFamily: '"Instrument Serif", Georgia, serif' }}
+      >
+        Groups
+      </h2>
+      <span className="text-[11px] tabular-nums font-bold px-2 py-0.5 rounded-full bg-white/[0.04] border border-white/[0.06] text-[#6B6259]">
+        {groups.length}
+      </span>
+    </div>
+    <button
+      onClick={() => setCreateModalOpen(true)}
+      className="shrink-0 w-9 h-9 rounded-xl bg-white/[0.04] hover:bg-white/[0.08] border border-white/[0.06] flex items-center justify-center text-[#A8A29E] hover:text-[#EDE5D4] transition-colors touch-manipulation"
+      title="Create group"
+      aria-label="Create group"
+    >
+      <Plus className="w-4 h-4" />
+    </button>
+  </div>
+
+  {/* Search */}
+  <div className="relative z-10 px-4 pb-3">
+    <div className="relative">
+      <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 pointer-events-none text-[#6B6259]" />
+      <input
+        type="text"
+        value={searchQuery}
+        onChange={(e) => setSearchQuery(e.target.value)}
+        placeholder="Search groups"
+        className="w-full h-11 pl-11 pr-10 rounded-2xl bg-white/[0.03] border border-white/[0.06] text-[13.5px] text-[#EDE5D4] focus:outline-none focus:ring-2 focus:ring-inset focus:ring-[#D97706]/25 focus:border-[#D97706]/40 placeholder:text-[#6B6259] transition-colors touch-manipulation"
+      />
+      {searchQuery && (
+        <button
+          type="button"
+          onClick={() => setSearchQuery('')}
+          className="absolute right-2.5 top-1/2 -translate-y-1/2 w-6 h-6 rounded-full flex items-center justify-center text-[#6B6259] hover:bg-white/[0.06] transition-colors touch-manipulation"
+          aria-label="Clear search"
+        >
+          <X className="w-3.5 h-3.5" />
+        </button>
+      )}
+    </div>
+  </div>
+
+  {/* Divider */}
+  <div aria-hidden className="relative z-10 h-px mx-4 bg-white/[0.06]" />
+
+  {/* List */}
+  <div
+    className="groups-sidebar-scroll relative z-10 flex-1 overflow-y-auto px-2 py-2 space-y-0.5"
+    style={{ overscrollBehavior: 'contain' }}
+  >
+    {filteredGroups.length === 0 ? (
+      <div className="flex flex-col items-center justify-center text-center px-4 py-12 gap-2.5">
+        <div className="w-12 h-12 rounded-full bg-white/[0.03] border border-white/[0.06] flex items-center justify-center">
+          {groups.length === 0 ? (
+            <Hash className="w-5 h-5 text-[#6B6259] opacity-60" />
           ) : (
-            filteredGroups.map((group) => (
-              <SidebarRow
-                key={group.id}
-                group={group}
-                isSelected={group.id === activeGroupId}
-                pinned={pinnedIds.has(String(group.id))}
-                muted={mutedIds.has(String(group.id))}
-                onOpen={openGroup}
-                onMenu={openMenu}
-              />
-            ))
+            <Search className="w-5 h-5 text-[#6B6259] opacity-60" />
           )}
         </div>
+        <p className="text-[13px] font-medium text-[#EDE5D4] opacity-90">
+          {groups.length === 0
+            ? 'No groups yet'
+            : searchQuery
+            ? 'No matches found'
+            : 'Nothing here yet'}
+        </p>
+        <p className="text-[11.5px] text-[#6B6259] max-w-[220px] leading-snug">
+          {groups.length === 0
+            ? 'Create your first group to get started.'
+            : searchQuery
+            ? `Nothing matched "${searchQuery}".`
+            : 'Use + above to create one.'}
+        </p>
+        {searchQuery ? (
+          <button
+            type="button"
+            onClick={() => setSearchQuery('')}
+            className="mt-1 h-8 px-3.5 rounded-full text-[12px] font-semibold bg-[#D97706] hover:bg-[#B45309] text-[#0F0D0A] transition-colors touch-manipulation"
+          >
+            Clear search
+          </button>
+        ) : groups.length === 0 ? (
+          <button
+            type="button"
+            onClick={() => setCreateModalOpen(true)}
+            className="mt-1 h-8 px-3.5 rounded-full text-[12px] font-semibold bg-[#D97706] hover:bg-[#B45309] text-[#0F0D0A] transition-colors touch-manipulation inline-flex items-center gap-1.5"
+          >
+            <Plus className="w-3.5 h-3.5" /> Create group
+          </button>
+        ) : null}
       </div>
-
+    ) : (
+      filteredGroups.map((group) => (
+        <SidebarRow
+          key={group.id}
+          group={group}
+          isSelected={group.id === activeGroupId}
+          pinned={pinnedIds.has(String(group.id))}
+          muted={mutedIds.has(String(group.id))}
+          onOpen={openGroup}
+          onMenu={openMenu}
+        />
+      ))
+    )}
+  </div>
+</div>
       {/* RIGHT: Channel view */}
       <div className={`${hasActiveGroup ? 'flex' : 'hidden md:flex'} flex-1 flex-col h-full min-w-0 bg-[#0B0A08] relative`}>
         {activeGroupId && activeGroup ? (
