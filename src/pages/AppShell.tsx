@@ -274,6 +274,7 @@ function AppShell(): React.JSX.Element {
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const [mobileUserMenuOpen, setMobileUserMenuOpen] = useState(false);
   const [callerName, setCallerName] = useState<string | null>(null);
+  const [keyboardOpen, setKeyboardOpen] = useState(false);
 
   const drawerOpenRef = useRef(false);
   const openDrawerRef = useRef<() => void>(() => {});
@@ -300,6 +301,29 @@ function AppShell(): React.JSX.Element {
 
   openDrawerRef.current = openDrawer;
   closeDrawerRef.current = closeDrawer;
+
+  /* ── Detect soft keyboard via visualViewport ───────── */
+  useEffect(() => {
+    const vv = window.visualViewport;
+    if (!vv) return;
+
+    const check = () => {
+      // When the soft keyboard is up, the visual viewport is significantly
+      // shorter than the layout viewport. 150px threshold filters out
+      // browser URL-bar show/hide (which is < 120px).
+      const gap = window.innerHeight - vv.height;
+      const open = gap > 150;
+      setKeyboardOpen((prev) => (prev === open ? prev : open));
+    };
+
+    check();
+    vv.addEventListener('resize', check);
+    vv.addEventListener('scroll', check);
+    return () => {
+      vv.removeEventListener('resize', check);
+      vv.removeEventListener('scroll', check);
+    };
+  }, []);
 
   useEffect(() => {
     closeDrawerRef.current();
@@ -965,15 +989,17 @@ function AppShell(): React.JSX.Element {
           ref={mainRef}
           key={location.pathname}
           className={`tab-swipe-surface shell-main flex-1 overflow-y-auto bg-transparent relative custom-scrollbar overscroll-contain ${routeAnim} ${
-            !hideMobileChrome ? 'pb-16 md:pb-0' : ''
-          }`}
+            !hideMobileChrome ? (keyboardOpen ? 'pb-0' : 'pb-16') : ''
+          } md:pb-0`}
         >
           <Outlet />
         </main>
 
         {!hideMobileChrome && (
           <nav
-            className="md:hidden fixed bottom-0 left-0 right-0 bg-[#0C0A08] border-t border-white/[0.06] z-40"
+            className={`md:hidden fixed bottom-0 left-0 right-0 bg-[#0C0A08] border-t border-white/[0.06] z-40 transition-transform duration-200 ease-out ${
+              keyboardOpen ? 'translate-y-full' : 'translate-y-0'
+            }`}
             style={{
               height: 'calc(4rem + env(safe-area-inset-bottom, 0px))',
               paddingBottom: 'env(safe-area-inset-bottom, 0px)',
