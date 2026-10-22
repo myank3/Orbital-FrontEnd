@@ -19,7 +19,7 @@ import { signalRService } from '../services/signalr';
 import { presenceStore } from '../services/presenceStore';
 import { useAuth } from '../context/AuthContext'; 
 import { useCall, type CallState } from '../context/CallContext';
-
+import { createPortal } from 'react-dom';
 
 import {
   decryptBatch,
@@ -100,7 +100,12 @@ import {
 /* ────────────────────────────────────────────────────────── */
 /* WhatsApp-style call timer pill                             */
 /* ────────────────────────────────────────────────────────── */
-
+function Portal({ children }: { children: React.ReactNode }) {
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
+  if (!mounted) return null;
+  return createPortal(children, document.body);
+}
 function CallTimerPill({ callState, duration }: { callState: CallState; duration: number }) {
   if (callState !== 'connecting') return null;
   const m = Math.floor(duration / 60).toString().padStart(2, '0');
@@ -1099,7 +1104,8 @@ function ImageViewer({
 
   if (!current) return null;
 
-  return (
+    return (
+    <Portal>
     <div
       className="fixed inset-0 z-[200] bg-black flex items-center justify-center select-none overflow-hidden"
       onClick={handleContainerClick}
@@ -1177,6 +1183,7 @@ function ImageViewer({
         />
       </div>
     </div>
+    </Portal>
   );
 }
 function ViewOnceViewerModal({
@@ -1202,7 +1209,8 @@ function ViewOnceViewerModal({
     return () => { document.body.style.overflow = prev; };
   }, []);
 
-  return (
+    return (
+    <Portal>
     <div
       className="fixed inset-0 z-[210] bg-black flex flex-col items-center justify-center select-none"
       style={{ WebkitTouchCallout: 'none' } as React.CSSProperties}
@@ -1238,6 +1246,7 @@ function ViewOnceViewerModal({
         Tap anywhere to close · Disappears once dismissed
       </p>
     </div>
+    </Portal>
   );
 }
 
@@ -1252,9 +1261,8 @@ function messageTypeLabel(m: LocalMessage): string {
   if (m.mediaType === MediaType.File) return 'File';
   return 'Text';
 }
-
 function MessageMenu({
-  message, isMe, theme, reactions, currentUserId,
+  message, isMe, theme, reactions, currentUserId, anchor,
   onClose, onReact, onReply, onCopy, onInfo, onDeleteForMe, onDeleteForEveryone,
 }: {
   message: LocalMessage;
@@ -1262,6 +1270,7 @@ function MessageMenu({
   theme: ChatTheme;
   reactions: ReactionEntry[];
   currentUserId: string | undefined;
+  anchor: { x: number; y: number };
   onClose: () => void;
   onReact: (emoji: string) => void;
   onReply: () => void;
@@ -1270,38 +1279,89 @@ function MessageMenu({
   onDeleteForMe: () => void;
   onDeleteForEveryone: () => void;
 }) {
+  const menuRef = useRef<HTMLDivElement>(null);
+  const [pos, setPos] = useState<{ left: number; top: number; origin: 'top' | 'bottom' } | null>(null);
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [onClose]);
 
+  useLayoutEffect(() => {
+    const el = menuRef.current;
+    if (!el) return;
+    const rect = el.getBoundingClientRect();
+    const w = rect.width || 260;
+    const h = rect.height || 300;
+    const pad = 12;
+    const gap = 8;
+
+    let left = anchor.x - w / 2;
+    left = Math.max(pad, Math.min(window.innerWidth - w - pad, left));
+
+    let top: number;
+    let origin: 'top' | 'bottom';
+    if (anchor.y + gap + h <= window.innerHeight - pad) {
+      top = anchor.y + gap;
+      origin = 'top';
+    } else if (anchor.y - gap - h >= pad) {
+      top = anchor.y - gap - h;
+      origin = 'bottom';
+    } else {
+      top = Math.max(pad, window.innerHeight - h - pad);
+      origin = 'bottom';
+    }
+
+    setPos({ left, top, origin });
+  }, [anchor]);
+
   const canAct = typeof message.id === 'number' && message.id > 0;
   const text = message.plaintext ?? message.content ?? '';
   const mine = new Set(reactions.filter((r) => r.userId === currentUserId).map((r) => r.emoji));
-  const side = isMe ? 'self-end' : 'self-start';
-  const itemCls = 'w-full flex items-center gap-3 px-4 py-3 text-[13.5px] font-medium text-left text-[#EDE5D4] hover:bg-white/[0.06] active:bg-white/[0.1]';
   const run = (fn: () => void) => () => { fn(); onClose(); };
+  const itemCls =
+    'w-full flex items-center gap-2.5 px-3 py-2.5 text-[13px] font-medium text-left text-[#EDE5D4] hover:bg-white/[0.06] active:bg-white/[0.10]';
 
   return (
-    <div
-      className="fixed inset-0 z-[170] bg-black/65 flex items-center justify-center p-4"
-      onClick={onClose}
-      onContextMenu={(e) => { e.preventDefault(); onClose(); }}
-    >
+    <Portal>
+      <style>{`
+        @keyframes menu-pop {
+          from { opacity: 0; transform: scale(0.94); }
+          to   { opacity: 1; transform: scale(1); }
+        }
+      `}</style>
+
+      {/* Transparent click-catcher */}
       <div
+        className="fixed inset-0 z-[290]"
+        onClick={onClose}
+        onContextMenu={(e) => { e.preventDefault(); onClose(); }}
+        aria-hidden
+      />
+
+      <div
+        ref={menuRef}
+        style={{
+          left: pos?.left ?? -10000,
+          top: pos?.top ?? -10000,
+          transformOrigin: pos?.origin === 'bottom' ? 'bottom center' : 'top center',
+          animation: pos ? 'menu-pop 140ms cubic-bezier(0.16,1,0.3,1) both' : undefined,
+        }}
         onClick={(e) => e.stopPropagation()}
-        className="w-full max-w-[340px] flex flex-col gap-2.5 max-h-full overflow-y-auto"
+        className="fixed z-[291] w-[260px] max-w-[calc(100vw-24px)] flex flex-col gap-1.5"
+        role="menu"
       >
         {canAct && (
-          <div className={`${side} flex items-center gap-0.5 px-2 py-1.5 rounded-full bg-[#1C1A17] border border-white/[0.1] shadow-2xl`}>
+          <div className="flex items-center gap-0.5 px-1 py-1 rounded-full bg-[#1C1A17] border border-white/[0.10] shadow-2xl">
             {QUICK_REACTIONS.map((e) => (
               <button
                 key={e}
                 onClick={run(() => onReact(e))}
-                className={`w-10 h-10 rounded-full flex items-center justify-center text-[22px] hover:bg-white/[0.1] active:bg-white/[0.16] ${
+                className={`flex-1 h-9 rounded-full flex items-center justify-center text-[20px] hover:bg-white/[0.10] active:bg-white/[0.16] transition-colors ${
                   mine.has(e) ? 'bg-white/[0.14]' : ''
                 }`}
+                aria-label={`React ${e}`}
               >
                 {e}
               </button>
@@ -1309,49 +1369,41 @@ function MessageMenu({
           </div>
         )}
 
-        <div
-          className={`${side} max-w-[85%] rounded-[20px] px-4 py-2 text-[14px] leading-[1.45] shadow-lg ${
-            isMe ? theme.bubbleSent : theme.bubbleReceived
-          }`}
-        >
-          <p className="line-clamp-4 whitespace-pre-wrap break-words">{messageSnippet(message)}</p>
-        </div>
-
-        <div className={`${side} w-[250px] rounded-2xl bg-[#1C1A17] border border-white/[0.08] shadow-2xl overflow-hidden`}>
+        <div className="rounded-2xl bg-[#1C1A17] border border-white/[0.10] shadow-2xl overflow-hidden">
           {canAct && (
-            <button onClick={run(onReply)} className={itemCls}>
+            <button onClick={run(onReply)} className={itemCls} role="menuitem">
               <Reply className="w-4 h-4 text-[#A8A29E]" /><span>Reply</span>
             </button>
           )}
           {text && (
-            <button onClick={run(onCopy)} className={itemCls}>
+            <button onClick={run(onCopy)} className={itemCls} role="menuitem">
               <Copy className="w-4 h-4 text-[#A8A29E]" /><span>Copy text</span>
             </button>
           )}
           {canAct && (
-            <button onClick={run(onInfo)} className={itemCls}>
+            <button onClick={run(onInfo)} className={itemCls} role="menuitem">
               <Info className="w-4 h-4 text-[#A8A29E]" /><span>Info</span>
             </button>
           )}
           {canAct && (
-            <button onClick={run(onDeleteForMe)} className={`${itemCls} border-t border-white/[0.05]`}>
+            <button onClick={run(onDeleteForMe)} className={`${itemCls} border-t border-white/[0.05]`} role="menuitem">
               <EyeOff className="w-4 h-4 text-[#A8A29E]" /><span>Delete for me</span>
             </button>
           )}
           {canAct && isMe && (
             <button
               onClick={run(onDeleteForEveryone)}
-              className="w-full flex items-center gap-3 px-4 py-3 text-[13.5px] font-medium text-left text-[#F87171] hover:bg-[#B91C1C]/[0.12] active:bg-[#B91C1C]/[0.2]"
+              className="w-full flex items-center gap-2.5 px-3 py-2.5 text-[13px] font-medium text-left text-[#F87171] hover:bg-[#B91C1C]/[0.12] active:bg-[#B91C1C]/[0.20]"
+              role="menuitem"
             >
               <Trash2 className="w-4 h-4" /><span>Delete for everyone</span>
             </button>
           )}
         </div>
       </div>
-    </div>
+    </Portal>
   );
 }
-
 function MessageInfoModal({
   message, isMe, targetName, onClose,
 }: {
@@ -1382,8 +1434,8 @@ function MessageInfoModal({
     ['Status', status],
     ['Type', messageTypeLabel(message)],
   ];
-
   return (
+    <Portal>
     <div className="fixed inset-0 z-[175] bg-black/60 flex items-center justify-center p-4" onClick={onClose}>
       <div
         onClick={(e) => e.stopPropagation()}
@@ -1411,6 +1463,7 @@ function MessageInfoModal({
         </div>
       </div>
     </div>
+    </Portal>
   );
 }
 
@@ -1510,7 +1563,8 @@ function ChatContextMenu({
     { key: 'unfriend', label: `Unfriend @${friend.handle}`, icon: <UserMinus className="w-4 h-4" />, onClick: onUnfriend, danger: true },
   ];
 
-  return (
+   return (
+    <Portal>
     <div
       className="fixed inset-0 z-[180] flex items-end sm:items-center justify-center p-0 sm:p-4 bg-black/60"
       onClick={onClose}
@@ -1548,6 +1602,7 @@ function ChatContextMenu({
         </div>
       </div>
     </div>
+    </Portal>
   );
 }
 
@@ -1900,7 +1955,7 @@ interface MessageRowProps {
   onOpenImage: (m: LocalMessage, senderName: string) => void;
   onReact: (messageId: number, emoji: string) => void;
   onStartReply: (m: LocalMessage) => void;
-  onOpenMenu: (m: LocalMessage) => void;
+    onOpenMenu: (m: LocalMessage, anchor?: { x: number; y: number }) => void;
   onJumpToReply: (id: number) => void;
   onMediaLoad: () => void;
 }
@@ -1932,13 +1987,14 @@ const MessageRow = React.memo(
       if (longPressRef.current) { window.clearTimeout(longPressRef.current); longPressRef.current = null; }
     };
 
-    const onTouchStart = (e: React.TouchEvent) => {
+      const onTouchStart = (e: React.TouchEvent) => {
       const t = e.touches[0];
+      const anchor = { x: t.clientX, y: t.clientY };
       touchStartRef.current = { x: t.clientX, y: t.clientY };
       swipingRef.current = false;
       longPressRef.current = window.setTimeout(() => {
         if (!swipingRef.current) {
-          onOpenMenu(message);
+          onOpenMenu(message, anchor);
           if (navigator.vibrate) navigator.vibrate(10);
         }
       }, 420);
@@ -2015,7 +2071,7 @@ const MessageRow = React.memo(
           onTouchMove={onTouchMove}
           onTouchEnd={onTouchEnd}
           onTouchCancel={onTouchEnd}
-          onContextMenu={(e) => { e.preventDefault(); onOpenMenu(message); }}
+          onContextMenu={(e) => { e.preventDefault(); onOpenMenu(message, { x: e.clientX, y: e.clientY }); }}
         >
           {!isMe && (
             <div className="w-8 shrink-0 pt-0.5 mr-2.5">
@@ -2053,14 +2109,18 @@ const MessageRow = React.memo(
                 >
                   <Reply className="w-4 h-4" />
                 </button>
-                <button
+                                <button
                   type="button"
-                  onClick={() => onOpenMenu(message)}
+                  onClick={(e) => {
+                    const r = e.currentTarget.getBoundingClientRect();
+                    onOpenMenu(message, { x: r.left + r.width / 2, y: r.bottom });
+                  }}
                   title="More"
                   className={`w-7 h-7 rounded-full flex items-center justify-center ${theme.textSecondary} ${theme.hoverBg}`}
                 >
                   <MoreHorizontal className="w-4 h-4" />
                 </button>
+                 
               </div>
             )}
 
@@ -2410,9 +2470,10 @@ function InfoModal({
     },
   };
 
-  return (
+   return (
+    <Portal>
     <div
-      className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4"
+      className="fixed inset-0 z-[185] bg-black/60 flex items-center justify-center p-4"
       onClick={handleClose}
     >
       <div
@@ -2492,6 +2553,7 @@ function InfoModal({
         </div>
       </div>
     </div>
+    </Portal>
   );
 }
 
@@ -2590,6 +2652,7 @@ function MediaPreview({
   const send = () => onSend(caption, viewOnce);
 
   return (
+    <Portal>
     <div className="fixed inset-0 z-[220] bg-[#0B0B0B] flex flex-col select-none">
       <div className="h-14 px-2 flex items-center justify-between shrink-0">
         <button
@@ -2715,6 +2778,7 @@ function MediaPreview({
         </button>
       </div>
     </div>
+    </Portal>
   );
 }
 
@@ -3193,7 +3257,7 @@ export function DirectMessagePane(): React.JSX.Element {
   );
 
   const [replyTo, setReplyTo] = useState<LocalMessage | null>(null);
-  const [menuMessage, setMenuMessage] = useState<LocalMessage | null>(null);
+    const [menuState, setMenuState] = useState<{ message: LocalMessage; anchor: { x: number; y: number } } | null>(null);
   const [infoMessage, setInfoMessage] = useState<LocalMessage | null>(null);
   const [pendingDeleteEveryoneId, setPendingDeleteEveryoneId] = useState<string | number | null>(null);
   const [infoOpen, setInfoOpen] = useState(false);
@@ -4002,7 +4066,9 @@ export function DirectMessagePane(): React.JSX.Element {
   }, []);
 
   const handleCancelReply = useCallback(() => setReplyTo(null), []);
-  const handleOpenMenu = useCallback((m: LocalMessage) => { setMenuMessage(m); }, []);
+    const handleOpenMenu = useCallback((m: LocalMessage, anchor?: { x: number; y: number }) => {
+    setMenuState({ message: m, anchor: anchor ?? { x: window.innerWidth / 2, y: window.innerHeight / 2 } });
+  }, []);
 
   /* ── Misc actions ────────────────────────────────────────── */
 
@@ -4575,23 +4641,24 @@ export function DirectMessagePane(): React.JSX.Element {
         )}
       </div>
 
-      {menuMessage && (
+            {menuState && (
         <MessageMenu
-          message={menuMessage}
-          isMe={menuMessage.senderId === user?.id}
+          message={menuState.message}
+          anchor={menuState.anchor}
+          isMe={menuState.message.senderId === user?.id}
           theme={theme}
-          reactions={reactions[String(menuMessage.id)] ?? EMPTY_REACTIONS}
+          reactions={reactions[String(menuState.message.id)] ?? EMPTY_REACTIONS}
           currentUserId={user?.id}
-          onClose={() => setMenuMessage(null)}
-          onReact={(emoji) => { void handleReact(menuMessage.id as number, emoji); }}
-          onReply={() => handleStartReply(menuMessage)}
+          onClose={() => setMenuState(null)}
+          onReact={(emoji) => { void handleReact(menuState.message.id as number, emoji); }}
+          onReply={() => handleStartReply(menuState.message)}
           onCopy={() => {
-            const t = menuMessage.plaintext ?? menuMessage.content ?? '';
+            const t = menuState.message.plaintext ?? menuState.message.content ?? '';
             if (t) void navigator.clipboard.writeText(t);
           }}
-          onInfo={() => setInfoMessage(menuMessage)}
-          onDeleteForMe={() => { void handleDeleteForMe(menuMessage); }}
-          onDeleteForEveryone={() => handleRequestDeleteForEveryone(menuMessage)}
+          onInfo={() => setInfoMessage(menuState.message)}
+          onDeleteForMe={() => { void handleDeleteForMe(menuState.message); }}
+          onDeleteForEveryone={() => handleRequestDeleteForEveryone(menuState.message)}
         />
       )}
 
@@ -4604,9 +4671,10 @@ export function DirectMessagePane(): React.JSX.Element {
         />
       )}
 
-      {pendingDeleteEveryoneId != null && (
+            {pendingDeleteEveryoneId != null && (
+        <Portal>
         <div
-          className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4"
+          className="fixed inset-0 z-[190] bg-black/60 flex items-center justify-center p-4"
           onClick={() => setPendingDeleteEveryoneId(null)}
         >
           <div
@@ -4629,6 +4697,7 @@ export function DirectMessagePane(): React.JSX.Element {
             </div>
           </div>
         </div>
+        </Portal>
       )}
 
       {chatMenuFriend && (
