@@ -347,7 +347,7 @@ function layoutTier(friends: FriendDto[], minGapDeg: number): OrbitNode[] {
 }
 
 /* ────────────────────────────────────────────────────────── */
-/* Tier — no motion lib, no CSS-var counter-rotation          */
+/* Tier — counter-rotation via inherited CSS custom property  */
 /* ────────────────────────────────────────────────────────── */
 
 interface TierProps {
@@ -360,7 +360,6 @@ interface TierProps {
   online: boolean;
   reduced: boolean;
   glowPulse: boolean;
-  registerCounterRotate: (id: string, el: HTMLElement | null) => void;
 }
 
 const Tier = React.memo(function Tier({
@@ -373,7 +372,6 @@ const Tier = React.memo(function Tier({
   online,
   reduced,
   glowPulse,
-  registerCounterRotate,
 }: TierProps) {
   if (nodes.length === 0) return null;
 
@@ -395,21 +393,20 @@ const Tier = React.memo(function Tier({
               style={{
                 transform: `rotate(${angle}deg) translateX(${finalRadius}) rotate(${-angle}deg)`,
                 transformOrigin: '0 0',
-                backfaceVisibility: 'hidden',
               }}
             >
               <div
                 className="flex flex-col items-center"
                 style={{ transform: 'translate(-50%, -50%)' }}
               >
-                {/* Counter-rotation target — direct transform writes per frame */}
+                {/*
+                 * Counter-rotation reads --rot inherited from the stage
+                 * (one write/frame on the stage instead of N+1 leaf writes).
+                 */}
                 <div
-                  ref={(el) => registerCounterRotate(f.userId, el)}
                   style={{
-                    transform: 'rotate(0deg)',
+                    transform: 'rotate(calc(-1 * var(--rot, 0deg)))',
                     willChange: 'transform',
-                    backfaceVisibility: 'hidden',
-                    transformOrigin: 'center center',
                     animation: reduced
                       ? undefined
                       : `avatarFade 320ms ${0.02 + i * 0.012}s ease-out both`,
@@ -526,7 +523,6 @@ export default function ConstellationView({ friends: friendsProp }: Constellatio
   // ── Spin engine ──────────────────────────────────────────
   const pageRef = useRef<HTMLDivElement | null>(null);
   const stageRef = useRef<HTMLDivElement | null>(null);
-  const counterRotateRefs = useRef(new Map<string, HTMLElement>());
   const rotationRef = useRef(0);
   const velocityRef = useRef(IDLE_VELOCITY);
   const idleDirRef = useRef(1);
@@ -546,12 +542,9 @@ export default function ConstellationView({ friends: friendsProp }: Constellatio
     lastTime: 0,
     moved: false,
     velocity: 0,
+    // Cached on pointerdown — avoids getBoundingClientRect() at 240Hz
+    center: { cx: 0, cy: 0 },
   });
-
-  const registerCounterRotate = useCallback((id: string, el: HTMLElement | null): void => {
-    if (el) counterRotateRefs.current.set(id, el);
-    else counterRotateRefs.current.delete(id);
-  }, []);
 
   // ── friends ──────────────────────────────────────────────
   useEffect(() => {
@@ -581,15 +574,11 @@ export default function ConstellationView({ friends: friendsProp }: Constellatio
     };
   }, []);
 
-  // ── rotation: single write to stage + direct writes to counter-rotate leaves ──
+  // ── rotation: single CSS-var write/frame, inherited by all leaves ──
   const applyRotation = useCallback((deg: number) => {
     rotationRef.current = deg;
     if (stageRef.current) {
-      stageRef.current.style.transform = `rotate(${deg}deg)`;
-    }
-    const inv = `rotate(${-deg}deg)`;
-    for (const el of counterRotateRefs.current.values()) {
-      el.style.transform = inv;
+      stageRef.current.style.setProperty('--rot', `${deg}deg`);
     }
   }, []);
 
@@ -605,7 +594,6 @@ export default function ConstellationView({ friends: friendsProp }: Constellatio
     lastTimeRef.current = performance.now();
 
     const tick = (now: number) => {
-      // Clamp dt both ways so 240Hz stays stable and stalled tabs don't jump
       const rawDt = (now - lastTimeRef.current) / 1000;
       const dt = Math.min(MAX_DT, Math.max(0, rawDt));
       lastTimeRef.current = now;
@@ -616,28 +604,20 @@ export default function ConstellationView({ friends: friendsProp }: Constellatio
         return;
       }
 
-      // Frame-rate-independent exponential friction toward idle velocity.
-      // Instead of snapping, we ease into the idle target so the handoff
-      // at the end of a fling is invisible even at 240Hz.
+      // Frame-rate-independent exponential friction, eased into idle target
+      // so the handoff at the end of a fling is invisible at any refresh rate.
       const speed = velocityRef.current;
+      const decayed = speed * Math.pow(FRICTION_PER_SEC, dt);
+      let next = decayed;
 
-      if (Math.abs(speed) <= IDLE_VELOCITY * 1.001) {
+      if (Math.abs(decayed) < IDLE_VELOCITY) {
         const idleTarget = idleDirRef.current * IDLE_VELOCITY;
-        velocityRef.current =
-          speed + (idleTarget - speed) * (1 - Math.exp(-dt * 8));
-      } else {
-        const decay = Math.pow(FRICTION_PER_SEC, dt);
-        const next = speed * decay;
-        if (Math.abs(next) < IDLE_VELOCITY) {
-          idleDirRef.current = Math.sign(next) || idleDirRef.current;
-          const tgt = idleDirRef.current * IDLE_VELOCITY;
-          velocityRef.current = next + (tgt - next) * (1 - Math.exp(-dt * 10));
-        } else {
-          velocityRef.current = next;
-        }
+        const alpha = 1 - Math.exp(-dt * 8);
+        next = decayed + (idleTarget - decayed) * alpha;
       }
 
-      applyRotation(rotationRef.current + velocityRef.current * dt);
+      velocityRef.current = next;
+      applyRotation(rotationRef.current + next * dt);
       rafRef.current = requestAnimationFrame(tick);
     };
 
@@ -656,29 +636,22 @@ export default function ConstellationView({ friends: friendsProp }: Constellatio
   useEffect(() => () => stopRaf(), [stopRaf]);
 
   // ── pointer helpers ──────────────────────────────────────
-  const getCenter = useCallback(() => {
-    const el = stageRef.current;
-    if (!el) return null;
-    const rect = el.getBoundingClientRect();
-    return { cx: rect.left + rect.width / 2, cy: rect.top + rect.height / 2 };
+  const pointerAngle = useCallback((clientX: number, clientY: number): number => {
+    const c = dragRef.current.center;
+    return Math.atan2(clientY - c.cy, clientX - c.cx) * (180 / Math.PI);
   }, []);
-
-  const pointerAngle = useCallback(
-    (clientX: number, clientY: number): number | null => {
-      const c = getCenter();
-      if (!c) return null;
-      return Math.atan2(clientY - c.cy, clientX - c.cx) * (180 / Math.PI);
-    },
-    [getCenter],
-  );
 
   const onPointerDown = useCallback(
     (e: React.PointerEvent) => {
       if (e.pointerType === 'mouse' && e.button !== 0) return;
       const el = stageRef.current;
       if (!el) return;
-      const angle = pointerAngle(e.clientX, e.clientY);
-      if (angle === null) return;
+
+      // One layout read per drag, not per move.
+      const rect = el.getBoundingClientRect();
+      const cx = rect.left + rect.width / 2;
+      const cy = rect.top + rect.height / 2;
+      const angle = Math.atan2(e.clientY - cy, e.clientX - cx) * (180 / Math.PI);
 
       pausedRef.current = false;
       try { el.setPointerCapture(e.pointerId); } catch { /* ignore */ }
@@ -694,11 +667,12 @@ export default function ConstellationView({ friends: friendsProp }: Constellatio
         lastTime: performance.now(),
         moved: false,
         velocity: 0,
+        center: { cx, cy },
       };
       velocityRef.current = 0;
       stopRaf();
     },
-    [pointerAngle, stopRaf],
+    [stopRaf],
   );
 
   const onPointerMove = useCallback(
@@ -712,7 +686,6 @@ export default function ConstellationView({ friends: friendsProp }: Constellatio
       if (!d.moved) return;
 
       const angle = pointerAngle(e.clientX, e.clientY);
-      if (angle === null) return;
 
       let totalDelta = angle - d.startAngle;
       if (totalDelta > 180) totalDelta -= 360;
@@ -728,10 +701,7 @@ export default function ConstellationView({ friends: friendsProp }: Constellatio
         else if (angleDelta < -180) angleDelta += 360;
 
         const instantVelocity = angleDelta / dt;
-
-        // Low-pass filter the instantaneous velocity so high-polling-rate
-        // jitter doesn't produce a noisy fling. Blend factor derives from dt
-        // so the time constant is frame-rate independent.
+        // Low-pass filter so 240Hz jitter doesn't produce a noisy fling.
         const alpha = 1 - Math.exp(-dt / VELOCITY_SMOOTHING_TAU);
         d.velocity = d.velocity + (instantVelocity - d.velocity) * alpha;
       }
@@ -786,10 +756,7 @@ export default function ConstellationView({ friends: friendsProp }: Constellatio
       ) return;
       e.preventDefault();
 
-      // Gentle impulse — smooth through the existing velocity filter
-      const impulse = e.deltaY * 0.3;
-      velocityRef.current += impulse;
-
+      velocityRef.current += e.deltaY * 0.3;
       const dir = Math.sign(velocityRef.current);
       if (dir !== 0) idleDirRef.current = dir;
       if (!pausedRef.current) startRaf();
@@ -1245,15 +1212,22 @@ export default function ConstellationView({ friends: friendsProp }: Constellatio
               </div>
             </div>
 
-            {/* Rotating disc — auto-spins + drag to fling */}
+            {/*
+             * Rotating disc — auto-spins + drag to fling.
+             *
+             * No `contain` / `translateZ(0)` — those clipped the outer-ring
+             * avatars (and their hover glow) to the stage's box, which was
+             * the "cutouts in avatar" bug. `will-change: transform` is all
+             * we need for GPU layer promotion; the actual rotation happens
+             * via the `--rot` custom property so leaves read it for free.
+             */}
             <div
               ref={stageRef}
               className="absolute inset-0"
               style={{
+                transform: 'rotate(var(--rot, 0deg))',
                 willChange: 'transform',
                 backfaceVisibility: 'hidden',
-                transform: 'translateZ(0)',
-                contain: 'layout paint',
                 touchAction: 'none',
                 userSelect: 'none',
                 cursor: coarse ? 'default' : 'grab',
@@ -1273,7 +1247,6 @@ export default function ConstellationView({ friends: friendsProp }: Constellatio
                 online={false}
                 reduced={reduced}
                 glowPulse={!lowPower}
-                registerCounterRotate={registerCounterRotate}
               />
               <Tier
                 nodes={visibleOnline}
@@ -1285,7 +1258,6 @@ export default function ConstellationView({ friends: friendsProp }: Constellatio
                 online
                 reduced={reduced}
                 glowPulse={!lowPower}
-                registerCounterRotate={registerCounterRotate}
               />
             </div>
 
