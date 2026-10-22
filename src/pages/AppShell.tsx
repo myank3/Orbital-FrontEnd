@@ -86,7 +86,6 @@ const IconMedia = (p: IconProps) => (
   </SvgBase>
 );
 
-// Broadcast / Radar signal icon
 const IconSignals = (p: IconProps) => (
   <SvgBase {...p}>
     <path d="M8.5 15.5a5 5 0 0 1 0-7" />
@@ -97,7 +96,6 @@ const IconSignals = (p: IconProps) => (
   </SvgBase>
 );
 
-// Atom / Orbit design
 const IconOrbit = (p: IconProps) => (
   <SvgBase {...p}>
     <ellipse cx="12" cy="12" rx="8" ry="3" transform="rotate(45 12 12)" />
@@ -125,8 +123,7 @@ interface NavItem {
 
 const DRAWER_W = 280;
 
-/** Ordered tab routes for swipe navigation. 
- *  Bottom nav visually shows 3, but swipe goes up to Calls. */
+/** Swipe routes include Calls so you can swipe past Friends */
 const TAB_ROUTES = [
   '/app/dm',
   '/app/groups',
@@ -173,7 +170,6 @@ const SHELL_CSS = `
     backface-visibility: hidden;
   }
 
-  /* ── Tab swipe slides ─────────────────────────────────── */
   @keyframes tab-in-right {
     from { opacity: 0; transform: translate3d(60px, 0, 0); }
     to   { opacity: 1; transform: none; }
@@ -185,7 +181,6 @@ const SHELL_CSS = `
   .tab-next { animation: tab-in-right 280ms cubic-bezier(0.16, 1, 0.3, 1) both; }
   .tab-prev { animation: tab-in-left  280ms cubic-bezier(0.16, 1, 0.3, 1) both; }
 
-  /* ── Non-tab navigation (into details / back) ─────────── */
   @keyframes route-forward {
     from { opacity: 0; transform: translate3d(18px, 0, 0); }
     to   { opacity: 1; transform: none; }
@@ -202,7 +197,6 @@ const SHELL_CSS = `
   .route-back    { animation: route-back    260ms cubic-bezier(0.16,1,0.3,1) both; }
   .route-fade    { animation: route-fade    200ms ease-out both; }
 
-  /* ── App shell atmosphere ─────────────────────────────── */
   .app-shell {
     position: relative;
     isolation: isolate;
@@ -237,8 +231,6 @@ const SHELL_CSS = `
     touch-action: pan-y;
   }
 
-  /* Main content swipe surface: allow native vertical scroll,
-     claim horizontal for the tab swipe gesture. */
   .tab-swipe-surface {
     touch-action: pan-y;
   }
@@ -251,8 +243,6 @@ const SHELL_CSS = `
     .drawer-panel { transition: none !important; }
   }
 `;
-
-/** Route helpers -------------------------------------------------- */
 
 function isFullScreenRoute(pathname: string): boolean {
   const isDmDetail = pathname.startsWith('/app/dm/') && pathname !== '/app/dm';
@@ -290,7 +280,6 @@ function AppShell(): React.JSX.Element {
   const closeDrawerRef = useRef<() => void>(() => {});
   drawerOpenRef.current = drawerOpen;
 
-  /* ── Drawer imperative helpers ─────────────────────── */
   const openDrawer = () => {
     const d = drawerRef.current;
     if (d) {
@@ -312,14 +301,12 @@ function AppShell(): React.JSX.Element {
   openDrawerRef.current = openDrawer;
   closeDrawerRef.current = closeDrawer;
 
-  /* ── Close menus on route change ────────────────────── */
   useEffect(() => {
     closeDrawerRef.current();
     setMobileUserMenuOpen(false);
     setUserMenuOpen(false);
   }, [location.pathname]);
 
-  /* ── Resolve caller display name ───────────────────── */
   useEffect(() => {
     const id = incomingCall?.initiatorId;
     if (!id) {
@@ -350,7 +337,6 @@ function AppShell(): React.JSX.Element {
     }
   };
 
-  /* ── Body scroll lock while drawer open ────────────── */
   useEffect(() => {
     if (!drawerOpen) return;
     const prev = document.body.style.overflow;
@@ -360,7 +346,7 @@ function AppShell(): React.JSX.Element {
     };
   }, [drawerOpen]);
 
-  /* ── Edge-swipe-to-open drawer (native non-passive) ── */
+  /* ── Edge-swipe-to-open drawer ── */
   useEffect(() => {
     const el = shellRef.current;
     if (!el) return;
@@ -436,7 +422,6 @@ function AppShell(): React.JSX.Element {
     };
   }, []);
 
-  /* ── Drawer drag-to-close ──────────────────────────── */
   const drawerDrag = useRef({
     active: false,
     startX: 0,
@@ -492,7 +477,7 @@ function AppShell(): React.JSX.Element {
     }
   };
 
-  /* ── Tab swipe navigation (native non-passive on main) ── */
+  /* ── Tab swipe navigation ── */
   useEffect(() => {
     const el = mainRef.current;
     if (!el) return;
@@ -509,7 +494,6 @@ function AppShell(): React.JSX.Element {
       if (window.innerWidth >= 768) return;
       if (drawerOpenRef.current) return;
       const t = e.touches[0];
-      // Leave the left edge for the drawer edge-swipe
       if (t.clientX < 30) return;
       active = true;
       axis = '';
@@ -549,7 +533,6 @@ function AppShell(): React.JSX.Element {
 
       const m = mainRef.current;
       if (!m) return;
-      // Rubber-band at boundaries
       const factor = atEdge ? 0.28 : 0.55;
       m.style.transform = `translate3d(${ddx * factor}px,0,0)`;
     };
@@ -602,7 +585,6 @@ function AppShell(): React.JSX.Element {
     };
   }, [location.pathname, navigate]);
 
-  /* ── Nav items ───────────── */
   const primaryNav: NavItem[] = useMemo(
     () => [
       { to: '/app/dm', label: 'Messages', icon: IconMessages },
@@ -621,13 +603,12 @@ function AppShell(): React.JSX.Element {
     [],
   );
 
-  // Bottom mobile nav only shows the 3 primary tabs
+  // Bottom nav only shows 3 primary tabs
   const allNav = useMemo(() => [...primaryNav], [primaryNav]);
 
   const railWidth = railHovered ? 224 : 68;
   const incomingDisplayName = callerName ?? 'Someone';
 
-  /* ── Direction-aware route animation ───────────────── */
   const navRef = useRef<{
     path: string;
     anim: 'tab-next' | 'tab-prev' | 'route-forward' | 'route-back' | 'route-fade';
@@ -656,7 +637,6 @@ function AppShell(): React.JSX.Element {
   }
   const routeAnim = navRef.current.anim;
 
-  /* ── Sliding bottom-nav indicator ──────────────────── */
   const bottomNavRef = useRef<HTMLDivElement | null>(null);
   const indicatorRef = useRef<HTMLSpanElement | null>(null);
   const tabRefs = useRef<Record<string, HTMLAnchorElement | null>>({});
@@ -690,18 +670,6 @@ function AppShell(): React.JSX.Element {
     ind.style.transform = `translate3d(${tr.left - wr.left}px, 0, 0)`;
   }, [location.pathname, allNav, hideMobileChrome]);
 
-  // Auto-scroll active tab into view on mobile
-  useEffect(() => {
-    const active = allNav.find(
-      (i) => location.pathname === i.to || location.pathname.startsWith(i.to + '/'),
-    );
-    if (!active) return;
-    const tab = tabRefs.current[active.to];
-    if (tab) {
-      tab.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
-    }
-  }, [location.pathname, allNav]);
-
   return (
     <div
       ref={shellRef}
@@ -710,7 +678,6 @@ function AppShell(): React.JSX.Element {
     >
       <style>{SHELL_CSS}</style>
 
-      {/* Transparent click-catcher (no visual backdrop, ever) */}
       <div
         className={`fixed inset-0 z-30 md:hidden ${
           drawerOpen ? 'pointer-events-auto' : 'pointer-events-none'
@@ -1006,23 +973,23 @@ function AppShell(): React.JSX.Element {
 
         {!hideMobileChrome && (
           <nav
-            className="md:hidden fixed bottom-0 left-0 right-0 bg-[#0C0A08] border-t border-white/[0.06] z-40 px-2"
+            className="md:hidden fixed bottom-0 left-0 right-0 bg-[#0C0A08] border-t border-white/[0.06] z-40"
             style={{
               height: 'calc(4rem + env(safe-area-inset-bottom, 0px))',
               paddingBottom: 'env(safe-area-inset-bottom, 0px)',
             }}
           >
-            <div className="flex items-center h-16">
+            <div className="flex items-center h-16 w-full">
               
-              {/* Scrollable tabs container */}
+              {/* Tabs fill remaining space evenly */}
               <div
                 ref={bottomNavRef}
-                className="relative flex items-center justify-start flex-1 h-full overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden scroll-smooth"
+                className="relative flex items-center justify-around flex-1 h-full"
               >
                 <span
                   ref={indicatorRef}
                   aria-hidden
-                  className="pointer-events-none absolute top-2 left-0 h-12 w-14 rounded-2xl bg-[#D97706]/12 ring-1 ring-inset ring-[#D97706]/22 opacity-0"
+                  className="pointer-events-none absolute top-2 left-0 h-12 rounded-2xl bg-[#D97706]/12 ring-1 ring-inset ring-[#D97706]/22 opacity-0"
                   style={{
                     transition:
                       'transform 340ms cubic-bezier(0.16,1,0.3,1), width 340ms cubic-bezier(0.16,1,0.3,1), opacity 180ms ease-out',
@@ -1038,7 +1005,7 @@ function AppShell(): React.JSX.Element {
                       tabRefs.current[item.to] = el;
                     }}
                     className={({ isActive }) =>
-                      `relative z-10 flex flex-col items-center justify-center w-[64px] min-w-[64px] h-16 gap-1 touch-manipulation transition-colors shrink-0 ${
+                      `relative z-10 flex flex-col items-center justify-center flex-1 h-16 gap-1 touch-manipulation transition-colors ${
                         isActive
                           ? 'text-[#D97706]'
                           : 'text-[#A8A29E] hover:text-[#EDE5D4]'
@@ -1046,12 +1013,12 @@ function AppShell(): React.JSX.Element {
                     }
                   >
                     <item.icon size={20} />
-                    <span className="text-[9px] font-medium whitespace-nowrap">{item.label}</span>
+                    <span className="text-[10px] font-medium whitespace-nowrap">{item.label}</span>
                   </NavLink>
                 ))}
               </div>
 
-              {/* Static avatar container */}
+              {/* Avatar — fixed 56px on the right */}
               <div className="relative flex items-center justify-center w-14 h-16 shrink-0 bg-[#0C0A08] shadow-[-10px_0_15px_-3px_rgba(12,10,8,0.9)] z-20">
                 <button
                   onClick={(e) => {
