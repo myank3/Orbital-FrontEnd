@@ -4,7 +4,6 @@
  */
 
 import React, {
-  useCallback,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -20,7 +19,7 @@ import VideoCallOverlay from '../components/VideoCallOverlay';
 import { Menu, X, Phone, PhoneOff, LogOut, SlidersHorizontal } from 'lucide-react';
 
 /* ────────────────────────────────────────────────────────── */
-/* Custom icon set — rounded 1.8 stroke, cohesive feel       */
+/* Custom icon set — 1.8 stroke, cohesive                    */
 /* ────────────────────────────────────────────────────────── */
 
 type IconProps = React.SVGProps<SVGSVGElement> & { size?: number };
@@ -102,7 +101,9 @@ const IconOrbit = (p: IconProps) => (
   </SvgBase>
 );
 
-const IconSettings = (p: IconProps) => <SlidersHorizontal {...(p as any)} size={p.size ?? 18} strokeWidth={1.8} />;
+const IconSettings = (p: IconProps) => (
+  <SlidersHorizontal {...(p as any)} size={p.size ?? 18} strokeWidth={1.8} />
+);
 
 /* ────────────────────────────────────────────────────────── */
 /* Nav types                                                  */
@@ -119,8 +120,21 @@ interface NavItem {
 
 const DRAWER_W = 280;
 
+/** Ordered tab routes for swipe navigation (all tabs). */
+const TAB_ROUTES = [
+  '/app/dm',
+  '/app/groups',
+  '/app/friends',
+  '/app/calls',
+  '/app/notifications',
+  '/app/signals',
+] as const;
+
+function getTabIndex(pathname: string): number {
+  return (TAB_ROUTES as readonly string[]).indexOf(pathname);
+}
+
 const SHELL_CSS = `
-  /* ── GPU-only keyframes ─────────────────────────────── */
   @keyframes signal-shine {
     0%   { transform: translate3d(-200%, 0, 0) skewX(-20deg); }
     100% { transform: translate3d(200%, 0, 0) skewX(-20deg); }
@@ -155,7 +169,19 @@ const SHELL_CSS = `
     backface-visibility: hidden;
   }
 
-  /* ── Route transitions (direction-aware "swipe") ────── */
+  /* ── Tab swipe slides ─────────────────────────────────── */
+  @keyframes tab-in-right {
+    from { opacity: 0; transform: translate3d(60px, 0, 0); }
+    to   { opacity: 1; transform: none; }
+  }
+  @keyframes tab-in-left {
+    from { opacity: 0; transform: translate3d(-60px, 0, 0); }
+    to   { opacity: 1; transform: none; }
+  }
+  .tab-next { animation: tab-in-right 280ms cubic-bezier(0.16, 1, 0.3, 1) both; }
+  .tab-prev { animation: tab-in-left  280ms cubic-bezier(0.16, 1, 0.3, 1) both; }
+
+  /* ── Non-tab navigation (into details / back) ─────────── */
   @keyframes route-forward {
     from { opacity: 0; transform: translate3d(18px, 0, 0); }
     to   { opacity: 1; transform: none; }
@@ -172,7 +198,7 @@ const SHELL_CSS = `
   .route-back    { animation: route-back    260ms cubic-bezier(0.16,1,0.3,1) both; }
   .route-fade    { animation: route-fade    200ms ease-out both; }
 
-  /* ── App shell atmosphere (static, zero runtime) ────── */
+  /* ── App shell atmosphere ─────────────────────────────── */
   .app-shell {
     position: relative;
     isolation: isolate;
@@ -207,9 +233,15 @@ const SHELL_CSS = `
     touch-action: pan-y;
   }
 
+  /* Main content swipe surface: allow native vertical scroll,
+     claim horizontal for the tab swipe gesture. */
+  .tab-swipe-surface {
+    touch-action: pan-y;
+  }
+
   @media (prefers-reduced-motion: reduce) {
     .signal-shine, .call-pulse, .menu-pop, .menu-pop-right,
-    .route-forward, .route-back, .route-fade {
+    .tab-next, .tab-prev, .route-forward, .route-back, .route-fade {
       animation: none !important;
     }
     .drawer-panel { transition: none !important; }
@@ -240,8 +272,8 @@ function AppShell(): React.JSX.Element {
   const hideMobileChrome = fullScreen;
 
   const shellRef = useRef<HTMLDivElement | null>(null);
+  const mainRef = useRef<HTMLElement | null>(null);
   const drawerRef = useRef<HTMLElement | null>(null);
-  const backdropRef = useRef<HTMLDivElement | null>(null);
 
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [railHovered, setRailHovered] = useState(false);
@@ -249,47 +281,34 @@ function AppShell(): React.JSX.Element {
   const [mobileUserMenuOpen, setMobileUserMenuOpen] = useState(false);
   const [callerName, setCallerName] = useState<string | null>(null);
 
-  // Refs used inside native (non-React) touch listeners.
   const drawerOpenRef = useRef(false);
   const openDrawerRef = useRef<() => void>(() => {});
   const closeDrawerRef = useRef<() => void>(() => {});
   drawerOpenRef.current = drawerOpen;
 
   /* ── Drawer imperative helpers ─────────────────────── */
-  const setBackdrop = useCallback((opacity: number, animate: boolean) => {
-    const bd = backdropRef.current;
-    if (!bd) return;
-    bd.style.transition = animate
-      ? 'opacity 320ms cubic-bezier(0.16,1,0.3,1)'
-      : 'none';
-    bd.style.opacity = String(opacity);
-    bd.style.pointerEvents = opacity > 0 ? 'auto' : 'none';
-  }, []);
-
-  const openDrawer = useCallback(() => {
+  const openDrawer = () => {
     const d = drawerRef.current;
     if (d) {
-      d.style.transition = 'transform 320ms cubic-bezier(0.16,1,0.3,1)';
+      d.style.transition = 'transform 280ms cubic-bezier(0.16,1,0.3,1)';
       d.style.transform = 'translate3d(0,0,0)';
     }
-    setBackdrop(1, true);
     setDrawerOpen(true);
-  }, [setBackdrop]);
+  };
 
-  const closeDrawer = useCallback(() => {
+  const closeDrawer = () => {
     const d = drawerRef.current;
     if (d) {
-      d.style.transition = 'transform 320ms cubic-bezier(0.16,1,0.3,1)';
+      d.style.transition = 'transform 280ms cubic-bezier(0.16,1,0.3,1)';
       d.style.transform = `translate3d(-${DRAWER_W}px,0,0)`;
     }
-    setBackdrop(0, true);
     setDrawerOpen(false);
-  }, [setBackdrop]);
+  };
 
   openDrawerRef.current = openDrawer;
   closeDrawerRef.current = closeDrawer;
 
-  /* ── Close everything on route change ───────────────── */
+  /* ── Close menus on route change ────────────────────── */
   useEffect(() => {
     closeDrawerRef.current();
     setMobileUserMenuOpen(false);
@@ -327,7 +346,7 @@ function AppShell(): React.JSX.Element {
     }
   };
 
-  /* ── Lock body scroll while drawer is open ─────────── */
+  /* ── Body scroll lock while drawer open ────────────── */
   useEffect(() => {
     if (!drawerOpen) return;
     const prev = document.body.style.overflow;
@@ -337,7 +356,7 @@ function AppShell(): React.JSX.Element {
     };
   }, [drawerOpen]);
 
-  /* ── Edge-swipe-to-open (native, non-passive) ──────── */
+  /* ── Edge-swipe-to-open drawer (native non-passive) ── */
   useEffect(() => {
     const el = shellRef.current;
     if (!el) return;
@@ -352,11 +371,6 @@ function AppShell(): React.JSX.Element {
       const clamped = Math.max(-DRAWER_W, Math.min(0, x));
       const d = drawerRef.current;
       if (d) d.style.transform = `translate3d(${clamped}px,0,0)`;
-      const b = backdropRef.current;
-      if (b) {
-        b.style.opacity = String((DRAWER_W + clamped) / DRAWER_W);
-        b.style.pointerEvents = clamped > -DRAWER_W ? 'auto' : 'none';
-      }
       currentX = clamped;
     };
 
@@ -384,8 +398,6 @@ function AppShell(): React.JSX.Element {
           if (axis === 'x') {
             const d = drawerRef.current;
             if (d) d.style.transition = 'none';
-            const b = backdropRef.current;
-            if (b) b.style.transition = 'none';
           }
         }
       }
@@ -400,17 +412,11 @@ function AppShell(): React.JSX.Element {
       active = false;
       if (axis !== 'x') return;
       const d = drawerRef.current;
-      const b = backdropRef.current;
-      if (d) d.style.transition = 'transform 320ms cubic-bezier(0.16,1,0.3,1)';
-      if (b) b.style.transition = 'opacity 320ms cubic-bezier(0.16,1,0.3,1)';
+      if (d) d.style.transition = 'transform 280ms cubic-bezier(0.16,1,0.3,1)';
       if (currentX > -DRAWER_W * 0.45) {
         openDrawerRef.current();
       } else {
         if (d) d.style.transform = `translate3d(-${DRAWER_W}px,0,0)`;
-        if (b) {
-          b.style.opacity = '0';
-          b.style.pointerEvents = 'none';
-        }
       }
     };
 
@@ -426,7 +432,7 @@ function AppShell(): React.JSX.Element {
     };
   }, []);
 
-  /* ── Drawer's own drag-to-close ────────────────────── */
+  /* ── Drawer drag-to-close ──────────────────────────── */
   const drawerDrag = useRef({
     active: false,
     startX: 0,
@@ -458,10 +464,6 @@ function AppShell(): React.JSX.Element {
     if (!s.axis) {
       if (Math.abs(dx) > 6 || Math.abs(dy) > 6) {
         s.axis = Math.abs(dx) > Math.abs(dy) ? 'x' : 'y';
-        if (s.axis === 'x') {
-          const b = backdropRef.current;
-          if (b) b.style.transition = 'none';
-        }
       }
     }
     if (s.axis !== 'x') return;
@@ -470,8 +472,6 @@ function AppShell(): React.JSX.Element {
     s.currentX = clamped;
     const d = drawerRef.current;
     if (d) d.style.transform = `translate3d(${clamped}px,0,0)`;
-    const b = backdropRef.current;
-    if (b) b.style.opacity = String((DRAWER_W + clamped) / DRAWER_W);
   };
 
   const onDrawerTouchEnd = () => {
@@ -480,15 +480,123 @@ function AppShell(): React.JSX.Element {
     s.active = false;
     if (s.axis !== 'x') return;
     const d = drawerRef.current;
-    const b = backdropRef.current;
-    if (d) d.style.transition = 'transform 320ms cubic-bezier(0.16,1,0.3,1)';
-    if (b) b.style.transition = 'opacity 320ms cubic-bezier(0.16,1,0.3,1)';
+    if (d) d.style.transition = 'transform 280ms cubic-bezier(0.16,1,0.3,1)';
     if (s.currentX < -DRAWER_W * 0.4) {
       closeDrawer();
     } else {
       openDrawer();
     }
   };
+
+  /* ── Tab swipe navigation (native non-passive on main) ── */
+  useEffect(() => {
+    const el = mainRef.current;
+    if (!el) return;
+    if (getTabIndex(location.pathname) < 0) return;
+
+    let active = false;
+    let startX = 0;
+    let startY = 0;
+    let startT = 0;
+    let axis: '' | 'x' | 'y' = '';
+    let dx = 0;
+
+    const onStart = (e: TouchEvent) => {
+      if (window.innerWidth >= 768) return;
+      if (drawerOpenRef.current) return;
+      const t = e.touches[0];
+      // Leave the left edge for the drawer edge-swipe
+      if (t.clientX < 30) return;
+      active = true;
+      axis = '';
+      startX = t.clientX;
+      startY = t.clientY;
+      startT = Date.now();
+      dx = 0;
+    };
+
+    const onMove = (e: TouchEvent) => {
+      if (!active) return;
+      const t = e.touches[0];
+      const ddx = t.clientX - startX;
+      const ddy = t.clientY - startY;
+
+      if (!axis) {
+        if (Math.abs(ddx) > 8 || Math.abs(ddy) > 8) {
+          axis = Math.abs(ddx) > Math.abs(ddy) ? 'x' : 'y';
+          if (axis === 'x') {
+            const m = mainRef.current;
+            if (m) {
+              m.style.transition = 'none';
+              m.style.animation = 'none';
+            }
+          }
+        }
+      }
+      if (axis !== 'x') return;
+
+      dx = ddx;
+      e.preventDefault();
+
+      const idx = getTabIndex(location.pathname);
+      const atEdge =
+        (idx === 0 && ddx > 0) ||
+        (idx === TAB_ROUTES.length - 1 && ddx < 0);
+
+      const m = mainRef.current;
+      if (!m) return;
+      // Rubber-band at boundaries
+      const factor = atEdge ? 0.28 : 0.55;
+      m.style.transform = `translate3d(${ddx * factor}px,0,0)`;
+    };
+
+    const onEnd = () => {
+      if (!active) return;
+      active = false;
+      if (axis !== 'x') return;
+
+      const elapsed = Math.max(1, Date.now() - startT);
+      const vel = Math.abs(dx) / elapsed;
+      const dist = Math.abs(dx);
+
+      const idx = getTabIndex(location.pathname);
+      const canNext = idx >= 0 && idx < TAB_ROUTES.length - 1 && dx < 0;
+      const canPrev = idx > 0 && dx > 0;
+      const passed = dist > 60 || (dist > 30 && vel > 0.45);
+
+      const m = mainRef.current;
+
+      if (passed && canNext) {
+        if (m) {
+          m.style.transition = 'transform 180ms cubic-bezier(0.4,0,1,1), opacity 180ms';
+          m.style.transform = 'translate3d(-60px,0,0)';
+          m.style.opacity = '0';
+        }
+        navigate(TAB_ROUTES[idx + 1]);
+      } else if (passed && canPrev) {
+        if (m) {
+          m.style.transition = 'transform 180ms cubic-bezier(0.4,0,1,1), opacity 180ms';
+          m.style.transform = 'translate3d(60px,0,0)';
+          m.style.opacity = '0';
+        }
+        navigate(TAB_ROUTES[idx - 1]);
+      } else if (m) {
+        m.style.transition = 'transform 240ms cubic-bezier(0.16,1,0.3,1)';
+        m.style.transform = 'translate3d(0,0,0)';
+      }
+    };
+
+    el.addEventListener('touchstart', onStart, { passive: true });
+    el.addEventListener('touchmove', onMove, { passive: false });
+    el.addEventListener('touchend', onEnd, { passive: true });
+    el.addEventListener('touchcancel', onEnd, { passive: true });
+    return () => {
+      el.removeEventListener('touchstart', onStart);
+      el.removeEventListener('touchmove', onMove);
+      el.removeEventListener('touchend', onEnd);
+      el.removeEventListener('touchcancel', onEnd);
+    };
+  }, [location.pathname, navigate]);
 
   /* ── Nav items (Orbit ↔ Signals swapped) ───────────── */
   const primaryNav: NavItem[] = useMemo(
@@ -504,7 +612,6 @@ function AppShell(): React.JSX.Element {
     () => [
       { to: '/app/calls', label: 'Calls', icon: IconCalls },
       { to: '/app/notifications', label: 'Media', icon: IconMedia },
-      // Signals now occupies the slot "Your Orbit" used to sit in
       { to: '/app/signals', label: 'Signals', icon: IconSignals },
     ],
     [],
@@ -513,20 +620,34 @@ function AppShell(): React.JSX.Element {
   const railWidth = railHovered ? 224 : 68;
   const incomingDisplayName = callerName ?? 'Someone';
 
-  /* ── Direction-aware route transition ──────────────── */
-  const routeRef = useRef({
-    path: location.pathname,
-    dir: 'fade' as 'forward' | 'back' | 'fade',
-  });
-  if (routeRef.current.path !== location.pathname) {
-    const pd = routeRef.current.path.split('/').filter(Boolean).length;
-    const nd = location.pathname.split('/').filter(Boolean).length;
-    routeRef.current = {
-      path: location.pathname,
-      dir: nd > pd ? 'forward' : nd < pd ? 'back' : 'fade',
-    };
+  /* ── Direction-aware route animation ───────────────── */
+  const navRef = useRef<{
+    path: string;
+    anim: 'tab-next' | 'tab-prev' | 'route-forward' | 'route-back' | 'route-fade';
+  }>({ path: location.pathname, anim: 'route-fade' });
+
+  if (navRef.current.path !== location.pathname) {
+    const prevIdx = getTabIndex(navRef.current.path);
+    const currIdx = getTabIndex(location.pathname);
+    let anim:
+      | 'tab-next'
+      | 'tab-prev'
+      | 'route-forward'
+      | 'route-back'
+      | 'route-fade' = 'route-fade';
+
+    if (prevIdx >= 0 && currIdx >= 0 && prevIdx !== currIdx) {
+      anim = currIdx > prevIdx ? 'tab-next' : 'tab-prev';
+    } else {
+      const pd = navRef.current.path.split('/').filter(Boolean).length;
+      const nd = location.pathname.split('/').filter(Boolean).length;
+      if (nd > pd) anim = 'route-forward';
+      else if (nd < pd) anim = 'route-back';
+      else anim = 'route-fade';
+    }
+    navRef.current = { path: location.pathname, anim };
   }
-  const routeDir = routeRef.current.dir;
+  const routeAnim = navRef.current.anim;
 
   /* ── Sliding bottom-nav indicator ──────────────────── */
   const bottomNavRef = useRef<HTMLDivElement | null>(null);
@@ -570,27 +691,25 @@ function AppShell(): React.JSX.Element {
     >
       <style>{SHELL_CSS}</style>
 
-      {/* ─── MOBILE DRAWER (always mounted, off-screen when closed) ─── */}
+      {/* Transparent click-catcher (no visual backdrop, ever) */}
       <div
-        ref={backdropRef}
-        className="fixed inset-0 bg-black/65 z-30 md:hidden"
-        style={{
-          opacity: 0,
-          pointerEvents: 'none',
-          transition: 'opacity 320ms cubic-bezier(0.16,1,0.3,1)',
-        }}
+        className={`fixed inset-0 z-30 md:hidden ${
+          drawerOpen ? 'pointer-events-auto' : 'pointer-events-none'
+        }`}
         onClick={closeDrawer}
         aria-hidden
       />
+
+      {/* ─── MOBILE DRAWER ─── */}
       <aside
         ref={drawerRef}
         className="drawer-panel shell-drawer fixed inset-y-0 left-0 z-40 w-[280px]
-                   bg-[#0E0C09] border-r border-white/[0.08]
-                   shadow-[20px_0_60px_rgba(0,0,0,0.85)]
+                   bg-[#0E0C09] border-r border-white/[0.07]
+                   shadow-[6px_0_24px_-8px_rgba(0,0,0,0.5)]
                    flex flex-col md:hidden overscroll-contain"
         style={{
           transform: `translate3d(-${DRAWER_W}px,0,0)`,
-          transition: 'transform 320ms cubic-bezier(0.16,1,0.3,1)',
+          transition: 'transform 280ms cubic-bezier(0.16,1,0.3,1)',
           paddingTop: 'env(safe-area-inset-top, 0px)',
         }}
         role="dialog"
@@ -601,7 +720,6 @@ function AppShell(): React.JSX.Element {
         onTouchEnd={onDrawerTouchEnd}
         onTouchCancel={onDrawerTouchEnd}
       >
-        {/* Grab handle */}
         <div className="pt-2 pb-1 flex justify-center">
           <span className="h-1 w-9 rounded-full bg-white/[0.18]" aria-hidden />
         </div>
@@ -635,28 +753,15 @@ function AppShell(): React.JSX.Element {
         <nav className="flex-1 px-3 py-5 overflow-y-auto overscroll-contain custom-scrollbar">
           <MobileSection label="Messages">
             {primaryNav.map((item) => (
-              <MobileItem
-                key={item.to}
-                item={item}
-                onNavigate={closeDrawer}
-              />
+              <MobileItem key={item.to} item={item} onNavigate={closeDrawer} />
             ))}
           </MobileSection>
 
           <MobileSection label="Activity" className="mt-6">
             {activityNav.map((item) => (
-              <MobileItem
-                key={item.to}
-                item={item}
-                onNavigate={closeDrawer}
-              />
+              <MobileItem key={item.to} item={item} onNavigate={closeDrawer} />
             ))}
           </MobileSection>
-
-          <div className="mt-8 px-3 flex items-center gap-2 text-[10px] uppercase tracking-[0.2em] text-[#6B6259]">
-            <span className="inline-block w-6 h-px bg-white/[0.1]" />
-       
-          </div>
         </nav>
       </aside>
 
@@ -779,7 +884,6 @@ function AppShell(): React.JSX.Element {
                       <IconSettings size={16} />
                       <span>Settings</span>
                     </Link>
-                    {/* Your Orbit now sits where Signals used to */}
                     <Link
                       to="/app/orbit"
                       onClick={() => setUserMenuOpen(false)}
@@ -872,8 +976,9 @@ function AppShell(): React.JSX.Element {
         )}
 
         <main
+          ref={mainRef}
           key={location.pathname}
-          className={`shell-main flex-1 overflow-y-auto bg-transparent relative custom-scrollbar overscroll-contain route-${routeDir} ${
+          className={`tab-swipe-surface shell-main flex-1 overflow-y-auto bg-transparent relative custom-scrollbar overscroll-contain ${routeAnim} ${
             !hideMobileChrome ? 'pb-16 md:pb-0' : ''
           }`}
         >
@@ -889,7 +994,6 @@ function AppShell(): React.JSX.Element {
             }}
           >
             <div className="flex items-center h-16">
-              {/* Sliding pill under the three primary tabs */}
               <div
                 ref={bottomNavRef}
                 className="relative flex items-center justify-around flex-1 h-full"
@@ -926,7 +1030,6 @@ function AppShell(): React.JSX.Element {
                 ))}
               </div>
 
-              {/* Avatar / user menu */}
               <div className="relative flex items-center justify-center w-14 h-16">
                 <button
                   onClick={(e) => {
@@ -975,7 +1078,6 @@ function AppShell(): React.JSX.Element {
                     </div>
 
                     <div className="p-1.5">
-                      {/* Your Orbit now sits where Signals used to */}
                       <Link
                         to="/app/orbit"
                         onClick={() => setMobileUserMenuOpen(false)}
