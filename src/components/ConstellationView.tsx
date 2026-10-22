@@ -1007,77 +1007,19 @@ export default function ConstellationView({ friends: friendsProp }: Constellatio
       >
         <div className="flex items-center gap-3 px-4 py-2.5 rounded-2xl bg-[#0F0D0A]/85 border border-white/[0.06] shadow-[0_8px_32px_-8px_rgba(0,0,0,0.7)] pointer-events-auto">
           <div>
-            <h2
-              className="text-[16px] sm:text-[17px] font-medium tracking-tight text-[#EDE5D4]"
-              style={{ fontFamily: '"Instrument Serif", Georgia, serif' }}
-            >
-              Your Orbit
-            </h2>
-            <p className="text-[11px] text-[#6B6259] tabular-nums flex items-center gap-1.5 mt-0.5">
-              <span
-                className={`inline-block w-1.5 h-1.5 rounded-full ${
-                  onlineTotal > 0
-                    ? 'bg-[#4ADE80] shadow-[0_0_8px_rgba(74,222,128,0.9)]'
-                    : 'bg-[#6B6259]'
-                }`}
-              />
-              <span className="text-[#4ADE80] font-medium">{onlineTotal}</span>
-              <span>online ·</span>
-              <span>{friends.length} total</span>
+            <p>
+            
+              
+              <span>  Online </span>
+              <span className="text-[#4ADE80] font-medium">{onlineTotal} </span> 
+              
             </p>
           </div>
         </div>
       </motion.div>
 
       {/* Search — solid bg */}
-      <motion.div
-        initial={{ opacity: 0, y: -12 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ delay: 0.03, duration: 0.35, ease: [0.22, 1, 0.36, 1] }}
-        className="absolute top-[env(safe-area-inset-top,0px)] right-4 md:top-5 md:right-5 z-20 pt-4 md:pt-0"
-      >
-        <motion.div
-          layout
-          animate={{ width: searchFocused || query ? 240 : 160 }}
-          transition={reduced ? { duration: 0 } : { type: 'spring', stiffness: 480, damping: 34 }}
-          className="relative"
-        >
-          <div className="absolute inset-0 rounded-2xl bg-[#0F0D0A]/85 border border-white/[0.06] shadow-[0_8px_32px_-8px_rgba(0,0,0,0.7)] pointer-events-none" />
-          <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-[#6B6259] pointer-events-none z-10" />
-          <input
-            type="text"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            onFocus={() => setSearchFocused(true)}
-            onBlur={() => setSearchFocused(false)}
-            placeholder=""
-            aria-label="Find a friend"
-            inputMode="search"
-            enterKeyHint="search"
-            autoComplete="off"
-            autoCorrect="off"
-            autoCapitalize="none"
-            spellCheck={false}
-            className="relative z-10 h-10 w-full pl-9 pr-8 rounded-2xl bg-transparent text-[16px] md:text-[12.5px] text-[#EDE5D4] placeholder:text-[#6B6259] focus:outline-none"
-          />
-          <AnimatePresence>
-            {query && (
-              <motion.button
-                initial={{ opacity: 0, scale: 0.7 }}
-                animate={{ opacity: 1, scale: 1 }}
-                exit={{ opacity: 0, scale: 0.7 }}
-                transition={{ duration: 0.12 }}
-                onClick={() => setQuery('')}
-                className="absolute right-2 top-1/2 -translate-y-1/2 p-2 text-[#6B6259] hover:text-[#EDE5D4] active:text-[#EDE5D4] transition-colors z-10 touch-manipulation"
-                aria-label="Clear search"
-              >
-                <X className="w-4 h-4" />
-              </motion.button>
-            )}
-          </AnimatePresence>
-        </motion.div>
-      </motion.div>
-
+      
       {/* Stage */}
       <div
         className="absolute inset-0 flex items-center justify-center"
