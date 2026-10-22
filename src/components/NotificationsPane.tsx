@@ -38,6 +38,7 @@ import {
 /* ────────────────────────────────────────────────────────── */
 
 type MediaKind = 'image' | 'video' | 'audio' | 'file';
+const TAB_ORDER = ['all', 'image', 'video', 'audio', 'file'] as const;
 
 interface MediaItem {
   id: string;
@@ -114,6 +115,7 @@ function NotificationsPane(): React.JSX.Element {
   const [doneTasks, setDoneTasks] = useState(0);
   const [totalTasks, setTotalTasks] = useState(0);
   const [tab, setTab] = useState<'all' | MediaKind>('all');
+  const [direction, setDirection] = useState(1); // 1 = next, -1 = prev
   const [query, setQuery] = useState('');
   const [preview, setPreview] = useState<MediaItem | null>(null);
 
@@ -122,6 +124,14 @@ function NotificationsPane(): React.JSX.Element {
   const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+
+  const bodyRef = useRef<HTMLDivElement>(null);
+  const dragState = useRef({
+    active: false,
+    startX: 0,
+    startY: 0,
+    axis: '' as '' | 'x' | 'y',
+  });
 
   /* Live ref so the tab badge can update the header without extra renders */
   const countsRef = useRef({ total: 0 });
@@ -275,6 +285,84 @@ function NotificationsPane(): React.JSX.Element {
     };
   }, []);
 
+  // Auto-scroll to top when changing tabs
+  useEffect(() => {
+    bodyRef.current?.scrollTo(0, 0);
+  }, [tab]);
+
+  /* ── Swipe to change tabs ── */
+  useEffect(() => {
+    const el = bodyRef.current;
+    if (!el) return;
+
+    const onStart = (e: TouchEvent) => {
+      if (selectionMode || preview) return; // disable swipe in selection mode
+      const t = e.touches[0];
+      dragState.current = {
+        active: true,
+        startX: t.clientX,
+        startY: t.clientY,
+        axis: '',
+      };
+    };
+
+    const onMove = (e: TouchEvent) => {
+      const s = dragState.current;
+      if (!s.active) return;
+      const t = e.touches[0];
+      const dx = t.clientX - s.startX;
+      const dy = t.clientY - s.startY;
+
+      if (!s.axis) {
+        if (Math.abs(dx) > 8 || Math.abs(dy) > 8) {
+          s.axis = Math.abs(dx) > Math.abs(dy) ? 'x' : 'y';
+        }
+      }
+
+      if (s.axis === 'x') {
+        e.preventDefault();
+      }
+    };
+
+    const onEnd = (e: TouchEvent) => {
+      const s = dragState.current;
+      if (!s.active) return;
+      s.active = false;
+      if (s.axis !== 'x') return;
+
+      const t = e.changedTouches[0];
+      const dx = t.clientX - s.startX;
+
+      const currentIndex = TAB_ORDER.indexOf(tab);
+
+      if (dx < -60 && currentIndex < TAB_ORDER.length - 1) {
+        changeTab(TAB_ORDER[currentIndex + 1]);
+      } else if (dx > 60 && currentIndex > 0) {
+        changeTab(TAB_ORDER[currentIndex - 1]);
+      }
+    };
+
+    el.addEventListener('touchstart', onStart, { passive: true });
+    el.addEventListener('touchmove', onMove, { passive: false });
+    el.addEventListener('touchend', onEnd, { passive: true });
+    el.addEventListener('touchcancel', onEnd, { passive: true });
+
+    return () => {
+      el.removeEventListener('touchstart', onStart);
+      el.removeEventListener('touchmove', onMove);
+      el.removeEventListener('touchend', onEnd);
+      el.removeEventListener('touchcancel', onEnd);
+    };
+  }, [tab, selectionMode, preview]);
+
+  const changeTab = (newTab: 'all' | MediaKind) => {
+    const currentIndex = TAB_ORDER.indexOf(tab);
+    const newIndex = TAB_ORDER.indexOf(newTab);
+    if (newIndex > currentIndex) setDirection(1);
+    else if (newIndex < currentIndex) setDirection(-1);
+    setTab(newTab);
+  };
+
   const counts = useMemo(() => {
     return {
       all: items.length,
@@ -364,7 +452,6 @@ function NotificationsPane(): React.JSX.Element {
     if (typeof window === 'undefined') return;
     window.open(url, '_blank', 'noopener,noreferrer');
   };
-  /* ────────────────────────────────────────────────────────── */
 
   const loadingLabel =
     totalTasks > 0
@@ -378,7 +465,6 @@ function NotificationsPane(): React.JSX.Element {
 
   return (
     <div className="h-full flex flex-col bg-[#0B0A08] text-[#EDE5D4] overflow-hidden">
-      {/* Shimmer keyframes — scoped, harmless if duplicated */}
       <style>{`
         @keyframes mediaShimmer {
           0% { transform: translateX(-100%); }
@@ -435,11 +521,11 @@ function NotificationsPane(): React.JSX.Element {
       {/* Tabs + search */}
       <div className="px-4 sm:px-6 py-3 border-b border-white/[0.05] flex flex-col sm:flex-row sm:items-center gap-3 shrink-0">
         <div className="flex items-center gap-1 overflow-x-auto">
-          <Tab label="All" icon={Inbox} active={tab === 'all'} count={counts.all} onClick={() => setTab('all')} />
-          <Tab label="Images" icon={ImageIcon} active={tab === 'image'} count={counts.image} onClick={() => setTab('image')} />
-          <Tab label="Videos" icon={VideoIcon} active={tab === 'video'} count={counts.video} onClick={() => setTab('video')} />
-          <Tab label="Audio" icon={Music} active={tab === 'audio'} count={counts.audio} onClick={() => setTab('audio')} />
-          <Tab label="Files" icon={FileText} active={tab === 'file'} count={counts.file} onClick={() => setTab('file')} />
+          <Tab label="All" icon={Inbox} active={tab === 'all'} count={counts.all} onClick={() => changeTab('all')} />
+          <Tab label="Images" icon={ImageIcon} active={tab === 'image'} count={counts.image} onClick={() => changeTab('image')} />
+          <Tab label="Videos" icon={VideoIcon} active={tab === 'video'} count={counts.video} onClick={() => changeTab('video')} />
+          <Tab label="Audio" icon={Music} active={tab === 'audio'} count={counts.audio} onClick={() => changeTab('audio')} />
+          <Tab label="Files" icon={FileText} active={tab === 'file'} count={counts.file} onClick={() => changeTab('file')} />
         </div>
 
         <div className="flex-1 sm:max-w-xs sm:ml-auto flex items-center gap-2 px-2.5 py-1.5 rounded-lg bg-[#0F0D0A] border border-white/[0.08] focus-within:border-[#D97706]/50 transition-colors">
@@ -522,88 +608,117 @@ function NotificationsPane(): React.JSX.Element {
       </AnimatePresence>
 
       {/* Body */}
-      <div className="flex-1 overflow-y-auto px-4 sm:px-6 py-4">
-        {error ? (
-          <div className="max-w-md mx-auto mt-12 text-center">
-            <div className="w-16 h-16 rounded-2xl bg-[#B91C1C]/10 border border-[#B91C1C]/20 flex items-center justify-center mx-auto">
-              <X className="w-7 h-7 text-[#F87171]" />
-            </div>
-            <p className="text-[14.5px] text-[#F87171] font-semibold tracking-tight mt-4">Could not load media</p>
-            <p className="text-[12.5px] text-[#6B6259] mt-1">{error}</p>
-          </div>
-        ) : loading && items.length === 0 ? (
-          /* ── Skeleton screen (initial load) ── */
-          <div>
-            <div className="flex items-center justify-between gap-3 mb-3">
-              <div className="flex items-center gap-2 min-w-0 text-[12px] text-[#A8A29E]">
-                <Loader2 className="w-3.5 h-3.5 animate-spin text-[#D97706] shrink-0" />
-                <span className="truncate">{loadingLabel}</span>
+      <div
+        ref={bodyRef}
+        className="flex-1 overflow-y-auto px-4 sm:px-6 py-4"
+        style={{ touchAction: 'pan-y' }}
+      >
+        <AnimatePresence mode="popLayout" initial={false} custom={direction}>
+          <motion.div
+            key={tab}
+            custom={direction}
+            variants={{
+              enter: (dir: number) => ({
+                x: dir > 0 ? 40 : -40,
+                opacity: 0,
+              }),
+              center: {
+                x: 0,
+                opacity: 1,
+              },
+              exit: (dir: number) => ({
+                x: dir < 0 ? 40 : -40,
+                opacity: 0,
+              }),
+            }}
+            initial="enter"
+            animate="center"
+            exit="exit"
+            transition={{ type: 'spring', stiffness: 300, damping: 30 }}
+            className="w-full"
+          >
+            {error ? (
+              <div className="max-w-md mx-auto mt-12 text-center">
+                <div className="w-16 h-16 rounded-2xl bg-[#B91C1C]/10 border border-[#B91C1C]/20 flex items-center justify-center mx-auto">
+                  <X className="w-7 h-7 text-[#F87171]" />
+                </div>
+                <p className="text-[14.5px] text-[#F87171] font-semibold tracking-tight mt-4">Could not load media</p>
+                <p className="text-[12.5px] text-[#6B6259] mt-1">{error}</p>
               </div>
-              {totalTasks > 0 && (
-                <span className="shrink-0 text-[11px] tabular-nums text-[#6B6259]">
-                  {progressPct}%
-                </span>
-              )}
-            </div>
-            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
-              {Array.from({ length: 12 }).map((_, i) => (
-                <SkeletonTile key={i} delay={i * 90} />
-              ))}
-            </div>
-          </div>
-        ) : filtered.length === 0 ? (
-          <div className="max-w-md mx-auto mt-12 text-center">
-            <div className="w-16 h-16 rounded-2xl bg-white/[0.03] border border-white/[0.06] flex items-center justify-center mx-auto">
-              <ImageIcon className="w-7 h-7 text-[#6B6259]" />
-            </div>
-            <p className="text-[14.5px] text-[#EDE5D4] font-semibold tracking-tight mt-4">
-              {items.length === 0 ? 'No media yet' : 'No matches'}
-            </p>
-            <p className="text-[12.5px] text-[#6B6259] mt-1 leading-relaxed max-w-sm mx-auto">
-              {items.length === 0
-                ? 'Images, videos, audio, and files from your DMs and groups will appear here.'
-                : 'Try a different tab or search term.'}
-            </p>
-            {items.length === 0 && (
-              <button
-                onClick={() => navigate('/app/dm')}
-                className="mt-5 h-9 px-4 rounded-xl bg-[#D97706] hover:bg-[#B45309] text-[#0F0D0A] text-[12.5px] font-semibold inline-flex items-center gap-1.5 transition-colors"
-              >
-                <span>Open Messages</span>
-                <ArrowRight className="w-4 h-4" />
-              </button>
+            ) : loading && items.length === 0 ? (
+              <div>
+                <div className="flex items-center justify-between gap-3 mb-3">
+                  <div className="flex items-center gap-2 min-w-0 text-[12px] text-[#A8A29E]">
+                    <Loader2 className="w-3.5 h-3.5 animate-spin text-[#D97706] shrink-0" />
+                    <span className="truncate">{loadingLabel}</span>
+                  </div>
+                  {totalTasks > 0 && (
+                    <span className="shrink-0 text-[11px] tabular-nums text-[#6B6259]">
+                      {progressPct}%
+                    </span>
+                  )}
+                </div>
+                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
+                  {Array.from({ length: 12 }).map((_, i) => (
+                    <SkeletonTile key={i} delay={i * 90} />
+                  ))}
+                </div>
+              </div>
+            ) : filtered.length === 0 ? (
+              <div className="max-w-md mx-auto mt-12 text-center">
+                <div className="w-16 h-16 rounded-2xl bg-white/[0.03] border border-white/[0.06] flex items-center justify-center mx-auto">
+                  <ImageIcon className="w-7 h-7 text-[#6B6259]" />
+                </div>
+                <p className="text-[14.5px] text-[#EDE5D4] font-semibold tracking-tight mt-4">
+                  {items.length === 0 ? 'No media yet' : 'No matches'}
+                </p>
+                <p className="text-[12.5px] text-[#6B6259] mt-1 leading-relaxed max-w-sm mx-auto">
+                  {items.length === 0
+                    ? 'Images, videos, audio, and files from your DMs and groups will appear here.'
+                    : 'Try a different tab or search term.'}
+                </p>
+                {items.length === 0 && (
+                  <button
+                    onClick={() => navigate('/app/dm')}
+                    className="mt-5 h-9 px-4 rounded-xl bg-[#D97706] hover:bg-[#B45309] text-[#0F0D0A] text-[12.5px] font-semibold inline-flex items-center gap-1.5 transition-colors"
+                  >
+                    <span>Open Messages</span>
+                    <ArrowRight className="w-4 h-4" />
+                  </button>
+                )}
+              </div>
+            ) : (
+              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
+                {filtered.map((item) => {
+                  const selectable = item.contextKind === 'dm';
+                  return (
+                    <MediaTile
+                      key={item.id}
+                      item={item}
+                      selectionMode={selectionMode}
+                      selected={selectedIds.has(item.id)}
+                      selectable={selectable}
+                      onView={() => handleViewMedia(item.url)}
+                      onOpen={() => {
+                        if (selectionMode) {
+                          if (selectable) toggleSelect(item.id);
+                        } else {
+                          setPreview(item);
+                        }
+                      }}
+                      onToggle={() => selectable && toggleSelect(item.id)}
+                    />
+                  );
+                })}
+                {/* Trailing skeletons while more media streams in */}
+                {loading &&
+                  Array.from({ length: 4 }).map((_, i) => (
+                    <SkeletonTile key={`tail-sk-${i}`} delay={i * 120} />
+                  ))}
+              </div>
             )}
-          </div>
-        ) : (
-          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
-            {filtered.map((item) => {
-              const selectable = item.contextKind === 'dm';
-              return (
-                <MediaTile
-                  key={item.id}
-                  item={item}
-                  selectionMode={selectionMode}
-                  selected={selectedIds.has(item.id)}
-                  selectable={selectable}
-                  onView={() => handleViewMedia(item.url)}
-                  onOpen={() => {
-                    if (selectionMode) {
-                      if (selectable) toggleSelect(item.id);
-                    } else {
-                      setPreview(item);
-                    }
-                  }}
-                  onToggle={() => selectable && toggleSelect(item.id)}
-                />
-              );
-            })}
-            {/* Trailing skeletons while more media streams in */}
-            {loading &&
-              Array.from({ length: 4 }).map((_, i) => (
-                <SkeletonTile key={`tail-sk-${i}`} delay={i * 120} />
-              ))}
-          </div>
-        )}
+          </motion.div>
+        </AnimatePresence>
       </div>
 
       {/* Preview modal */}
