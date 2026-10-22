@@ -998,25 +998,52 @@ export default function ConstellationView({ friends: friendsProp }: Constellatio
       <FloatingDust count={dustCount} enabled={dustEnabled} />
       <ShootingStars enabled={shootingEnabled} dense={!lowPower} />
 
-      {/* Header — solid bg, no backdrop-blur (was forcing per-frame re-blur) */}
-      <motion.div
-        initial={{ opacity: 0, y: -12 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.35, ease: [0.22, 1, 0.36, 1] }}
-        className="absolute top-[env(safe-area-inset-top,0px)] left-4 md:top-5 md:left-5 z-20 pointer-events-none pt-4 md:pt-0"
-      >
-        <div className="flex items-center gap-3 px-4 py-2.5 rounded-2xl bg-[#0F0D0A]/85 border border-white/[0.06] shadow-[0_8px_32px_-8px_rgba(0,0,0,0.7)] pointer-events-auto">
-          <div>
-            <p>
-            
-              
-              <span>  Online </span>
-              <span className="text-[#4ADE80] font-medium">{onlineTotal} </span> 
-              
-            </p>
-          </div>
-        </div>
-      </motion.div>
+     {/* Header — HUD status pill with rotating beam border */}
+<motion.div
+  initial={{ opacity: 0, y: -12 }}
+  animate={{ opacity: 1, y: 0 }}
+  transition={{ duration: 0.35, ease: [0.22, 1, 0.36, 1] }}
+  className="absolute top-[env(safe-area-inset-top,0px)] left-4 md:top-5 md:left-5 z-20 pointer-events-none pt-4 md:pt-0"
+>
+  <div className="relative rounded-full p-[1px] overflow-hidden pointer-events-auto">
+    {/* Rotating conic beam — the futuristic scan effect */}
+    <div
+      aria-hidden
+      className="absolute inset-0 rounded-full animate-spin"
+      style={{
+        background:
+          'conic-gradient(from 0deg, transparent 0deg, rgba(34,197,94,0.7) 45deg, transparent 110deg, transparent 180deg, rgba(34,197,94,0.4) 230deg, transparent 300deg)',
+        animationDuration: '4s',
+      }}
+    />
+
+    {/* Inner pill */}
+    <div
+      className="relative flex items-center gap-2.5 pl-3 pr-3.5 py-1.5 rounded-full
+                 bg-[#0A0F08]
+                 shadow-[0_4px_24px_-4px_rgba(0,0,0,0.75),inset_0_1px_0_rgba(255,255,255,0.04)]"
+    >
+      {/* Pulsing live dot */}
+      <span className="relative flex items-center justify-center shrink-0 w-3.5 h-3.5">
+        <span className="absolute inset-0 rounded-full bg-[#22C55E]/25 animate-ping" />
+        <span className="relative w-1.5 h-1.5 rounded-full bg-[#22C55E] shadow-[0_0_10px_rgba(34,197,94,1)]" />
+      </span>
+
+      {/* Label */}
+      <span className="text-[9.5px] font-bold uppercase tracking-[0.24em] text-[#22C55E]">
+        Online
+      </span>
+
+      {/* Divider */}
+      <span aria-hidden className="w-px h-3 bg-white/[0.15]" />
+
+      {/* Count */}
+      <span className="text-[13px] font-semibold tabular-nums text-[#EDE5D4] leading-none pr-0.5">
+        {onlineTotal}
+      </span>
+    </div>
+  </div>
+</motion.div>
 
       {/* Search — solid bg */}
       
