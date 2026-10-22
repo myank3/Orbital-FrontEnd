@@ -132,7 +132,6 @@ const TAB_ROUTES = [
   '/app/friends',
   '/app/calls',
   '/app/notifications',
-  '/app/signals',
 ] as const;
 
 function getTabIndex(pathname: string): number {
@@ -622,8 +621,8 @@ function AppShell(): React.JSX.Element {
     [],
   );
 
-  // Combined list for the scrollable mobile bottom nav
-  const allNav = useMemo(() => [...primaryNav, ...activityNav], [primaryNav, activityNav]);
+  // Combined list for the scrollable mobile bottom nav (excludes Satellite)
+  const allNav = useMemo(() => [...primaryNav, ...activityNav.slice(0, 2)], [primaryNav, activityNav]);
 
   const railWidth = railHovered ? 224 : 68;
   const incomingDisplayName = callerName ?? 'Someone';
