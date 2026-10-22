@@ -85,8 +85,16 @@ function useLowPowerDevice(): boolean {
 
 const ONLINE_RADIUS = '26vmin';
 const OFFLINE_RADIUS = '39vmin';
-const MAX_ORBIT = 30;
-const ONLINE_SLOT_RATIO = 2 / 3;
+
+/**
+ * Top N most-recently-chatted-to friends orbit around you.
+ * 12 is the sweet spot: on the online ring that's 360/12 = 30° apart,
+ * which stays above MIN_ANGLE_GAP_DEG and leaves room for the hover
+ * glow without avatars colliding on mobile.
+ */
+const MAX_ORBIT = 12;
+
+/** Minimum angle between avatars — jitter clamps below this. */
 const MIN_ANGLE_GAP_DEG = 26;
 
 const STAR_COUNT_DESKTOP = 80;
@@ -108,6 +116,44 @@ const PAUSE_BEFORE_RELEASE_MS = 160;
 const VELOCITY_SMOOTHING_TAU = 0.06;
 /** Max dt so a stalled tab never causes a huge jump. */
 const MAX_DT = 1 / 30;
+
+/* ────────────────────────────────────────────────────────── */
+/* Affinity — "who do I actually talk to?"                    */
+/* ────────────────────────────────────────────────────────── */
+
+/**
+ * Conversation-history fields are optional on FriendDto — this type
+ * documents what affinityScore reads, without forcing your API
+ * contract. If the backend returns any of these, the orbit favours
+ * the right people automatically.
+ */
+type FriendWithHistory = FriendDto & {
+  /** ISO timestamp of the last DM. Preferred signal. */
+  lastMessageAt?: string | null;
+  /** Fallback: last interaction of any kind. */
+  lastInteractionAt?: string | null;
+  /** Fallback: total DMs exchanged. */
+  messageCount?: number;
+};
+
+/** Higher = closer to the front of the ranking. Stable across renders. */
+function affinityScore(f: FriendDto): number {
+  const f2 = f as FriendWithHistory;
+
+  if (f2.lastMessageAt) {
+    const t = Date.parse(f2.lastMessageAt);
+    if (!Number.isNaN(t)) return t;
+  }
+  if (f2.lastInteractionAt) {
+    const t = Date.parse(f2.lastInteractionAt);
+    if (!Number.isNaN(t)) return t;
+  }
+  if (typeof f2.messageCount === 'number') return f2.messageCount;
+
+  // No signal — deterministic hash keeps ordering stable between renders
+  // so nobody visibly shuffles into the orbit when presence ticks.
+  return hashStr(f.userId);
+}
 
 /* ────────────────────────────────────────────────────────── */
 /* Starfield                                                  */
@@ -822,23 +868,44 @@ export default function ConstellationView({ friends: friendsProp }: Constellatio
     );
   }, [friends, query]);
 
+  /**
+   * Orbit membership = top N friends by conversation affinity.
+   * Surivors are then split by presence for ring placement; order is
+   * preserved inside each tier, but the exact angle on the ring is
+   * deterministically shuffled by layoutTier so your favourite isn't
+   * always parked at the same clock position.
+   */
   const layout = useMemo(() => {
-    const online = filtered.filter((f) => onlineIds.has(f.userId));
-    const offline = filtered.filter((f) => !onlineIds.has(f.userId));
-    const onlineSlots = Math.min(online.length, Math.ceil(MAX_ORBIT * ONLINE_SLOT_RATIO));
-    const offlineSlots = Math.min(offline.length, Math.max(0, MAX_ORBIT - onlineSlots));
-    const visibleOnline = layoutTier(online.slice(0, onlineSlots), MIN_ANGLE_GAP_DEG);
-    const visibleOffline = layoutTier(offline.slice(0, offlineSlots), MIN_ANGLE_GAP_DEG);
+    const ranked = [...filtered].sort(
+      (a, b) => affinityScore(b) - affinityScore(a),
+    );
+    const top = ranked.slice(0, MAX_ORBIT);
+
+    const online = top.filter((f) => onlineIds.has(f.userId));
+    const offline = top.filter((f) => !onlineIds.has(f.userId));
+
+    const visibleOnline = layoutTier(online, MIN_ANGLE_GAP_DEG);
+    const visibleOffline = layoutTier(offline, MIN_ANGLE_GAP_DEG);
+
     return {
       visibleOnline,
       visibleOffline,
-      hiddenCount: online.length + offline.length - onlineSlots - offlineSlots,
-      onlineTotal: online.length,
+      hiddenCount: filtered.length - top.length,
     };
   }, [filtered, onlineIds]);
 
-  const { visibleOnline, visibleOffline, hiddenCount, onlineTotal } = layout;
+  const { visibleOnline, visibleOffline, hiddenCount } = layout;
   const inOrbit = visibleOnline.length + visibleOffline.length;
+
+  /**
+   * Header stat — how many of my friends are online, independent of
+   * the MAX_ORBIT cap. Uses `friends` (not `filtered`) so typing a
+   * search doesn't lie about your presence count.
+   */
+  const onlineTotal = useMemo(
+    () => friends.reduce((n, f) => (onlineIds.has(f.userId) ? n + 1 : n), 0),
+    [friends, onlineIds],
+  );
 
   const animationsEnabled = pageVisible;
   const starfieldAnimate = animationsEnabled && !reduced;
@@ -1216,10 +1283,9 @@ export default function ConstellationView({ friends: friendsProp }: Constellatio
              * Rotating disc — auto-spins + drag to fling.
              *
              * No `contain` / `translateZ(0)` — those clipped the outer-ring
-             * avatars (and their hover glow) to the stage's box, which was
-             * the "cutouts in avatar" bug. `will-change: transform` is all
-             * we need for GPU layer promotion; the actual rotation happens
-             * via the `--rot` custom property so leaves read it for free.
+             * avatars (and their hover glow) to the stage's box. `will-change:
+             * transform` alone is enough for GPU promotion; the actual rotation
+             * happens via the `--rot` custom property so leaves read it for free.
              */}
             <div
               ref={stageRef}
