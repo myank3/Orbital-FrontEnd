@@ -8,7 +8,6 @@ import { useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'motion/react';
 import {
   ArrowLeft,
-  ArrowRight,
   Film,
   Newspaper,
   RefreshCw,
@@ -41,7 +40,7 @@ const CHANNELS: Record<SignalKey, Channel> = {
     kicker: 'Channel 01',
     title: 'Chalachitra',
     shortTitle: 'Chalachitra',
-    subtitle: 'Movies, ratings, and your personal watchlist.',
+    subtitle: 'Movies, ratings, and your watchlist.',
     icon: Film,
     url: 'https://chalachitra.vercel.app/',
     accent: '#F59E0B',
@@ -90,10 +89,39 @@ const SIGNALS_CSS = `
   .s-blink       { animation: s-blink 1.8s ease-in-out infinite; }
   .s-drift       { animation: s-drift 11s linear infinite; will-change: transform; }
 
-  @media (max-width: 767px) {
-    .s-rotate     { animation-duration: 64s; }
-    .s-rotate-rev { animation-duration: 48s; }
+  /* Mobile portrait: slower rings, no scan line */
+  @media (max-width: 767px) and (orientation: portrait) {
+    .s-rotate     { animation-duration: 60s; }
+    .s-rotate-rev { animation-duration: 44s; }
     .s-drift      { display: none; }
+  }
+
+  /* Mobile landscape: panels go side-by-side, panel goes column */
+  @media (orientation: landscape) and (max-width: 767px) {
+    .signals-grid {
+      grid-template-rows: 1fr !important;
+      grid-template-columns: 1fr 1fr !important;
+    }
+    .signal-panel-inner {
+      flex-direction: column !important;
+      gap: 0 !important;
+      padding: 10px !important;
+    }
+    .signal-orbital {
+      width: 76px !important;
+      height: 76px !important;
+      margin-bottom: 6px;
+    }
+    .signal-panel-text {
+      text-align: center !important;
+    }
+    .signal-kicker-row {
+      justify-content: center !important;
+    }
+    .signal-subtitle {
+      font-size: 10.5px !important;
+      line-height: 1.35 !important;
+    }
   }
 
   @media (prefers-reduced-motion: reduce) {
@@ -104,7 +132,7 @@ const SIGNALS_CSS = `
 `;
 
 /* ────────────────────────────────────────────────────────── */
-/* Isolated clock                                             */
+/* Clock                                                      */
 /* ────────────────────────────────────────────────────────── */
 
 const Clock = React.memo(function Clock() {
@@ -137,25 +165,23 @@ interface ChannelPanelProps {
 
 function ChannelPanel({ channel, index, onOpen }: ChannelPanelProps) {
   const Icon = channel.icon;
-  const fromX = index === 0 ? -32 : 32;
 
   return (
     <motion.button
       type="button"
-      initial={{ opacity: 0, x: fromX }}
-      animate={{ opacity: 1, x: 0 }}
+      initial={{ opacity: 0, scale: 0.97 }}
+      animate={{ opacity: 1, scale: 1 }}
       transition={{
-        duration: 0.5,
-        delay: 0.06 * index,
+        duration: 0.4,
+        delay: index * 0.06,
         ease: [0.16, 1, 0.3, 1],
       }}
-      whileTap={{ scale: 0.995 }}
+      whileTap={{ scale: 0.985 }}
       onClick={() => onOpen(channel.id)}
-      className="group relative snap-start shrink-0 h-full min-h-0 rounded-3xl overflow-hidden flex flex-col text-left touch-manipulation md:h-full"
+      className="group relative w-full h-full min-h-0 rounded-2xl md:rounded-3xl overflow-hidden touch-manipulation text-left"
       style={{
         background: channel.panelBg,
         border: '1px solid rgba(255,255,255,0.06)',
-        willChange: 'transform',
       }}
     >
       {/* Ambient center glow */}
@@ -166,10 +192,10 @@ function ChannelPanel({ channel, index, onOpen }: ChannelPanelProps) {
           background: `radial-gradient(circle at 50% 55%, rgba(${channel.accentRgb},0.10) 0%, transparent 55%)`,
         }}
       />
-      {/* Bottom accent bloom — brightens on hover */}
+      {/* Bottom bloom — brightens on hover */}
       <div
         aria-hidden
-        className="pointer-events-none absolute inset-x-0 bottom-0 h-[55%] opacity-60 group-hover:opacity-100 transition-opacity duration-500"
+        className="pointer-events-none absolute inset-x-0 bottom-0 h-[55%] opacity-50 md:opacity-60 group-hover:opacity-100 transition-opacity duration-500"
         style={{
           background: `radial-gradient(ellipse at 50% 100%, rgba(${channel.accentRgb},0.18) 0%, transparent 60%)`,
         }}
@@ -180,73 +206,50 @@ function ChannelPanel({ channel, index, onOpen }: ChannelPanelProps) {
         <span
           key={corner}
           aria-hidden
-          className={`absolute w-4 h-4 transition-colors duration-300 ${
+          className={`absolute w-3 h-3 md:w-4 md:h-4 ${
             corner === 'tl'
-              ? 'top-4 left-4 border-t-2 border-l-2 rounded-tl-md'
+              ? 'top-2.5 left-2.5 md:top-4 md:left-4 border-t-2 border-l-2 rounded-tl-md'
               : corner === 'tr'
-              ? 'top-4 right-4 border-t-2 border-r-2 rounded-tr-md'
+              ? 'top-2.5 right-2.5 md:top-4 md:right-4 border-t-2 border-r-2 rounded-tr-md'
               : corner === 'bl'
-              ? 'bottom-4 left-4 border-b-2 border-l-2 rounded-bl-md'
-              : 'bottom-4 right-4 border-b-2 border-r-2 rounded-br-md'
+              ? 'bottom-2.5 left-2.5 md:bottom-4 md:left-4 border-b-2 border-l-2 rounded-bl-md'
+              : 'bottom-2.5 right-2.5 md:bottom-4 md:right-4 border-b-2 border-r-2 rounded-br-md'
           }`}
-          style={{
-            borderColor: `rgba(${channel.accentRgb},0.28)`,
-          }}
+          style={{ borderColor: `rgba(${channel.accentRgb},0.28)` }}
         />
       ))}
 
-      {/* Content */}
-      <div className="relative z-10 flex flex-col h-full p-5 pt-14 sm:pt-16 md:p-7 md:pt-14">
-        {/* Top kicker + live pill */}
-        <div className="flex items-center justify-between gap-3">
-          <span
-            className="text-[9px] md:text-[10px] font-bold tracking-[0.3em] uppercase"
-            style={{ color: channel.accent }}
-          >
-            {channel.kicker}
-          </span>
-          <span className="flex items-center gap-1.5 px-2 py-1 rounded-full bg-white/[0.03] border border-white/[0.06]">
-            <span
-              className="w-1 h-1 rounded-full s-blink"
-              style={{ background: '#22C55E' }}
-            />
-            <span className="text-[8.5px] font-bold tracking-[0.2em] text-[#A8A29E] uppercase">
-              Live
-            </span>
-          </span>
-        </div>
-
-        {/* Center — orbital icon */}
-        <div className="flex-1 flex items-center justify-center relative min-h-0 py-3">
-          {/* Outer ring with satellite */}
+      {/* ── Content ── */}
+      <div className="signal-panel-inner relative z-10 flex h-full w-full items-center gap-3 p-3 md:flex-col md:justify-center md:gap-0 md:p-7">
+        {/* Orbital icon block */}
+        <div className="signal-orbital relative shrink-0 flex items-center justify-center w-[100px] h-[100px] sm:w-[120px] sm:h-[120px] md:w-[240px] md:h-[240px]">
+          {/* Outer rotating ring + satellites */}
           <div
             aria-hidden
-            className="absolute rounded-full border border-dashed s-rotate pointer-events-none
-                       w-[180px] h-[180px] sm:w-[220px] sm:h-[220px] md:w-[260px] md:h-[260px]"
+            className="absolute inset-0 rounded-full border border-dashed s-rotate pointer-events-none"
             style={{ borderColor: `rgba(${channel.accentRgb},0.18)` }}
           >
             <span
-              className="absolute top-0 left-1/2 -translate-x-1/2 -translate-y-1/2 w-2 h-2 rounded-full"
+              className="absolute top-0 left-1/2 -translate-x-1/2 -translate-y-1/2 w-1.5 h-1.5 md:w-2 md:h-2 rounded-full"
               style={{
                 background: channel.accent,
                 boxShadow: `0 0 14px ${channel.accent}`,
               }}
             />
             <span
-              className="absolute bottom-0 left-1/2 -translate-x-1/2 translate-y-1/2 w-1.5 h-1.5 rounded-full opacity-60"
+              className="absolute bottom-0 left-1/2 -translate-x-1/2 translate-y-1/2 w-1 h-1 md:w-1.5 md:h-1.5 rounded-full opacity-60"
               style={{ background: channel.accent }}
             />
           </div>
 
-          {/* Inner ring with satellite */}
+          {/* Inner counter-rotating ring + satellite */}
           <div
             aria-hidden
-            className="absolute rounded-full border s-rotate-rev pointer-events-none
-                       w-[120px] h-[120px] sm:w-[150px] sm:h-[150px] md:w-[180px] md:h-[180px]"
-            style={{ borderColor: `rgba(${channel.accentRgb},0.09)` }}
+            className="absolute inset-[20%] rounded-full border s-rotate-rev pointer-events-none"
+            style={{ borderColor: `rgba(${channel.accentRgb},0.10)` }}
           >
             <span
-              className="absolute top-0 left-1/2 -translate-x-1/2 -translate-y-1/2 w-1.5 h-1.5 rounded-full opacity-70"
+              className="absolute top-0 left-1/2 -translate-x-1/2 -translate-y-1/2 w-1 h-1 md:w-1.5 md:h-1.5 rounded-full opacity-70"
               style={{ background: channel.accent }}
             />
           </div>
@@ -267,33 +270,56 @@ function ChannelPanel({ channel, index, onOpen }: ChannelPanelProps) {
               }}
             />
             <div
-              className="relative w-16 h-16 md:w-20 md:h-20 rounded-full flex items-center justify-center transition-transform duration-500 group-hover:scale-110"
+              className="relative w-11 h-11 md:w-20 md:h-20 rounded-full flex items-center justify-center transition-transform duration-500 group-hover:scale-110"
               style={{
                 background: `linear-gradient(135deg, rgba(${channel.accentRgb},0.32) 0%, rgba(${channel.accentRgb},0.10) 100%)`,
                 boxShadow: `0 0 44px -8px rgba(${channel.accentRgb},0.65), inset 0 1px 0 rgba(255,255,255,0.14)`,
               }}
             >
               <Icon
-                className="w-7 h-7 md:w-9 md:h-9 relative z-10"
+                className="w-5 h-5 md:w-9 md:h-9 relative z-10"
                 style={{ color: channel.accent }}
               />
             </div>
           </div>
         </div>
 
-        {/* Bottom — title, subtitle, CTA */}
-        <div className="text-center">
+        {/* Text block */}
+        <div className="signal-panel-text flex-1 min-w-0 text-left md:text-center md:flex-none md:mt-4">
+          {/* Kicker + live pill */}
+          <div className="signal-kicker-row flex items-center gap-2 mb-1 md:justify-center md:mb-2">
+            <span
+              className="text-[8.5px] md:text-[10px] font-bold tracking-[0.28em] uppercase whitespace-nowrap"
+              style={{ color: channel.accent }}
+            >
+              {channel.kicker}
+            </span>
+            <span className="flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-white/[0.03] border border-white/[0.06] shrink-0">
+              <span
+                className="w-1 h-1 rounded-full s-blink"
+                style={{ background: '#22C55E' }}
+              />
+              <span className="text-[7.5px] md:text-[8.5px] font-bold tracking-[0.18em] text-[#A8A29E] uppercase">
+                Live
+              </span>
+            </span>
+          </div>
+
+          {/* Title */}
           <h2
-            className="text-[26px] sm:text-[32px] md:text-[40px] font-medium text-[#EDE5D4] tracking-[-0.02em] leading-[1.02]"
+            className="text-[22px] sm:text-[26px] md:text-[40px] font-medium text-[#EDE5D4] tracking-[-0.02em] leading-[1.02]"
             style={{ fontFamily: '"Instrument Serif", Georgia, serif' }}
           >
             {channel.title}
           </h2>
-          <p className="text-[11.5px] md:text-[13px] text-[#A8A29E] leading-relaxed mt-2 mb-4 max-w-[260px] mx-auto">
+
+          {/* Subtitle */}
+          <p className="signal-subtitle text-[11.5px] md:text-[13px] text-[#A8A29E] leading-snug mt-1 md:mt-2 max-w-[280px] md:max-w-[260px] md:mx-auto">
             {channel.subtitle}
           </p>
-          <div
-            className="inline-flex items-center gap-2 h-9 px-4 rounded-full border transition-all duration-300 group-hover:gap-2.5"
+
+          {/* CTA — desktop only */}
+          <div className="hidden md:inline-flex items-center gap-2 h-9 px-4 rounded-full border mt-4 transition-all duration-300 group-hover:gap-2.5"
             style={{
               borderColor: `rgba(${channel.accentRgb},0.35)`,
               background: `rgba(${channel.accentRgb},0.10)`,
@@ -303,7 +329,9 @@ function ChannelPanel({ channel, index, onOpen }: ChannelPanelProps) {
             <span className="text-[10.5px] font-bold tracking-[0.18em] uppercase">
               Tune in
             </span>
-            <ArrowRight className="w-3.5 h-3.5 transition-transform group-hover:translate-x-0.5" />
+            <svg className="w-3.5 h-3.5 transition-transform group-hover:translate-x-0.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+              <path d="M5 12h14M13 6l6 6-6 6" />
+            </svg>
           </div>
         </div>
       </div>
@@ -321,7 +349,6 @@ function AmbientBackground() {
       aria-hidden
       className="pointer-events-none absolute inset-0 overflow-hidden"
     >
-      {/* Warm center bloom */}
       <div
         className="absolute inset-0"
         style={{
@@ -329,7 +356,6 @@ function AmbientBackground() {
             'radial-gradient(ellipse 900px 700px at 50% 40%, rgba(217,119,6,0.05) 0%, transparent 70%)',
         }}
       />
-      {/* Cool corner accents */}
       <div
         className="absolute -top-52 -right-52 w-[560px] h-[560px] opacity-50"
         style={{
@@ -344,7 +370,6 @@ function AmbientBackground() {
             'radial-gradient(circle, rgba(59,130,246,0.07) 0%, transparent 70%)',
         }}
       />
-      {/* Masked grid */}
       <div
         className="absolute inset-0 opacity-[0.03]"
         style={{
@@ -357,7 +382,6 @@ function AmbientBackground() {
             'radial-gradient(ellipse 70% 70% at 50% 50%, black 25%, transparent 80%)',
         }}
       />
-      {/* Drifting scan line */}
       <div
         className="absolute inset-x-0 h-px opacity-20 s-drift"
         style={{
@@ -370,7 +394,7 @@ function AmbientBackground() {
 }
 
 /* ────────────────────────────────────────────────────────── */
-/* Viewer — full-bleed iframe + floating chrome pill          */
+/* Viewer                                                     */
 /* ────────────────────────────────────────────────────────── */
 
 interface ViewerProps {
@@ -395,7 +419,6 @@ function Viewer({
   const Icon = channel.icon;
   return (
     <div className="relative h-full w-full bg-[#0B0A08]">
-      {/* iframe fills everything */}
       <iframe
         key={`${channel.id}-${reloadKey}`}
         src={channel.url}
@@ -409,7 +432,7 @@ function Viewer({
 
       {/* Floating chrome pill */}
       <div
-        className="absolute top-3 left-1/2 -translate-x-1/2 z-30 flex items-center gap-0.5 h-10 px-1.5 rounded-full bg-[#0F0D0A] border border-white/[0.10] shadow-[0_12px_32px_-8px_rgba(0,0,0,0.9)] max-w-[calc(100%-24px)]"
+        className="absolute top-2 left-1/2 -translate-x-1/2 z-30 flex items-center gap-0.5 h-9 md:h-10 px-1.5 rounded-full bg-[#0F0D0A] border border-white/[0.10] shadow-[0_12px_32px_-8px_rgba(0,0,0,0.9)] max-w-[calc(100%-24px)]"
         role="toolbar"
         aria-label="Signal controls"
       >
@@ -420,20 +443,17 @@ function Viewer({
           aria-label="Back to Signals"
           title="Back to Signals"
         >
-          <ArrowLeft className="w-4 h-4" />
+          <ArrowLeft className="w-3.5 h-3.5 md:w-4 md:h-4" />
         </button>
 
-        <span
-          aria-hidden
-          className="w-px h-5 bg-white/[0.08] shrink-0"
-        />
+        <span aria-hidden className="w-px h-5 bg-white/[0.08] shrink-0" />
 
-        <div className="flex items-center gap-1.5 px-2 shrink-0 max-w-[180px]">
+        <div className="flex items-center gap-1.5 px-2 shrink-0 max-w-[160px]">
           <Icon
             className="w-3.5 h-3.5 shrink-0"
             style={{ color: channel.accent }}
           />
-          <span className="text-[12px] font-semibold text-[#EDE5D4] tracking-tight truncate">
+          <span className="text-[11.5px] md:text-[12px] font-semibold text-[#EDE5D4] tracking-tight truncate">
             {channel.shortTitle}
           </span>
           <span
@@ -442,10 +462,7 @@ function Viewer({
           />
         </div>
 
-        <span
-          aria-hidden
-          className="w-px h-5 bg-white/[0.08] shrink-0"
-        />
+        <span aria-hidden className="w-px h-5 bg-white/[0.08] shrink-0" />
 
         <button
           type="button"
@@ -468,7 +485,6 @@ function Viewer({
         </button>
       </div>
 
-      {/* Loader overlay */}
       <AnimatePresence>
         {isLoading && (
           <motion.div
@@ -478,8 +494,7 @@ function Viewer({
             transition={{ duration: 0.35 }}
             className="absolute inset-0 z-20 flex flex-col items-center justify-center bg-[#0B0A08] pointer-events-none"
           >
-            {/* Orbital spinner */}
-            <div className="relative w-20 h-20 mb-6">
+            <div className="relative w-16 h-16 md:w-20 md:h-20 mb-5">
               <div
                 className="absolute inset-0 rounded-full border-2 s-rotate"
                 style={{
@@ -504,7 +519,7 @@ function Viewer({
               </div>
             </div>
             <span
-              className="text-[10px] font-bold uppercase tracking-[0.3em] s-blink"
+              className="text-[9.5px] md:text-[10px] font-bold uppercase tracking-[0.3em] s-blink"
               style={{ color: channel.accent }}
             >
               Establishing Link
@@ -544,7 +559,6 @@ export default function SignalsPage() {
     window.open(CHANNELS[activeSignal].url, '_blank', 'noopener,noreferrer');
   };
 
-  // Escape → close viewer, or leave the page
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== 'Escape') return;
@@ -569,44 +583,42 @@ export default function SignalsPage() {
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             transition={{ duration: 0.2 }}
-            className="relative z-10 h-full w-full"
+            className="relative z-10 h-full w-full flex flex-col p-2 md:p-3 gap-2 md:gap-3"
           >
-            {/* Floating HUD */}
-            <div className="absolute top-3 left-3 z-20">
+            {/* HUD row — always inline, never floating */}
+            <div className="shrink-0 h-9 flex items-center justify-between gap-2">
               <button
                 type="button"
                 onClick={() => navigate('/app/orbit')}
-                className="h-9 pl-2 pr-3 rounded-full flex items-center gap-1.5 bg-[#0F0D0A]/95 border border-white/[0.08] text-[12px] font-medium text-[#A8A29E] hover:text-[#EDE5D4] hover:border-white/[0.14] transition-colors touch-manipulation"
+                className="h-9 pl-2 pr-3 rounded-full flex items-center gap-1.5 bg-[#0F0D0A] border border-white/[0.08] text-[12px] font-medium text-[#A8A29E] hover:text-[#EDE5D4] hover:border-white/[0.14] active:bg-white/[0.04] transition-colors touch-manipulation"
                 aria-label="Back to Orbit"
               >
                 <ArrowLeft className="w-3.5 h-3.5" />
-                <span className="hidden sm:inline">Orbit</span>
+                <span>Orbit</span>
               </button>
-            </div>
 
-            <div className="absolute top-3 right-3 z-20">
-              <div className="h-9 px-3 rounded-full flex items-center gap-2 bg-[#0F0D0A]/95 border border-white/[0.08]">
+              <div className="h-9 px-3 rounded-full flex items-center gap-2 bg-[#0F0D0A] border border-white/[0.08] shrink-0">
                 <Clock />
                 <span className="w-1.5 h-1.5 rounded-full bg-[#22C55E] s-blink" />
               </div>
             </div>
 
-            {/* Split panels */}
-            <div
-              className="h-full w-full p-3 pt-14 md:pt-3 flex flex-col gap-3 overflow-y-auto snap-y snap-mandatory
-                         md:grid md:grid-cols-2 md:gap-3 md:overflow-hidden md:snap-none"
-              style={{ WebkitOverflowScrolling: 'touch' }}
-            >
-              <ChannelPanel
-                channel={CHANNELS.movies}
-                index={0}
-                onOpen={open}
-              />
-              <ChannelPanel
-                channel={CHANNELS.news}
-                index={1}
-                onOpen={open}
-              />
+            {/* Panels — stacked portrait, side-by-side landscape/desktop */}
+            <div className="signals-grid flex-1 min-h-0 grid grid-rows-2 gap-2 md:grid-rows-1 md:grid-cols-2 md:gap-3">
+              <div className="min-h-0">
+                <ChannelPanel
+                  channel={CHANNELS.movies}
+                  index={0}
+                  onOpen={open}
+                />
+              </div>
+              <div className="min-h-0">
+                <ChannelPanel
+                  channel={CHANNELS.news}
+                  index={1}
+                  onOpen={open}
+                />
+              </div>
             </div>
           </motion.div>
         ) : (

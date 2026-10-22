@@ -225,7 +225,7 @@ const SHELL_CSS = `
   }
 
   .shell-rail   { contain: paint; }
-  .shell-main   { contain: paint; }
+  
   .shell-drawer { contain: paint; }
 
   .drawer-panel {
