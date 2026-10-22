@@ -278,8 +278,11 @@ function SettingsPane(): React.JSX.Element {
         };
 
   return (
-    <div className="h-full overflow-y-auto bg-[#0B0A08] text-[#EDE5D4] custom-scrollbar">
-      <div className="max-w-2xl mx-auto px-4 sm:px-6 py-8 space-y-6">
+    <div 
+      className="h-full overflow-y-auto bg-[#0B0A08] text-[#EDE5D4] custom-scrollbar flex flex-col"
+      style={{ overscrollBehaviorY: 'contain' }}
+    >
+      <div className="max-w-2xl w-full mx-auto px-4 sm:px-6 pt-8 pb-4 space-y-6 flex-1">
 
         {/* ── Hero profile card ─────────────────────────── */}
         <motion.div {...stagger(0)}>
@@ -310,7 +313,7 @@ function SettingsPane(): React.JSX.Element {
               <button
                 type="button"
                 onClick={openAvatarModal}
-                className="relative shrink-0 group rounded-full focus:outline-none focus-visible:ring-2 focus-visible:ring-[#D97706]/60"
+                className="relative shrink-0 group rounded-full focus:outline-none focus-visible:ring-2 focus-visible:ring-[#D97706]/60 touch-manipulation"
                 aria-label="Change avatar"
               >
                 {/* Glow Effect */}
@@ -353,7 +356,7 @@ function SettingsPane(): React.JSX.Element {
               )}
               <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-[#4ADE80]/10 border border-[#4ADE80]/20 text-[11px] text-[#4ADE80] font-medium">
                 <Lock className="w-3 h-3" />
-                
+                End-to-End Encrypted
               </div>
             </div>
           </div>
@@ -383,7 +386,7 @@ function SettingsPane(): React.JSX.Element {
                   if (saveError) setSaveError(null);
                 }}
                 placeholder="Your name"
-                className="w-full h-11 px-4 rounded-xl bg-[#0B0A08] border border-white/[0.08] text-[14px] text-[#EDE5D4] placeholder:text-[#5A524A] focus:outline-none focus:border-[#D97706]/60 focus:ring-1 focus:ring-[#D97706]/60 transition-all"
+                className="w-full h-12 px-4 rounded-xl bg-[#0B0A08] border border-white/[0.08] text-[16px] text-[#EDE5D4] placeholder:text-[#5A524A] focus:outline-none focus:border-[#D97706]/60 focus:ring-1 focus:ring-[#D97706]/60 transition-all touch-manipulation"
                 required
               />
             </div>
@@ -392,9 +395,9 @@ function SettingsPane(): React.JSX.Element {
               <label className="block text-[11px] uppercase tracking-[0.16em] text-[#7A6F65] font-bold">
                 Email
               </label>
-              <div className="flex items-center gap-3 h-11 px-4 rounded-xl bg-[#0B0A08] border border-white/[0.05]">
+              <div className="flex items-center gap-3 h-12 px-4 rounded-xl bg-[#0B0A08] border border-white/[0.05]">
                 <Mail className="w-4 h-4 text-[#5A524A] shrink-0" />
-                <span className="text-[13.5px] text-[#A8A29E] truncate flex-1">
+                <span className="text-[14px] text-[#A8A29E] truncate flex-1">
                   {user?.email || 'Not available'}
                 </span>
               </div>
@@ -407,7 +410,7 @@ function SettingsPane(): React.JSX.Element {
                   animate={{ opacity: 1, y: 0 }}
                   exit={{ opacity: 0 }}
                   transition={{ duration: 0.2 }}
-                  className="rounded-xl bg-[#B91C1C]/10 border border-[#B91C1C]/25 px-4 py-3 text-[12.5px] text-[#F87171] flex items-center gap-2.5"
+                  className="rounded-xl bg-[#B91C1C]/10 border border-[#B91C1C]/25 px-4 py-3 text-[13px] text-[#F87171] flex items-center gap-2.5"
                 >
                   <AlertCircle className="w-4 h-4 shrink-0" />
                   <span>{saveError}</span>
@@ -420,7 +423,7 @@ function SettingsPane(): React.JSX.Element {
                   animate={{ opacity: 1, y: 0 }}
                   exit={{ opacity: 0 }}
                   transition={{ duration: 0.2 }}
-                  className="rounded-xl bg-[#15803D]/10 border border-[#15803D]/25 px-4 py-3 text-[12.5px] text-[#4ADE80] flex items-center gap-2.5"
+                  className="rounded-xl bg-[#15803D]/10 border border-[#15803D]/25 px-4 py-3 text-[13px] text-[#4ADE80] flex items-center gap-2.5"
                 >
                   <CheckCircle2 className="w-4 h-4 shrink-0" />
                   <span>Profile saved successfully.</span>
@@ -432,9 +435,9 @@ function SettingsPane(): React.JSX.Element {
               <button
                 type="submit"
                 disabled={saving || displayName.trim() === (user?.displayName ?? '')}
-                className="h-10 px-6 rounded-xl bg-gradient-to-r from-[#D97706] to-[#F59E0B] hover:from-[#B45309] hover:to-[#D97706] disabled:opacity-30 disabled:cursor-not-allowed text-[#171106] text-[13px] font-bold inline-flex items-center gap-2 transition-all shadow-[0_4px_14px_-4px_rgba(217,119,6,0.5)] disabled:shadow-none"
+                className="h-11 px-6 rounded-xl bg-gradient-to-r from-[#D97706] to-[#F59E0B] hover:from-[#B45309] hover:to-[#D97706] active:scale-[0.98] disabled:opacity-30 disabled:cursor-not-allowed disabled:active:scale-100 text-[#171106] text-[14px] font-bold inline-flex items-center gap-2 transition-all shadow-[0_4px_14px_-4px_rgba(217,119,6,0.5)] disabled:shadow-none touch-manipulation"
               >
-                {saving && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+                {saving && <Loader2 className="w-4 h-4 animate-spin" />}
                 <span>{saving ? 'Saving…' : 'Save Changes'}</span>
               </button>
             </div>
@@ -459,7 +462,7 @@ function SettingsPane(): React.JSX.Element {
               hint="Used by others to find you"
             >
               <div className="flex items-center gap-1.5">
-                <span className="text-[13px] text-[#EDE5D4] font-medium truncate max-w-[180px] tabular-nums">
+                <span className="text-[13.5px] text-[#EDE5D4] font-medium truncate max-w-[180px] tabular-nums">
                   {user?.userHandle || 'guest'}@orbit
                 </span>
                 <button
@@ -471,7 +474,7 @@ function SettingsPane(): React.JSX.Element {
                       'handle',
                     )
                   }
-                  className="p-2 rounded-lg text-[#5A524A] hover:text-[#EDE5D4] hover:bg-white/[0.06] transition-colors"
+                  className="p-2 -mr-2 rounded-lg text-[#5A524A] hover:text-[#EDE5D4] hover:bg-white/[0.06] active:bg-white/[0.1] transition-colors touch-manipulation"
                   title="Copy handle"
                 >
                   {copiedField === 'handle' ? (
@@ -490,7 +493,7 @@ function SettingsPane(): React.JSX.Element {
             >
               <Link
                 to="/forgot-password"
-                className="text-[13px] text-[#D97706] hover:text-[#F59E0B] font-semibold transition-colors"
+                className="text-[13.5px] text-[#D97706] hover:text-[#F59E0B] font-semibold transition-colors p-2 -mr-2 touch-manipulation"
               >
                 Change
               </Link>
@@ -528,7 +531,7 @@ function SettingsPane(): React.JSX.Element {
               <button
                 type="button"
                 onClick={() => void openBlockedModal()}
-                className="text-[13px] text-[#D97706] hover:text-[#F59E0B] font-semibold inline-flex items-center gap-1 transition-colors"
+                className="text-[13.5px] text-[#D97706] hover:text-[#F59E0B] font-semibold inline-flex items-center gap-1 transition-colors p-2 -mr-2 touch-manipulation"
               >
                 Manage
                 <ChevronRight className="w-4 h-4" />
@@ -544,7 +547,7 @@ function SettingsPane(): React.JSX.Element {
                 type="button"
                 disabled
                 title="Coming soon"
-                className="text-[13px] text-[#5A524A] cursor-not-allowed font-medium"
+                className="text-[13.5px] text-[#5A524A] cursor-not-allowed font-medium p-2 -mr-2"
               >
                 Soon
               </button>
@@ -571,7 +574,7 @@ function SettingsPane(): React.JSX.Element {
             >
               <a
                 href={`mailto:${SUPPORT_EMAIL}?subject=Orbital%20Support%20Request`}
-                className="text-[13px] text-[#D97706] hover:text-[#F59E0B] font-semibold inline-flex items-center gap-1 transition-colors"
+                className="text-[13.5px] text-[#D97706] hover:text-[#F59E0B] font-semibold inline-flex items-center gap-1 transition-colors p-2 -mr-2 touch-manipulation"
               >
                 Email us
                 <ChevronRight className="w-4 h-4" />
@@ -598,7 +601,7 @@ function SettingsPane(): React.JSX.Element {
             {/* Terms card */}
             <Link
               to="/terms"
-              className="group relative overflow-hidden rounded-xl border border-white/[0.06] bg-[#0B0A08] hover:bg-[#181510] hover:border-[#D97706]/30 p-4 transition-all duration-300"
+              className="group relative overflow-hidden rounded-xl border border-white/[0.06] bg-[#0B0A08] hover:bg-[#181510] active:bg-[#1C1914] hover:border-[#D97706]/30 p-4 transition-all duration-300 touch-manipulation"
             >
               <div
                 className="pointer-events-none absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-300"
@@ -628,7 +631,7 @@ function SettingsPane(): React.JSX.Element {
             {/* Privacy card */}
             <Link
               to="/privacy"
-              className="group relative overflow-hidden rounded-xl border border-white/[0.06] bg-[#0B0A08] hover:bg-[#181510] hover:border-[#4ADE80]/30 p-4 transition-all duration-300"
+              className="group relative overflow-hidden rounded-xl border border-white/[0.06] bg-[#0B0A08] hover:bg-[#181510] active:bg-[#1C1914] hover:border-[#4ADE80]/30 p-4 transition-all duration-300 touch-manipulation"
             >
               <div
                 className="pointer-events-none absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-300"
@@ -656,34 +659,33 @@ function SettingsPane(): React.JSX.Element {
             </Link>
           </div>
         </motion.section>
-
-        {/* ── Danger zone ───────────────────────────────── */}
-        <motion.section
-          {...stagger(0.28)}
-          className="rounded-[24px] bg-[#B91C1C]/[0.03] border border-[#B91C1C]/20 overflow-hidden"
-        >
-          <div className="p-6 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-5">
-            <div className="min-w-0">
-              <h3 className="text-[15px] font-semibold text-[#EDE5D4] tracking-tight flex items-center gap-2">
-                Sign out
-              </h3>
-              <p className="text-[12.5px] text-[#A8A29E] mt-1">
-                Log out of this device. You can sign back in any time.
-              </p>
-            </div>
-
-            <button
-              onClick={() => void handleSignOut()}
-              className="shrink-0 h-10 px-5 rounded-xl bg-[#B91C1C]/10 hover:bg-[#B91C1C] border border-[#B91C1C]/30 hover:border-[#B91C1C] text-[#F87171] hover:text-white text-[13px] font-semibold inline-flex items-center gap-2 transition-all duration-200"
-            >
-              <LogOut className="w-4 h-4" />
-              Sign out
-            </button>
-          </div>
-        </motion.section>
-
-        <div className="h-8" />
       </div>
+
+      {/* ── Danger zone / Sign out (Bottom flush) ──────── */}
+      <motion.div
+        {...stagger(0.28)}
+        className="w-full border-t border-[#B91C1C]/20 bg-[#B91C1C]/[0.03]"
+        style={{ paddingBottom: 'max(1.5rem, env(safe-area-inset-bottom))' }}
+      >
+        <div className="max-w-2xl mx-auto px-4 sm:px-6 py-5 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+          <div className="min-w-0">
+            <h3 className="text-[15px] font-semibold text-[#EDE5D4] tracking-tight flex items-center gap-2">
+              Sign out
+            </h3>
+            <p className="text-[12.5px] text-[#A8A29E] mt-1">
+              Log out of this device. You can sign back in any time.
+            </p>
+          </div>
+
+          <button
+            onClick={() => void handleSignOut()}
+            className="shrink-0 w-full sm:w-auto h-12 sm:h-10 px-6 rounded-xl bg-[#B91C1C]/10 hover:bg-[#B91C1C] active:bg-[#991B1B] border border-[#B91C1C]/30 hover:border-[#B91C1C] active:border-[#991B1B] text-[#F87171] hover:text-white active:text-white text-[14px] sm:text-[13px] font-semibold inline-flex items-center justify-center gap-2 transition-all duration-200 touch-manipulation"
+          >
+            <LogOut className="w-4 h-4" />
+            Sign out
+          </button>
+        </div>
+      </motion.div>
 
       {/* ── Avatar modal ────────────────────────────────── */}
       <AnimatePresence>
@@ -712,10 +714,10 @@ function SettingsPane(): React.JSX.Element {
                   type="button"
                   onClick={closeAvatarModal}
                   disabled={uploading}
-                  className="w-8 h-8 rounded-full flex items-center justify-center text-[#7A6F65] hover:text-[#EDE5D4] hover:bg-white/[0.06] disabled:opacity-40 transition-colors"
+                  className="w-9 h-9 rounded-full flex items-center justify-center text-[#7A6F65] hover:text-[#EDE5D4] hover:bg-white/[0.06] active:bg-white/[0.1] disabled:opacity-40 transition-colors touch-manipulation"
                   aria-label="Close"
                 >
-                  <X className="w-4 h-4" />
+                  <X className="w-5 h-5" />
                 </button>
               </div>
 
@@ -730,10 +732,10 @@ function SettingsPane(): React.JSX.Element {
                   onClick={() => fileInputRef.current?.click()}
                   role="button"
                   tabIndex={0}
-                  className={`relative rounded-[20px] border-2 border-dashed transition-all duration-200 cursor-pointer flex flex-col items-center justify-center py-12 px-6 ${
+                  className={`relative rounded-[20px] border-2 border-dashed transition-all duration-200 cursor-pointer flex flex-col items-center justify-center py-12 px-6 touch-manipulation ${
                     dragActive
                       ? 'border-[#D97706] bg-[#D97706]/[0.08] scale-[0.99]'
-                      : 'border-white/[0.1] hover:border-white/[0.2] hover:bg-white/[0.02]'
+                      : 'border-white/[0.1] hover:border-white/[0.2] active:bg-white/[0.04] hover:bg-white/[0.02]'
                   }`}
                 >
                   {pendingPreview ? (
@@ -752,7 +754,7 @@ function SettingsPane(): React.JSX.Element {
                   )}
 
                   <p className="text-[14px] font-medium text-[#EDE5D4] mt-4 text-center max-w-[260px] truncate">
-                    {pendingFile ? pendingFile.name : 'Click to upload or drag & drop'}
+                    {pendingFile ? pendingFile.name : 'Tap to select a photo'}
                   </p>
                   <p className="text-[11.5px] text-[#5A524A] mt-1 text-center">
                     JPG, PNG or GIF (max. 10MB)
@@ -773,7 +775,7 @@ function SettingsPane(): React.JSX.Element {
                       initial={reduceMotion ? false : { opacity: 0, y: -4 }}
                       animate={{ opacity: 1, y: 0 }}
                       exit={{ opacity: 0 }}
-                      className="rounded-xl bg-[#B91C1C]/10 border border-[#B91C1C]/25 px-4 py-3 text-[12.5px] text-[#F87171] flex items-center gap-2"
+                      className="rounded-xl bg-[#B91C1C]/10 border border-[#B91C1C]/25 px-4 py-3 text-[13px] text-[#F87171] flex items-center gap-2"
                     >
                       <AlertCircle className="w-4 h-4 shrink-0" />
                       <span>{uploadError}</span>
@@ -787,7 +789,7 @@ function SettingsPane(): React.JSX.Element {
                   type="button"
                   onClick={closeAvatarModal}
                   disabled={uploading}
-                  className="h-10 px-4 rounded-xl bg-transparent hover:bg-white/[0.04] text-[13px] font-medium text-[#A8A29E] hover:text-[#EDE5D4] disabled:opacity-40 transition-colors"
+                  className="h-11 px-5 rounded-xl bg-transparent hover:bg-white/[0.04] active:bg-white/[0.08] text-[14px] font-medium text-[#A8A29E] hover:text-[#EDE5D4] disabled:opacity-40 transition-colors touch-manipulation"
                 >
                   Cancel
                 </button>
@@ -795,7 +797,7 @@ function SettingsPane(): React.JSX.Element {
                   type="button"
                   onClick={() => void handleUpload()}
                   disabled={!pendingFile || uploading}
-                  className="h-10 px-6 rounded-xl bg-[#D97706] hover:bg-[#B45309] disabled:opacity-30 disabled:cursor-not-allowed text-[#171106] text-[13px] font-bold inline-flex items-center gap-2 transition-all shadow-[0_4px_14px_-4px_rgba(217,119,6,0.4)] disabled:shadow-none"
+                  className="h-11 px-6 rounded-xl bg-[#D97706] hover:bg-[#B45309] active:scale-[0.98] disabled:active:scale-100 disabled:opacity-30 disabled:cursor-not-allowed text-[#171106] text-[14px] font-bold inline-flex items-center gap-2 transition-all shadow-[0_4px_14px_-4px_rgba(217,119,6,0.4)] disabled:shadow-none touch-manipulation"
                 >
                   {uploading ? (
                     <>
@@ -851,14 +853,14 @@ function SettingsPane(): React.JSX.Element {
                 <button
                   type="button"
                   onClick={() => setBlockedModalOpen(false)}
-                  className="w-8 h-8 rounded-full flex items-center justify-center text-[#7A6F65] hover:text-[#EDE5D4] hover:bg-white/[0.06] transition-colors"
+                  className="w-9 h-9 rounded-full flex items-center justify-center text-[#7A6F65] hover:text-[#EDE5D4] hover:bg-white/[0.06] active:bg-white/[0.1] transition-colors touch-manipulation"
                   aria-label="Close"
                 >
-                  <X className="w-4 h-4" />
+                  <X className="w-5 h-5" />
                 </button>
               </div>
 
-              <div className="flex-1 overflow-y-auto custom-scrollbar">
+              <div className="flex-1 overflow-y-auto custom-scrollbar overscroll-contain">
                 {blockedLoading ? (
                   <div className="py-16 flex flex-col items-center justify-center text-[13px] text-[#7A6F65]">
                     <Loader2 className="w-6 h-6 animate-spin text-[#D97706] mb-3" />
@@ -891,7 +893,7 @@ function SettingsPane(): React.JSX.Element {
                         <button
                           type="button"
                           onClick={() => setBlockedProfileModalUserId(u.id)}
-                          className="shrink-0 rounded-full focus:outline-none focus-visible:ring-2 focus-visible:ring-[#D97706]/50 hover:opacity-80 transition-opacity"
+                          className="shrink-0 rounded-full focus:outline-none focus-visible:ring-2 focus-visible:ring-[#D97706]/50 hover:opacity-80 active:scale-95 transition-all touch-manipulation"
                           aria-label={`View ${u.displayName}'s profile`}
                         >
                           <Avatar
@@ -912,7 +914,7 @@ function SettingsPane(): React.JSX.Element {
                           type="button"
                           onClick={() => void handleUnblock(u.id)}
                           disabled={unblockingId === u.id}
-                          className="shrink-0 h-8 px-3 rounded-lg bg-[#15803D]/10 hover:bg-[#15803D]/20 border border-[#15803D]/20 hover:border-[#15803D]/40 disabled:opacity-40 text-[12px] font-semibold text-[#4ADE80] inline-flex items-center gap-1.5 transition-colors"
+                          className="shrink-0 h-9 px-3.5 rounded-lg bg-[#15803D]/10 hover:bg-[#15803D]/20 active:bg-[#15803D]/30 border border-[#15803D]/20 hover:border-[#15803D]/40 disabled:opacity-40 text-[12.5px] font-semibold text-[#4ADE80] inline-flex items-center gap-1.5 transition-colors touch-manipulation"
                         >
                           {unblockingId === u.id ? (
                             <Loader2 className="w-3.5 h-3.5 animate-spin" />
@@ -927,11 +929,11 @@ function SettingsPane(): React.JSX.Element {
                 )}
               </div>
 
-              <div className="px-6 py-3.5 border-t border-white/[0.04] flex items-center justify-end bg-[#0B0A08]/50 shrink-0">
+              <div className="px-6 py-4 border-t border-white/[0.04] flex items-center justify-end bg-[#0B0A08]/50 shrink-0">
                 <button
                   type="button"
                   onClick={() => setBlockedModalOpen(false)}
-                  className="h-10 px-5 rounded-xl bg-white/[0.04] hover:bg-white/[0.08] border border-white/[0.06] text-[13px] font-semibold text-[#EDE5D4] transition-colors"
+                  className="h-11 px-6 rounded-xl bg-white/[0.04] hover:bg-white/[0.08] active:bg-white/[0.1] border border-white/[0.06] text-[13.5px] font-semibold text-[#EDE5D4] transition-colors touch-manipulation"
                 >
                   Close
                 </button>
@@ -961,15 +963,15 @@ function Row({
   children: React.ReactNode;
 }) {
   return (
-    <div className="px-6 py-4 flex items-center justify-between gap-4 hover:bg-white/[0.02] transition-colors group">
+    <div className="px-6 py-4 flex items-center justify-between gap-4 hover:bg-white/[0.02] active:bg-white/[0.04] transition-colors group touch-manipulation">
       <div className="flex items-center gap-3.5 min-w-0">
-        <div className="w-9 h-9 rounded-xl bg-white/[0.03] border border-white/[0.05] flex items-center justify-center shrink-0 group-hover:bg-white/[0.06] group-hover:border-white/[0.1] transition-all">
+        <div className="w-10 h-10 rounded-xl bg-white/[0.03] border border-white/[0.05] flex items-center justify-center shrink-0 group-hover:bg-white/[0.06] group-hover:border-white/[0.1] transition-all">
           {icon}
         </div>
         <div className="min-w-0">
-          <p className="text-[13.5px] text-[#EDE5D4] font-semibold">{label}</p>
+          <p className="text-[14px] text-[#EDE5D4] font-semibold">{label}</p>
           {hint && (
-            <p className="text-[11.5px] text-[#7A6F65] mt-0.5 truncate">
+            <p className="text-[12px] text-[#7A6F65] mt-0.5 truncate">
               {hint}
             </p>
           )}
