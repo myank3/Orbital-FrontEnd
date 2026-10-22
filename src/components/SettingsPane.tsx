@@ -342,10 +342,7 @@ function SettingsPane(): React.JSX.Element {
                   Joined {memberSince(user.createdAt)}
                 </div>
               )}
-              <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-[#4ADE80]/10 border border-[#4ADE80]/20 text-[11px] text-[#4ADE80] font-medium">
-                <Lock className="w-3 h-3" />
-                End-to-End Encrypted
-              </div>
+              
             </div>
           </div>
         </motion.div>
