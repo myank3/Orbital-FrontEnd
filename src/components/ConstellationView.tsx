@@ -1363,7 +1363,7 @@ export default function ConstellationView({ friends: friendsProp }: Constellatio
                   : 'bg-[#4ADE80] shadow-[0_0_8px_rgba(74,222,128,0.85)]'
               }`}
             />
-            Drag to spin
+           
           </span>
           {inOrbit > 0 && (
             <>
