@@ -86,18 +86,23 @@ const IconMedia = (p: IconProps) => (
   </SvgBase>
 );
 
+// Broadcast / Radar signal icon
 const IconSignals = (p: IconProps) => (
   <SvgBase {...p}>
+    <path d="M8.5 15.5a5 5 0 0 1 0-7" />
+    <path d="M15.5 8.5a5 5 0 0 1 0 7" />
+    <path d="M5.6 18.4a9 9 0 0 1 0-12.8" />
+    <path d="M18.4 5.6a9 9 0 0 1 0 12.8" />
     <circle cx="12" cy="12" r="1.5" fill="currentColor" stroke="none" />
-    <path d="M8.2 15.8a5.4 5.4 0 0 1 0-7.6M15.8 8.2a5.4 5.4 0 0 1 0 7.6" />
-    <path d="M5.3 18.7a9.5 9.5 0 0 1 0-13.4M18.7 5.3a9.5 9.5 0 0 1 0 13.4" />
   </SvgBase>
 );
 
+// Atom / Orbit design
 const IconOrbit = (p: IconProps) => (
   <SvgBase {...p}>
-    <circle cx="12" cy="12" r="2.25" />
-    <ellipse cx="12" cy="12" rx="9.75" ry="4" transform="rotate(-20 12 12)" />
+    <ellipse cx="12" cy="12" rx="8" ry="3" transform="rotate(45 12 12)" />
+    <ellipse cx="12" cy="12" rx="8" ry="3" transform="rotate(-45 12 12)" />
+    <circle cx="12" cy="12" r="1.5" fill="currentColor" stroke="none" />
   </SvgBase>
 );
 
@@ -598,7 +603,7 @@ function AppShell(): React.JSX.Element {
     };
   }, [location.pathname, navigate]);
 
-  /* ── Nav items (Orbit ↔ Signals swapped) ───────────── */
+  /* ── Nav items ───────────── */
   const primaryNav: NavItem[] = useMemo(
     () => [
       { to: '/app/dm', label: 'Messages', icon: IconMessages },
@@ -612,10 +617,13 @@ function AppShell(): React.JSX.Element {
     () => [
       { to: '/app/calls', label: 'Calls', icon: IconCalls },
       { to: '/app/notifications', label: 'Media', icon: IconMedia },
-      { to: '/app/signals', label: 'Signals', icon: IconSignals },
+      { to: '/app/signals', label: 'Satellite', icon: IconSignals },
     ],
     [],
   );
+
+  // Combined list for the scrollable mobile bottom nav
+  const allNav = useMemo(() => [...primaryNav, ...activityNav], [primaryNav, activityNav]);
 
   const railWidth = railHovered ? 224 : 68;
   const incomingDisplayName = callerName ?? 'Someone';
@@ -658,7 +666,7 @@ function AppShell(): React.JSX.Element {
     const ind = indicatorRef.current;
     const wrap = bottomNavRef.current;
     if (!ind || !wrap) return;
-    const active = primaryNav.find(
+    const active = allNav.find(
       (i) =>
         location.pathname === i.to ||
         location.pathname.startsWith(i.to + '/'),
@@ -681,7 +689,19 @@ function AppShell(): React.JSX.Element {
     ind.style.opacity = '1';
     ind.style.width = `${tr.width}px`;
     ind.style.transform = `translate3d(${tr.left - wr.left}px, 0, 0)`;
-  }, [location.pathname, primaryNav, hideMobileChrome]);
+  }, [location.pathname, allNav, hideMobileChrome]);
+
+  // Auto-scroll active tab into view on mobile
+  useEffect(() => {
+    const active = allNav.find(
+      (i) => location.pathname === i.to || location.pathname.startsWith(i.to + '/'),
+    );
+    if (!active) return;
+    const tab = tabRefs.current[active.to];
+    if (tab) {
+      tab.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
+    }
+  }, [location.pathname, allNav]);
 
   return (
     <div
@@ -994,9 +1014,11 @@ function AppShell(): React.JSX.Element {
             }}
           >
             <div className="flex items-center h-16">
+              
+              {/* Scrollable tabs container */}
               <div
                 ref={bottomNavRef}
-                className="relative flex items-center justify-around flex-1 h-full"
+                className="relative flex items-center justify-start flex-1 h-full overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden scroll-smooth"
               >
                 <span
                   ref={indicatorRef}
@@ -1009,7 +1031,7 @@ function AppShell(): React.JSX.Element {
                   }}
                 />
 
-                {primaryNav.slice(0, 3).map((item) => (
+                {allNav.map((item) => (
                   <NavLink
                     key={item.to}
                     to={item.to}
@@ -1017,7 +1039,7 @@ function AppShell(): React.JSX.Element {
                       tabRefs.current[item.to] = el;
                     }}
                     className={({ isActive }) =>
-                      `relative z-10 flex flex-col items-center justify-center w-14 h-16 gap-1 touch-manipulation transition-colors ${
+                      `relative z-10 flex flex-col items-center justify-center w-[64px] min-w-[64px] h-16 gap-1 touch-manipulation transition-colors shrink-0 ${
                         isActive
                           ? 'text-[#D97706]'
                           : 'text-[#A8A29E] hover:text-[#EDE5D4]'
@@ -1025,12 +1047,13 @@ function AppShell(): React.JSX.Element {
                     }
                   >
                     <item.icon size={20} />
-                    <span className="text-[9px] font-medium">{item.label}</span>
+                    <span className="text-[9px] font-medium whitespace-nowrap">{item.label}</span>
                   </NavLink>
                 ))}
               </div>
 
-              <div className="relative flex items-center justify-center w-14 h-16">
+              {/* Static avatar container */}
+              <div className="relative flex items-center justify-center w-14 h-16 shrink-0 bg-[#0C0A08] shadow-[-10px_0_15px_-3px_rgba(12,10,8,0.9)] z-20">
                 <button
                   onClick={(e) => {
                     e.stopPropagation();
