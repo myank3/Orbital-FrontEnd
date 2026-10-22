@@ -94,16 +94,20 @@ const STAR_COUNT_MOBILE = 45;
 const DUST_COUNT_DESKTOP = 20;
 const DUST_COUNT_MOBILE = 10;
 
-/** Steady-state auto-spin (deg/sec). Slow, calm. Full rotation ≈ 16s. */
-const IDLE_VELOCITY = 22;
-/** Fraction of velocity that survives each second — fast decay back to idle. */
-const FRICTION_PER_SEC = 0.1;
+/** Steady-state auto-spin (deg/sec). Slow, calm. Full rotation ≈ 28s. */
+const IDLE_VELOCITY = 12.8;
+/** Fraction of velocity that survives each second — gentle decay. */
+const FRICTION_PER_SEC = 0.83;
 /** Below this angular speed at release, don't fling — snap to idle. */
-const MIN_FLING = 60;
+const MIN_FLING = 40;
 /** Minimum pointer travel (px) before we treat a press as a drag, not a tap. */
-const DRAG_THRESHOLD = 5;
+const DRAG_THRESHOLD = 7;
 /** If the pointer sits still this long before release, don't fling. */
 const PAUSE_BEFORE_RELEASE_MS = 160;
+/** Velocity low-pass filter time constant (seconds) — smooths high-polling input. */
+const VELOCITY_SMOOTHING_TAU = 0.06;
+/** Max dt so a stalled tab never causes a huge jump. */
+const MAX_DT = 1 / 30;
 
 /* ────────────────────────────────────────────────────────── */
 /* Starfield                                                  */
@@ -404,9 +408,11 @@ const Tier = React.memo(function Tier({
                   style={{
                     transform: 'rotate(0deg)',
                     willChange: 'transform',
+                    backfaceVisibility: 'hidden',
+                    transformOrigin: 'center center',
                     animation: reduced
                       ? undefined
-                      : `avatarFade 240ms ${0.02 + i * 0.012}s ease-out both`,
+                      : `avatarFade 320ms ${0.02 + i * 0.012}s ease-out both`,
                   }}
                 >
                   <button
@@ -599,7 +605,9 @@ export default function ConstellationView({ friends: friendsProp }: Constellatio
     lastTimeRef.current = performance.now();
 
     const tick = (now: number) => {
-      const dt = Math.min(0.05, Math.max(0, (now - lastTimeRef.current) / 1000));
+      // Clamp dt both ways so 240Hz stays stable and stalled tabs don't jump
+      const rawDt = (now - lastTimeRef.current) / 1000;
+      const dt = Math.min(MAX_DT, Math.max(0, rawDt));
       lastTimeRef.current = now;
 
       const d = dragRef.current;
@@ -608,14 +616,24 @@ export default function ConstellationView({ friends: friendsProp }: Constellatio
         return;
       }
 
-      const speed = Math.abs(velocityRef.current);
-      if (speed <= IDLE_VELOCITY) {
-        velocityRef.current = idleDirRef.current * IDLE_VELOCITY;
+      // Frame-rate-independent exponential friction toward idle velocity.
+      // Instead of snapping, we ease into the idle target so the handoff
+      // at the end of a fling is invisible even at 240Hz.
+      const speed = velocityRef.current;
+
+      if (Math.abs(speed) <= IDLE_VELOCITY * 1.001) {
+        const idleTarget = idleDirRef.current * IDLE_VELOCITY;
+        velocityRef.current =
+          speed + (idleTarget - speed) * (1 - Math.exp(-dt * 8));
       } else {
-        velocityRef.current = velocityRef.current * Math.pow(FRICTION_PER_SEC, dt);
-        if (Math.abs(velocityRef.current) < IDLE_VELOCITY) {
-          idleDirRef.current = Math.sign(velocityRef.current) || idleDirRef.current;
-          velocityRef.current = idleDirRef.current * IDLE_VELOCITY;
+        const decay = Math.pow(FRICTION_PER_SEC, dt);
+        const next = speed * decay;
+        if (Math.abs(next) < IDLE_VELOCITY) {
+          idleDirRef.current = Math.sign(next) || idleDirRef.current;
+          const tgt = idleDirRef.current * IDLE_VELOCITY;
+          velocityRef.current = next + (tgt - next) * (1 - Math.exp(-dt * 10));
+        } else {
+          velocityRef.current = next;
         }
       }
 
@@ -708,7 +726,14 @@ export default function ConstellationView({ friends: friendsProp }: Constellatio
         let angleDelta = angle - d.lastAngle;
         if (angleDelta > 180) angleDelta -= 360;
         else if (angleDelta < -180) angleDelta += 360;
-        d.velocity = angleDelta / dt;
+
+        const instantVelocity = angleDelta / dt;
+
+        // Low-pass filter the instantaneous velocity so high-polling-rate
+        // jitter doesn't produce a noisy fling. Blend factor derives from dt
+        // so the time constant is frame-rate independent.
+        const alpha = 1 - Math.exp(-dt / VELOCITY_SMOOTHING_TAU);
+        d.velocity = d.velocity + (instantVelocity - d.velocity) * alpha;
       }
       d.lastAngle = angle;
       d.lastTime = now;
@@ -760,7 +785,11 @@ export default function ConstellationView({ friends: friendsProp }: Constellatio
         e.clientY > rect.bottom
       ) return;
       e.preventDefault();
-      velocityRef.current += e.deltaY * 0.6;
+
+      // Gentle impulse — smooth through the existing velocity filter
+      const impulse = e.deltaY * 0.3;
+      velocityRef.current += impulse;
+
       const dir = Math.sign(velocityRef.current);
       if (dir !== 0) idleDirRef.current = dir;
       if (!pausedRef.current) startRaf();
@@ -1223,6 +1252,8 @@ export default function ConstellationView({ friends: friendsProp }: Constellatio
               style={{
                 willChange: 'transform',
                 backfaceVisibility: 'hidden',
+                transform: 'translateZ(0)',
+                contain: 'layout paint',
                 touchAction: 'none',
                 userSelect: 'none',
                 cursor: coarse ? 'default' : 'grab',
