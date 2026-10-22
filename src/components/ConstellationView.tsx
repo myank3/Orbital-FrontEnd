@@ -1050,7 +1050,7 @@ export default function ConstellationView({ friends: friendsProp }: Constellatio
             onChange={(e) => setQuery(e.target.value)}
             onFocus={() => setSearchFocused(true)}
             onBlur={() => setSearchFocused(false)}
-            placeholder="Find someone"
+            placeholder=""
             aria-label="Find a friend"
             inputMode="search"
             enterKeyHint="search"
