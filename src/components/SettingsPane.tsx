@@ -278,11 +278,8 @@ function SettingsPane(): React.JSX.Element {
         };
 
   return (
-    <div 
-      className="h-full overflow-y-auto bg-[#0B0A08] text-[#EDE5D4] custom-scrollbar flex flex-col"
-      style={{ overscrollBehaviorY: 'contain' }}
-    >
-      <div className="max-w-2xl w-full mx-auto px-4 sm:px-6 pt-8 pb-4 space-y-6 flex-1">
+    <div className="h-full overflow-y-auto bg-[#0B0A08] text-[#EDE5D4] custom-scrollbar">
+      <div className="max-w-2xl mx-auto px-4 sm:px-6 py-8 space-y-6">
 
         {/* ── Hero profile card ─────────────────────────── */}
         <motion.div {...stagger(0)}>
@@ -297,7 +294,6 @@ function SettingsPane(): React.JSX.Element {
                   filter: 'blur(40px)'
                 }}
               />
-              {/* Subtle grid pattern */}
               <div 
                 className="absolute inset-0 opacity-[0.03]"
                 style={{
@@ -309,40 +305,32 @@ function SettingsPane(): React.JSX.Element {
 
             <div className="px-5 sm:px-8 pb-7 -mt-14 relative z-10 flex flex-col sm:flex-row sm:items-end gap-5">
               
-              {/* Avatar Button */}
-              <button
-                type="button"
-                onClick={openAvatarModal}
-                className="relative shrink-0 group rounded-full focus:outline-none focus-visible:ring-2 focus-visible:ring-[#D97706]/60 touch-manipulation"
-                aria-label="Change avatar"
-              >
-                {/* Glow Effect */}
-                <div className="absolute inset-0 bg-[#D97706] rounded-full blur-md opacity-0 group-hover:opacity-30 transition-opacity duration-300" />
-                
-                <div className="relative border-[3px] border-[#14120F] rounded-full">
-                  <Avatar
-                    name={displayName || user?.displayName || 'User'}
-                    src={toAbsoluteAvatar(user?.avatarUrl)}
-                    size="xl"
-                    isOnline={false}
-                  />
-                </div>
-                
-                {/* Hover Overlay */}
-                <div className="absolute inset-0 rounded-full bg-black/60 flex flex-col items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity duration-200 backdrop-blur-sm">
-                  <Camera className="w-6 h-6 text-white mb-1" />
-                  <span className="text-[10px] font-semibold text-white uppercase tracking-wider">Edit</span>
-                </div>
-              </button>
+              {/* Avatar — plain, no ring */}
+              <div className="shrink-0 -mb-1">
+                <Avatar
+                  name={displayName || user?.displayName || 'User'}
+                  src={toAbsoluteAvatar(user?.avatarUrl)}
+                  size="xl"
+                  isOnline={false}
+                />
+              </div>
 
-              {/* Name & Handle */}
+              {/* Name & Change photo button */}
               <div className="min-w-0 flex-1 pb-1">
                 <h1 className="text-[24px] font-bold text-[#EDE5D4] tracking-tight truncate leading-tight">
                   {user?.displayName || 'Your name'}
                 </h1>
-                <p className="text-[13px] text-[#A8A29E] truncate mt-1 font-medium">
+                <p className="text-[13px] text-[#A8A29E] truncate mt-0.5 font-medium">
                   @{user?.userHandle || 'guest'}
                 </p>
+                <button
+                  type="button"
+                  onClick={openAvatarModal}
+                  className="mt-2 inline-flex items-center gap-1.5 text-[12.5px] font-semibold text-[#D97706] hover:text-[#F59E0B] active:text-[#B45309] transition-colors touch-manipulation"
+                >
+                  <Camera className="w-3.5 h-3.5" />
+                  Change photo
+                </button>
               </div>
             </div>
             
@@ -367,7 +355,7 @@ function SettingsPane(): React.JSX.Element {
           {...stagger(0.06)}
           className="rounded-[24px] bg-[#14120F] border border-white/[0.06] overflow-hidden shadow-sm"
         >
-          <div className="px-6 py-4 border-b border-white/[0.04] bg-white/[0.01] flex items-center gap-2">
+          <div className="px-6 py-4 border-b border-white/[0.04] bg-white/[0.01]">
             <h2 className="text-[14.5px] font-semibold text-[#EDE5D4] tracking-tight">
               Edit Profile
             </h2>
@@ -598,7 +586,6 @@ function SettingsPane(): React.JSX.Element {
           </div>
 
           <div className="p-5 grid grid-cols-1 sm:grid-cols-2 gap-4">
-            {/* Terms card */}
             <Link
               to="/terms"
               className="group relative overflow-hidden rounded-xl border border-white/[0.06] bg-[#0B0A08] hover:bg-[#181510] active:bg-[#1C1914] hover:border-[#D97706]/30 p-4 transition-all duration-300 touch-manipulation"
@@ -628,7 +615,6 @@ function SettingsPane(): React.JSX.Element {
               </div>
             </Link>
 
-            {/* Privacy card */}
             <Link
               to="/privacy"
               className="group relative overflow-hidden rounded-xl border border-white/[0.06] bg-[#0B0A08] hover:bg-[#181510] active:bg-[#1C1914] hover:border-[#4ADE80]/30 p-4 transition-all duration-300 touch-manipulation"
@@ -659,33 +645,33 @@ function SettingsPane(): React.JSX.Element {
             </Link>
           </div>
         </motion.section>
-      </div>
 
-      {/* ── Danger zone / Sign out (Bottom flush) ──────── */}
-      <motion.div
-        {...stagger(0.28)}
-        className="w-full border-t border-[#B91C1C]/20 bg-[#B91C1C]/[0.03]"
-        style={{ paddingBottom: 'max(1.5rem, env(safe-area-inset-bottom))' }}
-      >
-        <div className="max-w-2xl mx-auto px-4 sm:px-6 py-5 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-          <div className="min-w-0">
-            <h3 className="text-[15px] font-semibold text-[#EDE5D4] tracking-tight flex items-center gap-2">
-              Sign out
-            </h3>
-            <p className="text-[12.5px] text-[#A8A29E] mt-1">
-              Log out of this device. You can sign back in any time.
-            </p>
-          </div>
-
+        {/* ── Sign out (small, contained) ───────────────── */}
+        <motion.section
+          {...stagger(0.28)}
+          className="rounded-[24px] bg-[#B91C1C]/[0.04] border border-[#B91C1C]/15 overflow-hidden"
+        >
           <button
             onClick={() => void handleSignOut()}
-            className="shrink-0 w-full sm:w-auto h-12 sm:h-10 px-6 rounded-xl bg-[#B91C1C]/10 hover:bg-[#B91C1C] active:bg-[#991B1B] border border-[#B91C1C]/30 hover:border-[#B91C1C] active:border-[#991B1B] text-[#F87171] hover:text-white active:text-white text-[14px] sm:text-[13px] font-semibold inline-flex items-center justify-center gap-2 transition-all duration-200 touch-manipulation"
+            className="w-full px-6 py-4 flex items-center justify-between gap-4 hover:bg-[#B91C1C]/[0.06] active:bg-[#B91C1C]/[0.10] transition-colors touch-manipulation group"
           >
-            <LogOut className="w-4 h-4" />
-            Sign out
+            <div className="flex items-center gap-3.5 min-w-0">
+              <div className="w-10 h-10 rounded-xl bg-[#B91C1C]/10 border border-[#B91C1C]/20 flex items-center justify-center shrink-0 text-[#F87171] group-hover:bg-[#B91C1C]/15 transition-colors">
+                <LogOut className="w-[18px] h-[18px]" />
+              </div>
+              <div className="min-w-0 text-left">
+                <p className="text-[14px] text-[#EDE5D4] font-semibold">Sign out</p>
+                <p className="text-[12px] text-[#7A6F65] mt-0.5 truncate">
+                  Log out of this device
+                </p>
+              </div>
+            </div>
+            <ChevronRight className="w-4 h-4 text-[#F87171]/60 group-hover:text-[#F87171] group-hover:translate-x-0.5 transition-all shrink-0" />
           </button>
-        </div>
-      </motion.div>
+        </motion.section>
+
+        <div className="h-4" />
+      </div>
 
       {/* ── Avatar modal ────────────────────────────────── */}
       <AnimatePresence>
@@ -708,7 +694,7 @@ function SettingsPane(): React.JSX.Element {
             >
               <div className="flex items-center justify-between px-6 py-4 border-b border-white/[0.04]">
                 <h3 className="text-[15px] font-semibold text-[#EDE5D4] tracking-tight">
-                  Profile Photo
+                  Change profile photo
                 </h3>
                 <button
                   type="button"
@@ -739,17 +725,14 @@ function SettingsPane(): React.JSX.Element {
                   }`}
                 >
                   {pendingPreview ? (
-                    <div className="relative">
-                      <div className="absolute inset-0 bg-[#D97706] blur-xl opacity-20" />
-                      <img
-                        src={pendingPreview}
-                        alt="Preview"
-                        className="relative w-32 h-32 rounded-full object-cover border-4 border-[#14120F] shadow-xl"
-                      />
-                    </div>
+                    <img
+                      src={pendingPreview}
+                      alt="Preview"
+                      className="w-32 h-32 rounded-full object-cover shadow-xl"
+                    />
                   ) : (
-                    <div className="w-20 h-20 rounded-full bg-white/[0.03] border border-white/[0.08] flex items-center justify-center mb-4 group-hover:scale-105 transition-transform">
-                      <Upload className="w-8 h-8 text-[#7A6F65] group-hover:text-[#D97706] transition-colors" />
+                    <div className="w-20 h-20 rounded-full bg-white/[0.03] border border-white/[0.08] flex items-center justify-center mb-4">
+                      <Upload className="w-8 h-8 text-[#7A6F65]" />
                     </div>
                   )}
 
