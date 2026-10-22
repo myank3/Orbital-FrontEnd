@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence, useReducedMotion } from 'motion/react';
 import { apiService } from '../services/api';
@@ -35,12 +35,6 @@ function stableRandom(seed: string, salt: string): number {
 /* Environment / device capabilities                          */
 /* ────────────────────────────────────────────────────────── */
 
-/**
- * Touch-first / low-power detection. Used to:
- *  - pause animations when the tab is backgrounded (Android kills frames)
- *  - cut the starfield density on low-end phones
- *  - avoid continuous `will-change` promotion on rotating layers
- */
 function usePageVisible(): boolean {
   const [visible, setVisible] = useState(() =>
     typeof document === 'undefined' ? true : !document.hidden,
@@ -60,7 +54,6 @@ function useIsCoarsePointer(): boolean {
     const mq = window.matchMedia('(pointer: coarse)');
     const update = () => setCoarse(mq.matches);
     update();
-    // Safari <14 uses addListener
     if (mq.addEventListener) mq.addEventListener('change', update);
     else mq.addListener(update);
     return () => {
@@ -75,10 +68,12 @@ function useLowPowerDevice(): boolean {
   const [low, setLow] = useState(false);
   useEffect(() => {
     if (typeof navigator === 'undefined') return;
-    const nav = navigator as Navigator & { deviceMemory?: number; hardwareConcurrency?: number };
+    const nav = navigator as Navigator & {
+      deviceMemory?: number;
+      hardwareConcurrency?: number;
+    };
     const mem = nav.deviceMemory ?? 8;
     const cores = nav.hardwareConcurrency ?? 8;
-    // Heuristic: <=4GB RAM or <=4 cores → treat as low power.
     setLow(mem <= 4 || cores <= 4);
   }, []);
   return low;
@@ -90,15 +85,25 @@ function useLowPowerDevice(): boolean {
 
 const ONLINE_RADIUS = '26vmin';
 const OFFLINE_RADIUS = '39vmin';
-const ONLINE_SPIN_SEC = 120;
-const OFFLINE_SPIN_SEC = 240;
 const MAX_ORBIT = 30;
 const ONLINE_SLOT_RATIO = 2 / 3;
-/** Minimum angular gap between two avatars on the same ring, in degrees. */
 const MIN_ANGLE_GAP_DEG = 26;
 
-const STAR_COUNT_DESKTOP = 70;
-const STAR_COUNT_MOBILE = 40;
+const STAR_COUNT_DESKTOP = 80;
+const STAR_COUNT_MOBILE = 45;
+const DUST_COUNT_DESKTOP = 22;
+const DUST_COUNT_MOBILE = 12;
+
+/** Steady-state auto-spin (deg/sec). Full rotation every 8 seconds. */
+const IDLE_VELOCITY = 45;
+/** Fraction of velocity that survives each second — fling decays fast, then locks back to idle. */
+const FRICTION_PER_SEC = 0.12;
+/** Below this angular speed (deg/sec) during a fling, we lock back into idle spin. */
+const MIN_FLING = 45;
+/** Minimum pointer travel (px) before we treat a press as a drag, not a tap. */
+const DRAG_THRESHOLD = 5;
+/** If the pointer sits still this long before release, don't fling. */
+const PAUSE_BEFORE_RELEASE_MS = 160;
 
 /* ────────────────────────────────────────────────────────── */
 /* Starfield                                                  */
@@ -120,23 +125,24 @@ function buildStars(count: number): Star[] {
     out.push({
       top: stableRandom(seed, 'top') * 100,
       left: stableRandom(seed, 'left') * 100,
-      size: 1 + stableRandom(seed, 'size') * 2,
+      size: 1 + stableRandom(seed, 'size') * 2.2,
       delay: stableRandom(seed, 'delay') * 6,
-      duration: 3 + stableRandom(seed, 'dur') * 4,
-      opacity: 0.15 + stableRandom(seed, 'op') * 0.55,
+      duration: 2.5 + stableRandom(seed, 'dur') * 4,
+      opacity: 0.18 + stableRandom(seed, 'op') * 0.6,
     });
   }
   return out;
 }
 
-interface StarfieldProps {
+const Starfield = React.memo(function Starfield({
+  reduced,
+  count,
+  animate,
+}: {
   reduced: boolean;
   count: number;
-  /** When false, the CSS animation is disabled so we stop burning GPU. */
   animate: boolean;
-}
-
-const Starfield = React.memo(function Starfield({ reduced, count, animate }: StarfieldProps) {
+}) {
   const stars = useMemo(() => buildStars(count), [count]);
   return (
     <div aria-hidden className="absolute inset-0 pointer-events-none overflow-hidden">
@@ -162,6 +168,155 @@ const Starfield = React.memo(function Starfield({ reduced, count, animate }: Sta
 });
 
 /* ────────────────────────────────────────────────────────── */
+/* Floating dust — slow-drifting motes close to the camera    */
+/* ────────────────────────────────────────────────────────── */
+
+const FloatingDust = React.memo(function FloatingDust({
+  count,
+  enabled,
+}: {
+  count: number;
+  enabled: boolean;
+}) {
+  const dust = useMemo(
+    () =>
+      Array.from({ length: count }, (_, i) => ({
+        seed: `dust-${i}`,
+        x: stableRandom(`dust-${i}`, 'x') * 100,
+        y: stableRandom(`dust-${i}`, 'y') * 100,
+        size: 1.5 + stableRandom(`dust-${i}`, 's') * 3,
+        dur: 10 + stableRandom(`dust-${i}`, 'd') * 14,
+        delay: stableRandom(`dust-${i}`, 'dl') * 6,
+        opacity: 0.15 + stableRandom(`dust-${i}`, 'o') * 0.5,
+        warm: stableRandom(`dust-${i}`, 'c') > 0.5,
+      })),
+    [count],
+  );
+
+  return (
+    <div aria-hidden className="absolute inset-0 pointer-events-none overflow-hidden">
+      {dust.map((d, i) => (
+        <span
+          key={i}
+          style={{
+            position: 'absolute',
+            left: `${d.x}%`,
+            top: `${d.y}%`,
+            width: d.size,
+            height: d.size,
+            borderRadius: '50%',
+            background: d.warm
+              ? 'radial-gradient(circle, rgba(255,214,150,1) 0%, rgba(255,214,150,0) 70%)'
+              : 'radial-gradient(circle, rgba(220,240,255,1) 0%, rgba(220,240,255,0) 70%)',
+            boxShadow: d.warm
+              ? '0 0 4px rgba(255,214,150,0.6)'
+              : '0 0 4px rgba(220,240,255,0.5)',
+            opacity: d.opacity,
+            animation: enabled
+              ? `dustDrift ${d.dur}s ease-in-out ${d.delay}s infinite`
+              : undefined,
+            willChange: enabled ? 'transform, opacity' : undefined,
+          }}
+        />
+      ))}
+    </div>
+  );
+});
+
+/* ────────────────────────────────────────────────────────── */
+/* Shooting stars — brighter, more frequent, warm + white     */
+/* ────────────────────────────────────────────────────────── */
+
+interface ShotConfig {
+  id: number;
+  startX: number;
+  startY: number;
+  angle: number;
+  distance: number;
+  duration: number;
+  scale: number;
+  hue: 'white' | 'warm';
+}
+
+const ShootingStars = React.memo(function ShootingStars({
+  enabled,
+  dense,
+}: {
+  enabled: boolean;
+  dense: boolean;
+}) {
+  const [shots, setShots] = useState<ShotConfig[]>([]);
+  const nextIdRef = useRef(0);
+
+  useEffect(() => {
+    if (!enabled) {
+      setShots([]);
+      return;
+    }
+
+    let timer: number | null = null;
+    const cleanupTimers: number[] = [];
+
+    const spawnOne = () => {
+      const id = nextIdRef.current++;
+      const shot: ShotConfig = {
+        id,
+        startX: -8 + Math.random() * 70,
+        startY: -5 + Math.random() * 45,
+        angle: 15 + Math.random() * 35,
+        distance: 140 + Math.random() * 70,
+        duration: 1.0 + Math.random() * 0.8,
+        scale: 0.85 + Math.random() * 0.7,
+        hue: Math.random() > 0.45 ? 'white' : 'warm',
+      };
+      setShots((prev) => [...prev, shot]);
+      cleanupTimers.push(
+        window.setTimeout(() => {
+          setShots((prev) => prev.filter((s) => s.id !== id));
+        }, shot.duration * 1000 + 300),
+      );
+    };
+
+    const schedule = () => {
+      spawnOne();
+      const delay = dense ? 1800 + Math.random() * 1800 : 3000 + Math.random() * 2500;
+      timer = window.setTimeout(schedule, delay);
+    };
+
+    // First star at 3s (spec asked ~5, but they also wanted "better" → faster)
+    timer = window.setTimeout(schedule, 3000);
+
+    return () => {
+      if (timer) clearTimeout(timer);
+      cleanupTimers.forEach((t) => clearTimeout(t));
+      setShots([]);
+    };
+  }, [enabled, dense]);
+
+  if (!enabled) return null;
+
+  return (
+    <div aria-hidden className="absolute inset-0 pointer-events-none overflow-hidden">
+      {shots.map((s) => (
+        <span
+          key={s.id}
+          className="shooting-star"
+          data-hue={s.hue}
+          style={{
+            top: `${s.startY}%`,
+            left: `${s.startX}%`,
+            animationDuration: `${s.duration}s`,
+            ['--shoot-angle' as string]: `${s.angle}deg`,
+            ['--shoot-dist' as string]: `${s.distance}vmin`,
+            ['--shoot-scale' as string]: String(s.scale),
+          }}
+        />
+      ))}
+    </div>
+  );
+});
+
+/* ────────────────────────────────────────────────────────── */
 /* Layout                                                     */
 /* ────────────────────────────────────────────────────────── */
 
@@ -171,10 +326,6 @@ interface OrbitNode {
   jitter: number;
 }
 
-/**
- * Deterministically lay out friends around a ring with a guaranteed
- * minimum angular gap, so no two avatars can collapse into each other.
- */
 function layoutTier(friends: FriendDto[], minGapDeg: number): OrbitNode[] {
   const n = friends.length;
   if (n === 0) return [];
@@ -204,59 +355,30 @@ function layoutTier(friends: FriendDto[], minGapDeg: number): OrbitNode[] {
 interface TierProps {
   nodes: OrbitNode[];
   radius: string;
-  spinSeconds: number;
-  reverse: boolean;
-  paused: boolean;
   hoveredId: string | null;
   onHover: (id: string | null) => void;
   onLeave: () => void;
   onClick: (id: string) => void;
   online: boolean;
   reduced: boolean;
-  /** Stop all animation entirely (tab hidden / low-power idle). */
-  active: boolean;
-  /** Skip the constant glow pulse on online avatars on low-power devices. */
   glowPulse: boolean;
 }
 
 const Tier = React.memo(function Tier({
   nodes,
   radius,
-  spinSeconds,
-  reverse,
-  paused,
   hoveredId,
   onHover,
   onLeave,
   onClick,
   online,
   reduced,
-  active,
   glowPulse,
 }: TierProps) {
   if (nodes.length === 0) return null;
 
-  const spinning = !reduced && active;
-  const outerAnimation = spinning
-    ? `constellationSpin ${spinSeconds}s linear infinite${reverse ? ' reverse' : ''}`
-    : undefined;
-  const innerAnimation = spinning
-    ? `constellationSpin ${spinSeconds}s linear infinite${reverse ? '' : ' reverse'}`
-    : undefined;
-
   return (
-    <div
-      className="absolute inset-0 pointer-events-none"
-      style={{
-        animation: outerAnimation,
-        animationPlayState: paused ? 'paused' : 'running',
-        // Only promote while actually spinning — on Android, leaving
-        // will-change on too many layers eats GPU memory and causes jank.
-        willChange: spinning && !paused ? 'transform' : undefined,
-        backfaceVisibility: 'hidden',
-        transform: 'translateZ(0)',
-      }}
-    >
+    <div className="absolute inset-0 pointer-events-none">
       {nodes.map(({ friend: f, angle, jitter }, i) => {
         const finalRadius = `calc(${radius} + ${jitter}vmin)`;
         const isHovered = hoveredId === f.userId;
@@ -280,10 +402,10 @@ const Tier = React.memo(function Tier({
                 className="flex flex-col items-center"
                 style={{ transform: 'translate(-50%, -50%)' }}
               >
+                {/* Counter-rotate so the avatar stays upright while the disc spins. */}
                 <div
                   style={{
-                    animation: innerAnimation,
-                    animationPlayState: paused ? 'paused' : 'running',
+                    transform: 'rotate(calc(-1 * var(--orbit-rot, 0deg)))',
                     backfaceVisibility: 'hidden',
                   }}
                 >
@@ -291,10 +413,10 @@ const Tier = React.memo(function Tier({
                     initial={reduced ? false : { scale: 0, opacity: 0 }}
                     animate={{ scale: 1, opacity: isDimmed ? 0.35 : 1 }}
                     transition={{
-                      delay: reduced ? 0 : 0.05 + i * 0.025,
+                      delay: reduced ? 0 : 0.03 + i * 0.015,
                       type: 'spring',
-                      stiffness: 280,
-                      damping: 22,
+                      stiffness: 380,
+                      damping: 24,
                     }}
                   >
                     <motion.button
@@ -304,27 +426,25 @@ const Tier = React.memo(function Tier({
                       onMouseLeave={onLeave}
                       onFocus={() => onHover(f.userId)}
                       onBlur={onLeave}
-                      // Use pointer events for touch: treat tap as hover
-                      // briefly so the name reveals without a real hover.
                       onPointerDown={() => onHover(f.userId)}
                       className="relative flex flex-col items-center focus:outline-none group rounded-full touch-manipulation select-none"
                       style={{ WebkitTapHighlightColor: 'transparent' }}
                       aria-label={`Open chat with ${f.displayName}`}
                       animate={{ scale: isHovered ? 1.18 : 1 }}
-                      transition={{ type: 'spring', stiffness: 420, damping: 20 }}
+                      transition={{ type: 'spring', stiffness: 520, damping: 22 }}
                     >
                       {online && (
                         <span
                           aria-hidden
                           className="absolute rounded-full pointer-events-none"
                           style={{
-                            inset: '-8px',
+                            inset: '-10px',
                             background:
-                              'radial-gradient(circle, rgba(74,222,128,0.28) 0%, rgba(74,222,128,0) 70%)',
-                            filter: 'blur(6px)',
-                            ...(glowPulse && active && !reduced
+                              'radial-gradient(circle, rgba(74,222,128,0.34) 0%, rgba(74,222,128,0) 70%)',
+                            filter: 'blur(7px)',
+                            ...(glowPulse && !reduced
                               ? {
-                                  animation: `onlineGlow ${2.6 + i * 0.13}s ease-in-out infinite`,
+                                  animation: `onlineGlow ${2.4 + i * 0.11}s ease-in-out infinite`,
                                 }
                               : {}),
                           }}
@@ -338,13 +458,13 @@ const Tier = React.memo(function Tier({
                             initial={{ opacity: 0, scale: 0.6 }}
                             animate={{ opacity: 1, scale: 1 }}
                             exit={{ opacity: 0, scale: 0.6 }}
-                            transition={{ duration: 0.2 }}
+                            transition={{ duration: 0.18 }}
                             className="absolute rounded-full pointer-events-none"
                             style={{
-                              inset: '-14px',
+                              inset: '-16px',
                               background:
-                                'radial-gradient(circle, rgba(217,119,6,0.55) 0%, rgba(217,119,6,0) 70%)',
-                              filter: 'blur(10px)',
+                                'radial-gradient(circle, rgba(217,119,6,0.65) 0%, rgba(217,119,6,0) 70%)',
+                              filter: 'blur(11px)',
                             }}
                           />
                         )}
@@ -357,7 +477,7 @@ const Tier = React.memo(function Tier({
                             initial={{ opacity: 0, scale: 0.7 }}
                             animate={{ opacity: 1, scale: 1 }}
                             exit={{ opacity: 0, scale: 0.7 }}
-                            className="absolute rounded-full border border-[#D97706]/60 pointer-events-none"
+                            className="absolute rounded-full border border-[#D97706]/70 pointer-events-none"
                             style={{ inset: '-6px' }}
                           />
                         )}
@@ -378,7 +498,7 @@ const Tier = React.memo(function Tier({
                             initial={{ opacity: 0, y: -2 }}
                             animate={{ opacity: 1, y: 0 }}
                             exit={{ opacity: 0, y: -2 }}
-                            transition={{ duration: 0.15 }}
+                            transition={{ duration: 0.14 }}
                             className="mt-1.5 text-[10.5px] whitespace-nowrap font-medium text-[#EDE5D4] pointer-events-none"
                           >
                             {f.displayName.split(' ')[0]}
@@ -413,8 +533,6 @@ export default function ConstellationView({ friends: friendsProp }: Constellatio
   const pageVisible = usePageVisible();
   const coarse = useIsCoarsePointer();
   const lowPower = useLowPowerDevice();
-  const [idle, setIdle] = useState(false);
-  const idleTimer = useRef<number | null>(null);
 
   const [internalFriends, setInternalFriends] = useState<FriendDto[]>([]);
   const [loading, setLoading] = useState(!friendsProp);
@@ -422,6 +540,30 @@ export default function ConstellationView({ friends: friendsProp }: Constellatio
   const [query, setQuery] = useState('');
   const [hoveredId, setHoveredId] = useState<string | null>(null);
   const [searchFocused, setSearchFocused] = useState(false);
+
+  // ── Spin engine refs ─────────────────────────────────────
+  const pageRef = useRef<HTMLDivElement | null>(null);
+  const stageRef = useRef<HTMLDivElement | null>(null);
+  const rotationRef = useRef(0);
+  const velocityRef = useRef(IDLE_VELOCITY); // start already spinning clockwise
+  const idleDirRef = useRef(1);              // clockwise idle direction
+  const pausedRef = useRef(false);           // true while hovering an avatar
+  const rafRef = useRef<number | null>(null);
+  const lastTimeRef = useRef(0);
+  const suppressClickRef = useRef(false);
+
+  const dragRef = useRef({
+    active: false,
+    pointerId: -1,
+    startX: 0,
+    startY: 0,
+    startRotation: 0,
+    startAngle: 0,
+    lastAngle: 0,
+    lastTime: 0,
+    moved: false,
+    velocity: 0,
+  });
 
   // ── friend loading ────────────────────────────────────────
   useEffect(() => {
@@ -452,35 +594,262 @@ export default function ConstellationView({ friends: friendsProp }: Constellatio
     };
   }, []);
 
-  // ── idle: stop spin on mobile after 15s of no interaction
-  useEffect(() => {
-    if (!coarse) return; // only bother on touch devices
-    const reset = () => {
-      setIdle(false);
-      if (idleTimer.current) window.clearTimeout(idleTimer.current);
-      idleTimer.current = window.setTimeout(() => setIdle(true), 15_000);
-    };
-    reset();
-    window.addEventListener('touchstart', reset, { passive: true });
-    window.addEventListener('pointerdown', reset, { passive: true });
-    return () => {
-      window.removeEventListener('touchstart', reset);
-      window.removeEventListener('pointerdown', reset);
-      if (idleTimer.current) window.clearTimeout(idleTimer.current);
-    };
-  }, [coarse]);
+  // ── rotation engine ───────────────────────────────────────
+  const applyRotation = useCallback((deg: number) => {
+    rotationRef.current = deg;
+    const el = stageRef.current;
+    if (!el) return;
+    el.style.transform = `rotate(${deg}deg)`;
+    el.style.setProperty('--orbit-rot', `${deg}deg`);
+  }, []);
 
-  // Clear transient tap-hover after a moment so touch labels hide again.
-  useEffect(() => {
-    if (!hoveredId || !coarse) return;
-    const t = window.setTimeout(() => setHoveredId(null), 2200);
-    return () => window.clearTimeout(t);
-  }, [hoveredId, coarse]);
+  const stopRaf = useCallback(() => {
+    if (rafRef.current !== null) {
+      cancelAnimationFrame(rafRef.current);
+      rafRef.current = null;
+    }
+  }, []);
 
+  const startRaf = useCallback(() => {
+    if (rafRef.current !== null) return;
+    lastTimeRef.current = performance.now();
+
+    const tick = (now: number) => {
+      const dt = Math.min(0.05, Math.max(0, (now - lastTimeRef.current) / 1000));
+      lastTimeRef.current = now;
+
+      const d = dragRef.current;
+
+      if (d.active || pausedRef.current) {
+        // Drag or hover-pause overrides physics entirely.
+        rafRef.current = requestAnimationFrame(tick);
+        return;
+      }
+
+      const speed = Math.abs(velocityRef.current);
+      if (speed <= IDLE_VELOCITY) {
+        // Steady-state idle spin — never stops.
+        velocityRef.current = idleDirRef.current * IDLE_VELOCITY;
+      } else {
+        // Fling in progress — decay toward idle speed.
+        velocityRef.current = velocityRef.current * Math.pow(FRICTION_PER_SEC, dt);
+        if (Math.abs(velocityRef.current) < IDLE_VELOCITY) {
+          idleDirRef.current = Math.sign(velocityRef.current) || idleDirRef.current;
+          velocityRef.current = idleDirRef.current * IDLE_VELOCITY;
+        }
+      }
+
+      applyRotation(rotationRef.current + velocityRef.current * dt);
+      rafRef.current = requestAnimationFrame(tick);
+    };
+
+    rafRef.current = requestAnimationFrame(tick);
+  }, [applyRotation]);
+
+  // Start/stop the loop based on visibility + pause state.
+  useEffect(() => {
+    if (!pageVisible) {
+      stopRaf();
+      return;
+    }
+    if (!pausedRef.current && !dragRef.current.active) {
+      startRaf();
+    }
+    return () => stopRaf();
+  }, [pageVisible, startRaf, stopRaf]);
+
+  useEffect(() => () => stopRaf(), [stopRaf]);
+
+  // ── pointer helpers ───────────────────────────────────────
+  const getCenter = useCallback(() => {
+    const el = stageRef.current;
+    if (!el) return null;
+    const rect = el.getBoundingClientRect();
+    return { cx: rect.left + rect.width / 2, cy: rect.top + rect.height / 2 };
+  }, []);
+
+  const pointerAngle = useCallback(
+    (clientX: number, clientY: number): number | null => {
+      const center = getCenter();
+      if (!center) return null;
+      return Math.atan2(clientY - center.cy, clientX - center.cx) * (180 / Math.PI);
+    },
+    [getCenter],
+  );
+
+  const onPointerDown = useCallback(
+    (e: React.PointerEvent) => {
+      if (e.pointerType === 'mouse' && e.button !== 0) return;
+      const el = stageRef.current;
+      if (!el) return;
+      const angle = pointerAngle(e.clientX, e.clientY);
+      if (angle === null) return;
+
+      pausedRef.current = false;
+      try {
+        el.setPointerCapture(e.pointerId);
+      } catch {
+        /* ignore */
+      }
+
+      dragRef.current = {
+        active: true,
+        pointerId: e.pointerId,
+        startX: e.clientX,
+        startY: e.clientY,
+        startRotation: rotationRef.current,
+        startAngle: angle,
+        lastAngle: angle,
+        lastTime: performance.now(),
+        moved: false,
+        velocity: 0,
+      };
+      velocityRef.current = 0;
+      stopRaf();
+    },
+    [pointerAngle, stopRaf],
+  );
+
+  const onPointerMove = useCallback(
+    (e: React.PointerEvent) => {
+      const d = dragRef.current;
+      if (!d.active || e.pointerId !== d.pointerId) return;
+
+      const dx = e.clientX - d.startX;
+      const dy = e.clientY - d.startY;
+      if (!d.moved && Math.hypot(dx, dy) > DRAG_THRESHOLD) d.moved = true;
+      if (!d.moved) return;
+
+      const angle = pointerAngle(e.clientX, e.clientY);
+      if (angle === null) return;
+
+      let totalDelta = angle - d.startAngle;
+      if (totalDelta > 180) totalDelta -= 360;
+      else if (totalDelta < -180) totalDelta += 360;
+
+      applyRotation(d.startRotation + totalDelta);
+
+      const now = performance.now();
+      const dt = (now - d.lastTime) / 1000;
+      if (dt > 0.001) {
+        let angleDelta = angle - d.lastAngle;
+        if (angleDelta > 180) angleDelta -= 360;
+        else if (angleDelta < -180) angleDelta += 360;
+        d.velocity = angleDelta / dt;
+      }
+      d.lastAngle = angle;
+      d.lastTime = now;
+    },
+    [applyRotation, pointerAngle],
+  );
+
+  const onPointerUp = useCallback(
+    (e: React.PointerEvent) => {
+      const d = dragRef.current;
+      if (!d.active || e.pointerId !== d.pointerId) return;
+
+      const el = stageRef.current;
+      try {
+        el?.releasePointerCapture(e.pointerId);
+      } catch {
+        /* ignore */
+      }
+
+      d.active = false;
+
+      if (d.moved) {
+        suppressClickRef.current = true;
+        window.setTimeout(() => {
+          suppressClickRef.current = false;
+        }, 0);
+
+        const paused = performance.now() - d.lastTime > PAUSE_BEFORE_RELEASE_MS;
+        const v = paused ? 0 : d.velocity;
+
+        if (Math.abs(v) >= MIN_FLING) {
+          velocityRef.current = v;
+          idleDirRef.current = Math.sign(v) || idleDirRef.current;
+        } else {
+          // Not enough energy to fling — snap back to idle spin.
+          velocityRef.current = idleDirRef.current * IDLE_VELOCITY;
+        }
+      }
+
+      startRaf();
+    },
+    [startRaf],
+  );
+
+  // ── wheel spin (desktop boost) ────────────────────────────
+  useEffect(() => {
+    const el = pageRef.current;
+    if (!el) return;
+
+    const onWheel = (e: WheelEvent) => {
+      const stage = stageRef.current;
+      if (!stage) return;
+      const rect = stage.getBoundingClientRect();
+      if (
+        e.clientX < rect.left ||
+        e.clientX > rect.right ||
+        e.clientY < rect.top ||
+        e.clientY > rect.bottom
+      ) {
+        return;
+      }
+      e.preventDefault();
+      velocityRef.current += e.deltaY * 0.6;
+      const dir = Math.sign(velocityRef.current);
+      if (dir !== 0) idleDirRef.current = dir;
+      startRaf();
+    };
+
+    el.addEventListener('wheel', onWheel, { passive: false });
+    return () => el.removeEventListener('wheel', onWheel);
+  }, [startRaf]);
+
+  // ── hover brake / resume ──────────────────────────────────
+  const handleHover = useCallback(
+    (id: string | null) => {
+      setHoveredId(id);
+      if (id !== null) {
+        pausedRef.current = true;
+        velocityRef.current = 0;
+        stopRaf();
+      } else if (pausedRef.current) {
+        pausedRef.current = false;
+        velocityRef.current = idleDirRef.current * IDLE_VELOCITY;
+        startRaf();
+      }
+    },
+    [startRaf, stopRaf],
+  );
+
+  const handleLeave = useCallback(() => {
+    setHoveredId(null);
+    if (pausedRef.current) {
+      pausedRef.current = false;
+      velocityRef.current = idleDirRef.current * IDLE_VELOCITY;
+      startRaf();
+    }
+  }, [startRaf]);
+
+  const handleClick = useCallback(
+    (id: string) => {
+      if (suppressClickRef.current) return;
+      navigate(`/app/dm/${id}`);
+    },
+    [navigate],
+  );
+
+  // ── derived data ──────────────────────────────────────────
   const friends = friendsProp ?? internalFriends;
 
   const onlineIds = useMemo(
-    () => new Set(friends.filter((f) => presenceStore.isOnline(f.userId)).map((f) => f.userId)),
+    () =>
+      new Set(
+        friends.filter((f) => presenceStore.isOnline(f.userId)).map((f) => f.userId),
+      ),
     [friends, presenceTick],
   );
 
@@ -514,61 +883,101 @@ export default function ConstellationView({ friends: friendsProp }: Constellatio
 
   const { visibleOnline, visibleOffline, hiddenCount, onlineTotal } = layout;
 
-  const paused = hoveredId !== null;
   const inOrbit = visibleOnline.length + visibleOffline.length;
 
-  // Animation gates — these are what make it usable on Android.
   const animationsEnabled = pageVisible;
-  const spinEnabled = !reduced && animationsEnabled && !(coarse && idle);
   const starfieldAnimate = animationsEnabled && !reduced;
+  const dustEnabled = animationsEnabled && !reduced && !lowPower;
+  const shootingEnabled = animationsEnabled && !reduced;
   const starCount = lowPower || coarse ? STAR_COUNT_MOBILE : STAR_COUNT_DESKTOP;
-  const onlineSpin = spinEnabled ? ONLINE_SPIN_SEC : 0;
-  const offlineSpin = spinEnabled ? OFFLINE_SPIN_SEC : 0;
+  const dustCount = lowPower || coarse ? DUST_COUNT_MOBILE : DUST_COUNT_DESKTOP;
 
-  const handleHover = useMemo(() => (id: string | null) => setHoveredId(id), []);
-  const handleLeave = useMemo(() => () => setHoveredId(null), []);
-  const handleClick = useMemo(
-    () => (id: string) => navigate(`/app/dm/${id}`),
-    [navigate],
-  );
-
-  // Detect when the page is actually visible to gate expensive motion.
   return (
-    <div className="relative w-full h-full bg-[#0B0A08] text-[#EDE5D4] overflow-hidden isolate">
+    <div
+      ref={pageRef}
+      className="relative w-full h-full bg-[#0B0A08] text-[#EDE5D4] overflow-hidden isolate"
+    >
       <style>{`
-        @keyframes constellationSpin {
+        @keyframes starTwinkle {
+          0%, 100% { opacity: 0.08; transform: scale(1); }
+          50%      { opacity: 0.95; transform: scale(1.55); }
+        }
+        @keyframes dustDrift {
+          0%   { transform: translate(0, 0) scale(1);          opacity: 0.1; }
+          25%  { transform: translate(18px, -10px) scale(1.2);  opacity: 0.65; }
+          50%  { transform: translate(-10px, 14px) scale(0.9);  opacity: 0.4; }
+          75%  { transform: translate(-14px, -8px) scale(1.1);  opacity: 0.55; }
+          100% { transform: translate(0, 0) scale(1);           opacity: 0.1; }
+        }
+        @keyframes ringPulse {
+          0%, 100% { opacity: 0.32; }
+          50%      { opacity: 0.75; }
+        }
+        @keyframes ringRotate {
           from { transform: rotate(0deg); }
           to   { transform: rotate(360deg); }
         }
-        @keyframes starTwinkle {
-          0%, 100% { opacity: 0.1; transform: scale(1); }
-          50%      { opacity: 0.9; transform: scale(1.4); }
-        }
-        @keyframes ringPulse {
-          0%, 100% { opacity: 0.35; }
-          50%      { opacity: 0.7; }
-        }
         @keyframes corePulse {
-          0%, 100% { transform: scale(1); opacity: 0.5; }
-          50%      { transform: scale(1.15); opacity: 0.85; }
+          0%, 100% { transform: scale(1);     opacity: 0.5; }
+          50%      { transform: scale(1.22);  opacity: 0.9; }
         }
         @keyframes onlineGlow {
-          0%, 100% { opacity: 0.7; }
+          0%, 100% { opacity: 0.65; }
           50%      { opacity: 1; }
+        }
+        @keyframes satelliteOrbit {
+          from { transform: rotate(0deg); }
+          to   { transform: rotate(360deg); }
+        }
+        @keyframes shoot {
+          0% {
+            transform: rotate(var(--shoot-angle, 30deg)) translateX(0) scaleX(0.35) scale(var(--shoot-scale, 1));
+            opacity: 0;
+          }
+          10% { opacity: 1; }
+          90% { opacity: 1; }
+          100% {
+            transform: rotate(var(--shoot-angle, 30deg)) translateX(var(--shoot-dist, 70vmin)) scaleX(1) scale(var(--shoot-scale, 1));
+            opacity: 0;
+          }
+        }
+        .shooting-star {
+          position: absolute;
+          width: 140px;
+          height: 2.5px;
+          border-radius: 2px;
+          transform-origin: left center;
+          pointer-events: none;
+          will-change: transform, opacity;
+          animation: shoot linear forwards;
+        }
+        .shooting-star[data-hue="white"] {
+          background: linear-gradient(90deg,
+            rgba(255,255,255,0) 0%,
+            rgba(220,235,255,0.35) 35%,
+            rgba(240,248,255,0.9) 82%,
+            #ffffff 100%);
+          box-shadow: 0 0 10px rgba(255,255,255,0.85), 0 0 20px rgba(180,210,255,0.55);
+        }
+        .shooting-star[data-hue="warm"] {
+          background: linear-gradient(90deg,
+            rgba(255,180,90,0) 0%,
+            rgba(255,190,110,0.4) 35%,
+            rgba(255,210,140,0.95) 82%,
+            #FFF3D6 100%);
+          box-shadow: 0 0 10px rgba(255,190,120,0.9), 0 0 22px rgba(255,150,60,0.55);
         }
       `}</style>
 
-      <Starfield
-        reduced={reduced}
-        count={starCount}
-        animate={starfieldAnimate}
-      />
+      <Starfield reduced={reduced} count={starCount} animate={starfieldAnimate} />
+      <FloatingDust count={dustCount} enabled={dustEnabled} />
+      <ShootingStars enabled={shootingEnabled} dense={!lowPower} />
 
       {/* Header */}
       <motion.div
         initial={{ opacity: 0, y: -12 }}
         animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.5, ease: [0.22, 1, 0.36, 1] }}
+        transition={{ duration: 0.4, ease: [0.22, 1, 0.36, 1] }}
         className="absolute top-[env(safe-area-inset-top,0px)] left-4 md:top-5 md:left-5 z-20 pointer-events-none pt-4 md:pt-0"
       >
         <div className="flex items-center gap-3 px-4 py-2.5 rounded-2xl bg-[#0F0D0A]/60 backdrop-blur-xl border border-white/[0.06] shadow-[0_8px_32px_-8px_rgba(0,0,0,0.7)] pointer-events-auto">
@@ -583,7 +992,7 @@ export default function ConstellationView({ friends: friendsProp }: Constellatio
               <span
                 className={`inline-block w-1.5 h-1.5 rounded-full ${
                   onlineTotal > 0
-                    ? 'bg-[#4ADE80] shadow-[0_0_8px_rgba(74,222,128,0.8)]'
+                    ? 'bg-[#4ADE80] shadow-[0_0_8px_rgba(74,222,128,0.9)]'
                     : 'bg-[#6B6259]'
                 }`}
               />
@@ -599,7 +1008,7 @@ export default function ConstellationView({ friends: friendsProp }: Constellatio
       <motion.div
         initial={{ opacity: 0, y: -12 }}
         animate={{ opacity: 1, y: 0 }}
-        transition={{ delay: 0.05, duration: 0.5, ease: [0.22, 1, 0.36, 1] }}
+        transition={{ delay: 0.03, duration: 0.4, ease: [0.22, 1, 0.36, 1] }}
         className="absolute top-[env(safe-area-inset-top,0px)] right-4 md:top-5 md:right-5 z-20 pt-4 md:pt-0"
       >
         <motion.div
@@ -608,7 +1017,7 @@ export default function ConstellationView({ friends: friendsProp }: Constellatio
           transition={
             reduced
               ? { duration: 0 }
-              : { type: 'spring', stiffness: 340, damping: 30 }
+              : { type: 'spring', stiffness: 420, damping: 32 }
           }
           className="relative"
         >
@@ -662,7 +1071,7 @@ export default function ConstellationView({ friends: friendsProp }: Constellatio
           >
             <motion.span
               animate={reduced || !animationsEnabled ? undefined : { rotate: 360 }}
-              transition={{ duration: 1.4, repeat: Infinity, ease: 'linear' }}
+              transition={{ duration: 1.1, repeat: Infinity, ease: 'linear' }}
               className="inline-block w-3.5 h-3.5 rounded-full border-2 border-[#D97706]/30 border-t-[#D97706]"
             />
             Charting your orbit…
@@ -671,14 +1080,14 @@ export default function ConstellationView({ friends: friendsProp }: Constellatio
           <motion.div
             initial={{ opacity: 0, scale: 0.96 }}
             animate={{ opacity: 1, scale: 1 }}
-            transition={{ duration: 0.35, ease: [0.22, 1, 0.36, 1] }}
+            transition={{ duration: 0.3, ease: [0.22, 1, 0.36, 1] }}
             className="flex flex-col items-center gap-3 text-center px-6"
           >
             <motion.div
               animate={
                 reduced || !animationsEnabled ? undefined : { scale: [1, 1.06, 1] }
               }
-              transition={{ duration: 3, repeat: Infinity, ease: 'easeInOut' }}
+              transition={{ duration: 2.8, repeat: Infinity, ease: 'easeInOut' }}
               className="w-14 h-14 rounded-2xl bg-white/[0.03] border border-white/[0.06] flex items-center justify-center"
             >
               <Users className="w-6 h-6 text-[#6B6259]" />
@@ -710,97 +1119,108 @@ export default function ConstellationView({ friends: friendsProp }: Constellatio
             onMouseLeave={handleLeave}
             onTouchEnd={handleLeave}
           >
+            {/* Static ambient glow */}
             <div
               aria-hidden
               className="absolute inset-0 pointer-events-none"
               style={{
                 background:
-                  'radial-gradient(circle at center, rgba(217,119,6,0.14) 0%, rgba(217,119,6,0.04) 32%, rgba(217,119,6,0) 62%)',
+                  'radial-gradient(circle at center, rgba(217,119,6,0.18) 0%, rgba(217,119,6,0.05) 34%, rgba(217,119,6,0) 64%)',
               }}
             />
 
+            {/* Decorative rings (static, animated dashes via rotating overlays) */}
             <div aria-hidden className="absolute inset-0 pointer-events-none">
+              {/* Inner ring wrapper */}
               <div
-                className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 rounded-full border border-dashed border-[#4ADE80]/15"
+                className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 rounded-full"
                 style={{
                   width: `calc(${ONLINE_RADIUS} * 2)`,
                   height: `calc(${ONLINE_RADIUS} * 2)`,
                   animation:
                     reduced || !animationsEnabled
                       ? undefined
-                      : 'ringPulse 6s ease-in-out infinite',
+                      : 'ringRotate 40s linear infinite',
                 }}
-              />
+              >
+                <div
+                  className="absolute inset-0 rounded-full border border-dashed border-[#4ADE80]/20"
+                  style={{
+                    animation:
+                      reduced || !animationsEnabled
+                        ? undefined
+                        : 'ringPulse 4s ease-in-out infinite',
+                  }}
+                />
+              </div>
+
+              {/* Outer ring wrapper */}
               <div
-                className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 rounded-full border border-dashed border-white/[0.06]"
+                className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 rounded-full"
                 style={{
                   width: `calc(${OFFLINE_RADIUS} * 2)`,
                   height: `calc(${OFFLINE_RADIUS} * 2)`,
                   animation:
                     reduced || !animationsEnabled
                       ? undefined
-                      : 'ringPulse 9s ease-in-out infinite',
+                      : 'ringRotate 80s linear infinite reverse',
                 }}
-              />
+              >
+                <div
+                  className="absolute inset-0 rounded-full border border-dashed border-white/[0.08]"
+                  style={{
+                    animation:
+                      reduced || !animationsEnabled
+                        ? undefined
+                        : 'ringPulse 7s ease-in-out infinite',
+                  }}
+                />
+              </div>
             </div>
 
-            <Tier
-              nodes={visibleOffline}
-              radius={OFFLINE_RADIUS}
-              spinSeconds={offlineSpin}
-              reverse
-              paused={paused}
-              hoveredId={hoveredId}
-              onHover={handleHover}
-              onLeave={handleLeave}
-              onClick={handleClick}
-              online={false}
-              reduced={reduced}
-              active={spinEnabled}
-              glowPulse={!lowPower}
-            />
-
-            <Tier
-              nodes={visibleOnline}
-              radius={ONLINE_RADIUS}
-              spinSeconds={onlineSpin}
-              reverse={false}
-              paused={paused}
-              hoveredId={hoveredId}
-              onHover={handleHover}
-              onLeave={handleLeave}
-              onClick={handleClick}
-              online
-              reduced={reduced}
-              active={spinEnabled}
-              glowPulse={!lowPower}
-            />
-
+            {/* Center avatar (static, never rotates) */}
             <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 z-10 pointer-events-none">
               <div className="relative">
+                {/* Layered glow */}
                 <span
                   aria-hidden
                   className="absolute inset-0 rounded-full"
                   style={{
                     background:
-                      'radial-gradient(circle, rgba(217,119,6,0.55) 0%, rgba(217,119,6,0) 70%)',
-                    transform: 'scale(3.2)',
-                    filter: 'blur(14px)',
+                      'radial-gradient(circle, rgba(217,119,6,0.7) 0%, rgba(217,119,6,0) 65%)',
+                    transform: 'scale(3.4)',
+                    filter: 'blur(16px)',
                     animation:
                       reduced || !animationsEnabled
                         ? undefined
-                        : 'corePulse 5s ease-in-out infinite',
+                        : 'corePulse 4.2s ease-in-out infinite',
                   }}
                 />
                 <span
                   aria-hidden
-                  className="absolute rounded-full border border-[#D97706]/30"
+                  className="absolute inset-0 rounded-full"
+                  style={{
+                    background:
+                      'radial-gradient(circle, rgba(255,200,120,0.5) 0%, rgba(255,200,120,0) 60%)',
+                    transform: 'scale(2)',
+                    filter: 'blur(10px)',
+                    animation:
+                      reduced || !animationsEnabled
+                        ? undefined
+                        : 'corePulse 5.5s ease-in-out infinite reverse',
+                  }}
+                />
+
+                {/* Pulse rings */}
+                <span
+                  aria-hidden
+                  className="absolute rounded-full border border-[#D97706]/35"
                   style={{
                     inset: '-18px',
                     animation:
                       reduced || !animationsEnabled
                         ? undefined
-                        : 'ringPulse 3.5s ease-in-out infinite',
+                        : 'ringPulse 3s ease-in-out infinite',
                   }}
                 />
                 <span
@@ -811,9 +1231,33 @@ export default function ConstellationView({ friends: friendsProp }: Constellatio
                     animation:
                       reduced || !animationsEnabled
                         ? undefined
-                        : 'ringPulse 5s ease-in-out infinite 0.5s',
+                        : 'ringPulse 4.5s ease-in-out infinite 0.4s',
                   }}
                 />
+
+                {/* Orbiting satellite dots (constant motion even when paused) */}
+                {!reduced && animationsEnabled && (
+                  <>
+                    <div
+                      className="absolute inset-0 pointer-events-none"
+                      style={{ animation: 'satelliteOrbit 8s linear infinite' }}
+                    >
+                      <span
+                        className="absolute left-1/2 top-0 -translate-x-1/2 -translate-y-1/2 w-1.5 h-1.5 rounded-full bg-[#FFB347] shadow-[0_0_8px_rgba(255,179,71,1)]"
+                      />
+                    </div>
+                    <div
+                      className="absolute inset-0 pointer-events-none"
+                      style={{
+                        animation: 'satelliteOrbit 14s linear infinite reverse',
+                      }}
+                    >
+                      <span
+                        className="absolute left-1/2 top-0 -translate-x-1/2 -translate-y-1/2 w-1 h-1 rounded-full bg-[#FFF3D6] shadow-[0_0_6px_rgba(255,243,214,0.95)]"
+                      />
+                    </div>
+                  </>
+                )}
 
                 <motion.div
                   animate={
@@ -821,7 +1265,7 @@ export default function ConstellationView({ friends: friendsProp }: Constellatio
                       ? undefined
                       : { scale: [1, 1.05, 1] }
                   }
-                  transition={{ duration: 4.5, repeat: Infinity, ease: 'easeInOut' }}
+                  transition={{ duration: 4, repeat: Infinity, ease: 'easeInOut' }}
                   className="relative"
                 >
                   <Avatar
@@ -832,6 +1276,46 @@ export default function ConstellationView({ friends: friendsProp }: Constellatio
                   />
                 </motion.div>
               </div>
+            </div>
+
+            {/* Rotating disc — auto-spins + drag to fling */}
+            <div
+              ref={stageRef}
+              className="absolute inset-0"
+              style={{
+                willChange: 'transform',
+                touchAction: 'none',
+                userSelect: 'none',
+                cursor: coarse ? 'default' : 'grab',
+              }}
+              onPointerDown={onPointerDown}
+              onPointerMove={onPointerMove}
+              onPointerUp={onPointerUp}
+              onPointerCancel={onPointerUp}
+            >
+              <Tier
+                nodes={visibleOffline}
+                radius={OFFLINE_RADIUS}
+                hoveredId={hoveredId}
+                onHover={handleHover}
+                onLeave={handleLeave}
+                onClick={handleClick}
+                online={false}
+                reduced={reduced}
+                glowPulse={!lowPower}
+              />
+
+              <Tier
+                nodes={visibleOnline}
+                radius={ONLINE_RADIUS}
+                hoveredId={hoveredId}
+                onHover={handleHover}
+                onLeave={handleLeave}
+                onClick={handleClick}
+                online
+                reduced={reduced}
+                glowPulse={!lowPower}
+              />
             </div>
 
             <AnimatePresence>
@@ -857,38 +1341,27 @@ export default function ConstellationView({ friends: friendsProp }: Constellatio
       <motion.div
         initial={{ opacity: 0, y: 12 }}
         animate={{ opacity: 1, y: 0 }}
-        transition={{ delay: 0.2, duration: 0.5, ease: [0.22, 1, 0.36, 1] }}
+        transition={{ delay: 0.15, duration: 0.4, ease: [0.22, 1, 0.36, 1] }}
         className="absolute left-1/2 -translate-x-1/2 z-20 pointer-events-none pb-[env(safe-area-inset-bottom,0px)] bottom-4"
       >
         <div className="flex items-center gap-2.5 px-4 py-2 rounded-full bg-[#0F0D0A]/60 backdrop-blur-xl border border-white/[0.06] shadow-[0_8px_32px_-8px_rgba(0,0,0,0.7)] pointer-events-auto">
-          <motion.span
-            key={paused ? 'paused' : 'live'}
-            initial={{ opacity: 0, y: 4 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.18 }}
-            className="flex items-center gap-2 text-[11.5px] text-[#6B6259]"
-          >
+          <span className="flex items-center gap-2 text-[11.5px] text-[#6B6259]">
             <span
               className={`inline-block w-1.5 h-1.5 rounded-full ${
-                paused
-                  ? 'bg-[#D97706] shadow-[0_0_8px_rgba(217,119,6,0.7)]'
-                  : 'bg-[#4ADE80] shadow-[0_0_8px_rgba(74,222,128,0.7)]'
+                pausedRef.current
+                  ? 'bg-[#D97706] shadow-[0_0_8px_rgba(217,119,6,0.75)]'
+                  : 'bg-[#4ADE80] shadow-[0_0_8px_rgba(74,222,128,0.85)]'
               }`}
             />
-            {paused ? 'Paused' : 'Live'}
-          </motion.span>
+            Drag to spin
+          </span>
 
           {inOrbit > 0 && (
             <>
               <span className="w-px h-3 bg-white/[0.08]" />
-              <motion.span
-                key={inOrbit}
-                initial={{ opacity: 0, scale: 0.9 }}
-                animate={{ opacity: 1, scale: 1 }}
-                className="text-[11.5px] text-[#6B6259] tabular-nums"
-              >
+              <span className="text-[11.5px] text-[#6B6259] tabular-nums">
                 {inOrbit} in orbit
-              </motion.span>
+              </span>
             </>
           )}
         </div>

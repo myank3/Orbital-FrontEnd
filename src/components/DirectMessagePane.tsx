@@ -1117,13 +1117,13 @@ function ImageViewer({
         </div>
         <div className="flex items-center gap-1 shrink-0">
           <a
-            href={current.url}
-            download
-            onClick={(e) => e.stopPropagation()}
-            className="w-10 h-10 rounded-full flex items-center justify-center text-white/80 hover:bg-white/10"
-          >
-            <Download className="w-[18px] h-[18px]" />
-          </a>
+  href={current.url}
+  download
+  onClick={(e) => e.stopPropagation()}
+  className="w-10 h-10 rounded-full flex items-center justify-center text-white/80 hover:bg-white/10"
+>
+  <Eye className="w-[18px] h-[18px]" />
+</a>
           <button
             type="button"
             onClick={(e) => { e.stopPropagation(); onClose(); }}
@@ -1824,7 +1824,7 @@ function VideoBubble({ url }: { url: string }) {
         </button>
       )}
 
-      <div
+          <div
         className={`absolute top-2 right-2 flex items-center gap-1.5 transition-opacity duration-150 ${
           showControls ? 'opacity-100' : 'opacity-0 pointer-events-none'
         }`}
@@ -1837,15 +1837,6 @@ function VideoBubble({ url }: { url: string }) {
         >
           <Maximize className="w-3.5 h-3.5" />
         </button>
-        <a
-          href={url}
-          download
-          onClick={(e) => e.stopPropagation()}
-          className="w-8 h-8 rounded-full bg-black/60 backdrop-blur-md text-white flex items-center justify-center hover:bg-black/80 transition-colors"
-          aria-label="Download video"
-        >
-          <Download className="w-3.5 h-3.5" />
-        </a>
       </div>
 
       <div

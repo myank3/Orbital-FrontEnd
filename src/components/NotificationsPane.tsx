@@ -3,14 +3,14 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Image as ImageIcon,
   Video as VideoIcon,
   Music,
   FileText,
-  Download,
   Loader2,
+  Eye,
   Search,
   X,
   Play,
@@ -78,6 +78,29 @@ function applyHistoryPresign(raw: any): any[] {
   return applyPresignedUrls(messages, presigned);
 }
 
+/** Run async tasks with a maximum parallel limit. */
+async function runWithConcurrency(
+  tasks: Array<() => Promise<void>>,
+  limit: number,
+): Promise<void> {
+  let cursor = 0;
+  const workers = Array.from(
+    { length: Math.min(limit, tasks.length) },
+    async () => {
+      while (true) {
+        const idx = cursor++;
+        if (idx >= tasks.length) return;
+        try {
+          await tasks[idx]();
+        } catch {
+          /* individual task already guards itself */
+        }
+      }
+    },
+  );
+  await Promise.all(workers);
+}
+
 /* ────────────────────────────────────────────────────────── */
 /* Pane                                                       */
 /* ────────────────────────────────────────────────────────── */
@@ -87,8 +110,9 @@ function NotificationsPane(): React.JSX.Element {
 
   const [items, setItems] = useState<MediaItem[]>([]);
   const [loading, setLoading] = useState(true);
-  const [progress, setProgress] = useState('Loading…');
   const [error, setError] = useState<string | null>(null);
+  const [doneTasks, setDoneTasks] = useState(0);
+  const [totalTasks, setTotalTasks] = useState(0);
   const [tab, setTab] = useState<'all' | MediaKind>('all');
   const [query, setQuery] = useState('');
   const [preview, setPreview] = useState<MediaItem | null>(null);
@@ -99,113 +123,145 @@ function NotificationsPane(): React.JSX.Element {
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
 
+  /* Live ref so the tab badge can update the header without extra renders */
+  const countsRef = useRef({ total: 0 });
+
   useEffect(() => {
     let cancelled = false;
+    let flushTimer: number | null = null;
+
+    // Local accumulating array — pushed to state in throttled flushes.
+    const collected: MediaItem[] = [];
+    let doneLocal = 0;
+
+    const flush = () => {
+      if (flushTimer != null) return;
+      flushTimer = window.setTimeout(() => {
+        flushTimer = null;
+        if (cancelled) return;
+        collected.sort(
+          (a, b) =>
+            new Date(b.sentAt).getTime() - new Date(a.sentAt).getTime(),
+        );
+        countsRef.current.total = collected.length;
+        setDoneTasks(doneLocal);
+        setItems([...collected]);
+      }, 80);
+    };
 
     const load = async () => {
       setLoading(true);
       setError(null);
-      const collected: MediaItem[] = [];
+      setItems([]);
+      setDoneTasks(0);
+      setTotalTasks(0);
+      countsRef.current.total = 0;
 
       try {
-        setProgress('Loading friends…');
-        const friends: FriendDto[] = await apiService.getFriends().catch(() => []);
+        // Kick off friends + groups in parallel
+        const [friends, groups] = await Promise.all([
+          apiService.getFriends().catch(() => [] as FriendDto[]),
+          apiService.getMyGroups().catch(() => [] as GroupDto[]),
+        ]);
+        if (cancelled) return;
 
-        setProgress('Loading groups…');
-        const groups: GroupDto[] = await apiService.getMyGroups().catch(() => []);
+        const total = friends.length + groups.length;
+        setTotalTasks(total);
 
-        let dmDone = 0;
-        if (friends.length > 0) {
-          setProgress(`Loading DMs (0/${friends.length})…`);
-          await Promise.all(
-            friends.map(async (friend) => {
-              try {
-                const raw = await apiService.getDmHistory(friend.userId, 100);
-                const msgs: DirectMessageDto[] = applyHistoryPresign(raw);
-                for (const m of msgs) {
-                  if (!m.mediaUrl) continue;
-                  const mt = m.mediaType;
-                  if (typeof mt !== 'number') continue;
-                  const kind = mediaKindOf(mt);
-                  if (!kind) continue;
-                  const isMe = m.senderId !== friend.userId;
-                  collected.push({
-                    id: `dm-${m.id}`,
-                    rawId: m.id,
-                    url: m.mediaUrl,
-                    kind,
-                    mediaType: mt,
-                    senderId: m.senderId,
-                    senderName: isMe ? 'You' : friend.displayName,
-                    senderAvatar: isMe ? null : friend.avatarUrl ?? null,
-                    context: friend.displayName,
-                    contextKind: 'dm',
-                    contextId: friend.userId,
-                    sentAt: m.sentAt,
-                  });
-                }
-              } catch {
-                /* ignore per-friend failures */
-              } finally {
-                dmDone += 1;
-                if (!cancelled) {
-                  setProgress(`Loading DMs (${dmDone}/${friends.length})…`);
-                }
-              }
-            }),
-          );
-        }
+        const fetchDm = async (friend: FriendDto) => {
+          try {
+            const raw = await apiService.getDmHistory(friend.userId, 100);
+            const msgs: DirectMessageDto[] = applyHistoryPresign(raw);
+            for (const m of msgs) {
+              if (!m.mediaUrl) continue;
+              const mt = m.mediaType;
+              if (typeof mt !== 'number') continue;
+              const kind = mediaKindOf(mt);
+              if (!kind) continue;
+              const isMe = m.senderId !== friend.userId;
+              collected.push({
+                id: `dm-${m.id}`,
+                rawId: m.id,
+                url: m.mediaUrl,
+                kind,
+                mediaType: mt,
+                senderId: m.senderId,
+                senderName: isMe ? 'You' : friend.displayName,
+                senderAvatar: isMe ? null : friend.avatarUrl ?? null,
+                context: friend.displayName,
+                contextKind: 'dm',
+                contextId: friend.userId,
+                sentAt: m.sentAt,
+              });
+            }
+          } catch {
+            /* ignore per-friend failures */
+          } finally {
+            doneLocal += 1;
+            flush();
+          }
+        };
 
-        let grpDone = 0;
-        if (groups.length > 0) {
-          setProgress(`Loading groups (0/${groups.length})…`);
-          await Promise.all(
-            groups.map(async (group) => {
-              try {
-                const raw = await apiService.getGroupMessages(group.id, 100);
-                const msgs: GroupMessageDto[] = applyHistoryPresign(raw);
-                for (const m of msgs) {
-                  if (!m.mediaUrl) continue;
-                  const mt = m.mediaType;
-                  if (typeof mt !== 'number') continue;
-                  const kind = mediaKindOf(mt);
-                  if (!kind) continue;
-                  collected.push({
-                    id: `grp-${m.id}`,
-                    rawId: m.id,
-                    url: m.mediaUrl,
-                    kind,
-                    mediaType: mt,
-                    senderId: m.senderId,
-                    senderName: m.senderDisplayName || 'User',
-                    senderAvatar: m.senderAvatarUrl ?? null,
-                    context: `# ${group.name}`,
-                    contextKind: 'group',
-                    contextId: String(group.id),
-                    sentAt: m.sentAt,
-                  });
-                }
-              } catch {
-                /* ignore per-group failures */
-              } finally {
-                grpDone += 1;
-                if (!cancelled) {
-                  setProgress(`Loading groups (${grpDone}/${groups.length})…`);
-                }
-              }
-            }),
-          );
-        }
+        const fetchGrp = async (group: GroupDto) => {
+          try {
+            const raw = await apiService.getGroupMessages(group.id, 100);
+            const msgs: GroupMessageDto[] = applyHistoryPresign(raw);
+            for (const m of msgs) {
+              if (!m.mediaUrl) continue;
+              const mt = m.mediaType;
+              if (typeof mt !== 'number') continue;
+              const kind = mediaKindOf(mt);
+              if (!kind) continue;
+              collected.push({
+                id: `grp-${m.id}`,
+                rawId: m.id,
+                url: m.mediaUrl,
+                kind,
+                mediaType: mt,
+                senderId: m.senderId,
+                senderName: m.senderDisplayName || 'User',
+                senderAvatar: m.senderAvatarUrl ?? null,
+                context: `# ${group.name}`,
+                contextKind: 'group',
+                contextId: String(group.id),
+                sentAt: m.sentAt,
+              });
+            }
+          } catch {
+            /* ignore per-group failures */
+          } finally {
+            doneLocal += 1;
+            flush();
+          }
+        };
+
+        await runWithConcurrency(
+          [
+            ...friends.map((f) => () => fetchDm(f)),
+            ...groups.map((g) => () => fetchGrp(g)),
+          ],
+          8,
+        );
 
         if (cancelled) return;
 
+        // Final synchronous flush so nothing is stuck in the throttle buffer
+        if (flushTimer != null) {
+          window.clearTimeout(flushTimer);
+          flushTimer = null;
+        }
         collected.sort(
-          (a, b) => new Date(b.sentAt).getTime() - new Date(a.sentAt).getTime(),
+          (a, b) =>
+            new Date(b.sentAt).getTime() - new Date(a.sentAt).getTime(),
         );
-        setItems(collected);
+        countsRef.current.total = collected.length;
+        setItems([...collected]);
+        setDoneTasks(doneLocal);
       } catch (err) {
         if (!cancelled) {
-          setError(err instanceof Error ? err.message : 'Failed to load media.');
+          setError(
+            err instanceof Error ? err.message : 'Failed to load media.',
+          );
         }
       } finally {
         if (!cancelled) setLoading(false);
@@ -215,6 +271,7 @@ function NotificationsPane(): React.JSX.Element {
     void load();
     return () => {
       cancelled = true;
+      if (flushTimer != null) window.clearTimeout(flushTimer);
     };
   }, []);
 
@@ -259,7 +316,8 @@ function NotificationsPane(): React.JSX.Element {
     });
   };
 
-  const selectAll = () => setSelectedIds(new Set(selectableItems.map((i) => i.id)));
+  const selectAll = () =>
+    setSelectedIds(new Set(selectableItems.map((i) => i.id)));
   const deselectAll = () => setSelectedIds(new Set());
 
   const exitSelection = () => {
@@ -301,74 +359,37 @@ function NotificationsPane(): React.JSX.Element {
     }
   };
 
-  /* ── NATIVE & WEB DOWNLOAD HANDLER (CLEAN) ────────────────── */
-  const handleNativeDownload = async (url: string, kind: string) => {
-    // 1. Check if running inside the WebToNative app
-    if (typeof window !== 'undefined' && (window as any).WTN) {
-      let ext = 'bin';
-      if (kind === 'image') ext = 'jpg';
-      else if (kind === 'video') ext = 'mp4';
-      else if (kind === 'audio') ext = 'mp3';
-      else if (kind === 'file') {
-        try {
-          const urlObj = new URL(url);
-          ext = urlObj.pathname.split('.').pop() || 'bin';
-        } catch {
-          ext = 'bin';
-        }
-      }
-
-      (window as any).WTN.downloadFile({
-        url: url,
-        fileName: `Orbital_${Date.now()}.${ext}`,
-        callback: (response: any) => {
-          if (!response.success) console.error("Download failed", response);
-        }
-      });
-      return;
-    }
-
-    // 2. Standard Web Browser Fallback
-    try {
-      // CORS is now configured on Cloudflare R2, so this standard
-      // fetch will work perfectly without needing a proxy.
-      const response = await fetch(url);
-      
-      if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
-      
-      const blob = await response.blob();
-      const blobUrl = window.URL.createObjectURL(blob);
-      
-      let ext = 'bin';
-      if (kind === 'image') ext = 'jpg';
-      else if (kind === 'video') ext = 'mp4';
-      else if (kind === 'audio') ext = 'mp3';
-      else if (kind === 'file') {
-        try {
-          const urlObj = new URL(url);
-          ext = urlObj.pathname.split('.').pop() || 'bin';
-        } catch { ext = 'bin'; }
-      }
-
-      const a = document.createElement('a');
-      a.href = blobUrl;
-      a.download = `Orbital_${Date.now()}.${ext}`;
-      
-      document.body.appendChild(a);
-      a.click();
-      
-      document.body.removeChild(a);
-      window.URL.revokeObjectURL(blobUrl);
-      
-    } catch (error) {
-      console.warn('Download failed, falling back to new tab', error);
-      window.open(url, '_blank');
-    }
+  /* ── VIEW HANDLER — opens media in a new tab (no download) ── */
+  const handleViewMedia = (url: string) => {
+    if (typeof window === 'undefined') return;
+    window.open(url, '_blank', 'noopener,noreferrer');
   };
   /* ────────────────────────────────────────────────────────── */
 
+  const loadingLabel =
+    totalTasks > 0
+      ? `Loading ${doneTasks} of ${totalTasks} chats…`
+      : 'Loading your media…';
+
+  const progressPct =
+    totalTasks > 0
+      ? Math.min(100, Math.round((doneTasks / totalTasks) * 100))
+      : 0;
+
   return (
     <div className="h-full flex flex-col bg-[#0B0A08] text-[#EDE5D4] overflow-hidden">
+      {/* Shimmer keyframes — scoped, harmless if duplicated */}
+      <style>{`
+        @keyframes mediaShimmer {
+          0% { transform: translateX(-100%); }
+          100% { transform: translateX(200%); }
+        }
+        @keyframes mediaPulse {
+          0%, 100% { opacity: 0.55; }
+          50% { opacity: 1; }
+        }
+      `}</style>
+
       {/* Header */}
       <div className="h-16 px-4 sm:px-6 border-b border-white/[0.05] flex items-center gap-3 shrink-0">
         <div className="w-9 h-9 rounded-xl bg-white/[0.04] border border-white/[0.06] flex items-center justify-center text-[#D97706] shrink-0">
@@ -380,7 +401,7 @@ function NotificationsPane(): React.JSX.Element {
           </h2>
           <p className="text-[11px] sm:text-[11.5px] text-[#6B6259] truncate mt-0.5">
             {loading
-              ? progress
+              ? loadingLabel
               : `${counts.all} item${counts.all === 1 ? '' : 's'} across your chats`}
           </p>
         </div>
@@ -396,6 +417,20 @@ function NotificationsPane(): React.JSX.Element {
           </button>
         )}
       </div>
+
+      {/* Thin progress bar while loading */}
+      {loading && (
+        <div className="h-[2px] w-full bg-white/[0.03] overflow-hidden shrink-0">
+          <div
+            className="h-full bg-gradient-to-r from-[#D97706] via-[#F59E0B] to-[#D97706] transition-[width] duration-500 ease-out"
+            style={{
+              width: totalTasks > 0 ? `${progressPct}%` : '35%',
+              animation:
+                totalTasks === 0 ? 'mediaPulse 1.4s ease-in-out infinite' : undefined,
+            }}
+          />
+        </div>
+      )}
 
       {/* Tabs + search */}
       <div className="px-4 sm:px-6 py-3 border-b border-white/[0.05] flex flex-col sm:flex-row sm:items-center gap-3 shrink-0">
@@ -496,10 +531,25 @@ function NotificationsPane(): React.JSX.Element {
             <p className="text-[14.5px] text-[#F87171] font-semibold tracking-tight mt-4">Could not load media</p>
             <p className="text-[12.5px] text-[#6B6259] mt-1">{error}</p>
           </div>
-        ) : loading ? (
-          <div className="h-40 flex items-center justify-center text-[12.5px] text-[#6B6259]">
-            <Loader2 className="w-4 h-4 animate-spin mr-2 text-[#D97706]" />
-            {progress}
+        ) : loading && items.length === 0 ? (
+          /* ── Skeleton screen (initial load) ── */
+          <div>
+            <div className="flex items-center justify-between gap-3 mb-3">
+              <div className="flex items-center gap-2 min-w-0 text-[12px] text-[#A8A29E]">
+                <Loader2 className="w-3.5 h-3.5 animate-spin text-[#D97706] shrink-0" />
+                <span className="truncate">{loadingLabel}</span>
+              </div>
+              {totalTasks > 0 && (
+                <span className="shrink-0 text-[11px] tabular-nums text-[#6B6259]">
+                  {progressPct}%
+                </span>
+              )}
+            </div>
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
+              {Array.from({ length: 12 }).map((_, i) => (
+                <SkeletonTile key={i} delay={i * 90} />
+              ))}
+            </div>
           </div>
         ) : filtered.length === 0 ? (
           <div className="max-w-md mx-auto mt-12 text-center">
@@ -535,7 +585,7 @@ function NotificationsPane(): React.JSX.Element {
                   selectionMode={selectionMode}
                   selected={selectedIds.has(item.id)}
                   selectable={selectable}
-                  onDownload={() => handleNativeDownload(item.url, item.kind)}
+                  onView={() => handleViewMedia(item.url)}
                   onOpen={() => {
                     if (selectionMode) {
                       if (selectable) toggleSelect(item.id);
@@ -547,6 +597,11 @@ function NotificationsPane(): React.JSX.Element {
                 />
               );
             })}
+            {/* Trailing skeletons while more media streams in */}
+            {loading &&
+              Array.from({ length: 4 }).map((_, i) => (
+                <SkeletonTile key={`tail-sk-${i}`} delay={i * 120} />
+              ))}
           </div>
         )}
       </div>
@@ -556,7 +611,7 @@ function NotificationsPane(): React.JSX.Element {
         <PreviewModal
           item={preview}
           onClose={() => setPreview(null)}
-          onDownload={() => handleNativeDownload(preview.url, preview.kind)}
+          onView={() => handleViewMedia(preview.url)}
         />
       )}
 
@@ -618,6 +673,31 @@ function NotificationsPane(): React.JSX.Element {
 }
 
 /* ────────────────────────────────────────────────────────── */
+/* Skeleton tile                                              */
+/* ────────────────────────────────────────────────────────── */
+
+function SkeletonTile({ delay = 0 }: { delay?: number }) {
+  return (
+    <div className="relative aspect-square rounded-xl overflow-hidden bg-[#131A20] border border-white/[0.04]">
+      <div className="absolute inset-0 bg-gradient-to-br from-white/[0.04] via-transparent to-white/[0.02]" />
+      <div
+        className="absolute inset-y-0 -left-1/2 w-[200%]"
+        style={{
+          background:
+            'linear-gradient(90deg, transparent 0%, rgba(255,255,255,0.07) 50%, transparent 100%)',
+          animation: `mediaShimmer 1.6s ease-in-out infinite`,
+          animationDelay: `${delay}ms`,
+        }}
+      />
+      <div className="absolute inset-x-2 bottom-2 flex flex-col gap-1.5">
+        <div className="h-2 w-3/5 rounded-full bg-white/[0.05]" />
+        <div className="h-1.5 w-2/5 rounded-full bg-white/[0.03]" />
+      </div>
+    </div>
+  );
+}
+
+/* ────────────────────────────────────────────────────────── */
 /* Tab                                                        */
 /* ────────────────────────────────────────────────────────── */
 
@@ -657,7 +737,7 @@ function Tab({
 function MediaTile({
   item,
   onOpen,
-  onDownload,
+  onView,
   selectionMode,
   selected,
   selectable,
@@ -665,7 +745,7 @@ function MediaTile({
 }: {
   item: MediaItem;
   onOpen: () => void;
-  onDownload: () => void;
+  onView: () => void;
   selectionMode: boolean;
   selected: boolean;
   selectable: boolean;
@@ -766,17 +846,17 @@ function MediaTile({
         </span>
       )}
 
-      {/* Download (hidden in selection mode) */}
+      {/* View (hidden in selection mode) */}
       {!selectionMode && (
         <button
           onClick={(e) => {
             e.stopPropagation();
-            onDownload();
+            onView();
           }}
           className="absolute top-2 right-2 w-7 h-7 rounded-lg bg-black/60 backdrop-blur flex items-center justify-center text-white opacity-0 group-hover:opacity-100 transition-opacity"
-          title="Download"
+          title="View"
         >
-          <Download className="w-3.5 h-3.5" />
+          <Eye className="w-3.5 h-3.5" />
         </button>
       )}
     </button>
@@ -790,11 +870,11 @@ function MediaTile({
 function PreviewModal({
   item,
   onClose,
-  onDownload,
+  onView,
 }: {
   item: MediaItem;
   onClose: () => void;
-  onDownload: () => void;
+  onView: () => void;
 }) {
   return (
     <div
@@ -826,11 +906,11 @@ function PreviewModal({
 
           <div className="flex items-center gap-2 shrink-0">
             <button
-              onClick={onDownload}
+              onClick={onView}
               className="h-9 px-3 rounded-lg bg-white/10 hover:bg-white/20 text-white text-[12.5px] font-medium inline-flex items-center gap-1.5 transition-colors"
             >
-              <Download className="w-3.5 h-3.5" />
-              <span className="hidden sm:inline">Download</span>
+              <Eye className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">View</span>
             </button>
             <button
               onClick={onClose}
@@ -871,11 +951,11 @@ function PreviewModal({
                 {item.url}
               </p>
               <button
-                onClick={onDownload}
+                onClick={onView}
                 className="h-9 px-4 rounded-lg bg-[#D97706] hover:bg-[#B45309] text-[#0F0D0A] text-[12.5px] font-semibold inline-flex items-center gap-1.5 transition-colors"
               >
-                <Download className="w-3.5 h-3.5" />
-                <span>Download</span>
+                <Eye className="w-3.5 h-3.5" />
+                <span>View</span>
               </button>
             </div>
           )}
