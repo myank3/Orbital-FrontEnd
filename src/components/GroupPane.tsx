@@ -15,6 +15,7 @@ import React, {
   useSyncExternalStore,
 } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
+import { createPortal } from 'react-dom';
 import { motion, AnimatePresence } from 'motion/react';
 import { apiService, extractErrorMessage, applyPresignedUrls } from '../services/api';
 import { signalRService } from '../services/signalr';
@@ -24,6 +25,7 @@ import { presenceStore } from '../services/presenceStore';
 import { useGroupCall, isCallSignal, MAX_PARTICIPANTS } from '../hooks/useGroupCall';
 import { Phone, PhoneOff, MicOff, Mic, Volume2, VolumeX, MessageSquare } from 'lucide-react';
 import { playReceive, playSend, unlockSounds } from '../services/sounds';
+
 import {
   GroupDto, GroupDetailDto, GroupMessageDto, MediaType, FriendDto,
 } from '../types/api';
@@ -44,6 +46,16 @@ import {
 } from '../hooks/useTypingIndicator';
 import { EmojiPanel } from './dm/ComposerToolkit';
 
+function Portal({ children }: { children: React.ReactNode }) {
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
+  if (!mounted) return null;
+  return createPortal(children, document.body);
+}
+
+/* ────────────────────────────────────────────────────────── */
+/* Module-level: active group call tracker                    */
+/* ────────────────────────────────────────────────────────── */
 /* ────────────────────────────────────────────────────────── */
 /* Module-level: active group call tracker                    */
 /* ────────────────────────────────────────────────────────── */
@@ -1149,9 +1161,10 @@ function GroupContextMenu({
     { key: 'leave', label: 'Leave group', icon: <LogOut className="w-4 h-4" />, onClick: onLeave, danger: true },
     { key: 'delete', label: 'Delete group', icon: <Trash2 className="w-4 h-4" />, onClick: onDelete, danger: true },
   ];
-  return (
+   return (
+    <Portal>
     <div className="fixed inset-0 z-[180] flex items-end sm:items-center justify-center p-0 sm:p-4 bg-black/60" onClick={onClose}>
-      <div onClick={(e) => e.stopPropagation()} className="w-full sm:max-w-xs rounded-t-[22px] sm:rounded-[22px] bg-[#1C1A17] border-t sm:border border-white/[0.08] shadow-2xl overflow-hidden">
+ <div onClick={(e) => e.stopPropagation()} className="w-full sm:max-w-xs rounded-t-[22px] sm:rounded-[22px] bg-[#1C1A17] border-t sm:border border-white/[0.08] shadow-2xl overflow-hidden">
         <div className="px-5 py-4 border-b border-white/[0.06] flex items-center gap-3">
           <GroupAvatar name={group.name} groupId={group.id} />
           <div className="min-w-0 flex-1">
@@ -1172,6 +1185,7 @@ function GroupContextMenu({
         </div>
       </div>
     </div>
+    </Portal>
   );
 }
 
