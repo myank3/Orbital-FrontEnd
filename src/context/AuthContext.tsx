@@ -10,6 +10,7 @@ import {
   useEffect,
   useMemo,
   useState,
+  useRef,
   type ReactNode,
 } from 'react';
 import { useLocation } from 'react-router-dom';
@@ -41,12 +42,6 @@ export interface AuthProviderProps {
   children: ReactNode;
 }
 
-/**
- * Routes that must NOT trigger auth hydration.
- * Visiting these as a logged-out user is expected and must not
- * fire /refresh, /api/User/profile, or the SignalR hub — all of
- * which return 401 and trigger a spurious redirect.
- */
 const PUBLIC_ROUTES = [
   '/login',
   '/register',
@@ -55,8 +50,6 @@ const PUBLIC_ROUTES = [
 ];
 
 function isPublicRoute(pathname: string): boolean {
-  // Exact match, plus allow nested paths under each public route
-  // e.g. /reset-password?token=... still matches /reset-password
   return PUBLIC_ROUTES.some(
     (route) => pathname === route || pathname.startsWith(`${route}/`),
   );
@@ -69,10 +62,14 @@ function AuthProviderComponent({ children }: AuthProviderProps) {
   const [user, setUser] = useState<UserProfileDto | null>(null);
   const [loading, setLoading] = useState(true);
 
+  // Prevents aggressive re-bootstrapping on tab switches
+  const hasBootstrapped = useRef(false);
+
   const clearAuthState = useCallback(() => {
     setAccessToken(null);
     setTokenState(null);
     setUser(null);
+    hasBootstrapped.current = false;
   }, []);
 
   const startSignalR = useCallback(async () => {
@@ -112,27 +109,30 @@ function AuthProviderComponent({ children }: AuthProviderProps) {
   useEffect(() => {
     let isMounted = true;
 
-    // ── Public-route guard ──────────────────────────────────────
-    // On /login, /register, /forgot-password, /reset-password we
-    // do NOT attempt to hydrate the session. There is no session
-    // to hydrate, and running the flow produces a 401 storm plus
-    // a redirect back to /login after the guard's timeout.
     if (isPublicRoute(location.pathname)) {
       setLoading(false);
-      return () => {
-        isMounted = false;
-      };
+      if (!getAccessToken()) hasBootstrapped.current = false;
+      return () => { isMounted = false; };
+    }
+
+    // If already booted and user exists, skip the redundant network call
+    if (hasBootstrapped.current && user && token) {
+      setLoading(false);
+      return () => { isMounted = false; };
     }
 
     const bootstrap = async () => {
+      hasBootstrapped.current = true;
+      
       const storedToken = getAccessToken();
 
-      // If no token in localStorage, still try to refresh — the httpOnly
-      // refresh cookie may be valid even when the local token was cleared.
       if (!storedToken) {
         const refreshed = await refreshAuthToken();
         if (!refreshed) {
-          if (isMounted) setLoading(false);
+          if (isMounted) {
+            setLoading(false);
+            clearAuthState();
+          }
           return;
         }
       }
@@ -141,7 +141,6 @@ function AuthProviderComponent({ children }: AuthProviderProps) {
         const profile = await apiService.getMyProfile();
         if (isMounted) {
           setUser(profile);
-          // Read the token again — request() may have set a fresh one
           setTokenState(getAccessToken());
         }
         await startSignalR();
@@ -164,12 +163,11 @@ function AuthProviderComponent({ children }: AuthProviderProps) {
       isMounted = false;
       window.removeEventListener('auth:unauthorized', handleUnauthorized);
     };
-  }, [location.pathname, clearAuthState, startSignalR, stopSignalR]);
+  }, [location.pathname, user, token, clearAuthState, startSignalR, stopSignalR]);
 
   const login = useCallback(
     async (identifier: string, password: string): Promise<UserProfileDto> => {
       const trimmed = identifier.trim();
-
       const loginResponse = await authService.login({
         identifier: trimmed,
         password,
@@ -184,6 +182,7 @@ function AuthProviderComponent({ children }: AuthProviderProps) {
 
       const profile = await apiService.getMyProfile();
       setUser(profile);
+      hasBootstrapped.current = true;
       await startSignalR();
 
       return profile;
@@ -198,6 +197,7 @@ function AuthProviderComponent({ children }: AuthProviderProps) {
       try {
         const profile = await apiService.getMyProfile();
         setUser(profile);
+        hasBootstrapped.current = true;
         await startSignalR();
         return profile;
       } catch (err) {
@@ -217,9 +217,7 @@ function AuthProviderComponent({ children }: AuthProviderProps) {
   const logout = useCallback(async (): Promise<void> => {
     await stopSignalR();
     try {
-      await authService.logout().catch(() => {
-        /* ignore network errors on logout */
-      });
+      await authService.logout().catch(() => { /* ignore */ });
     } finally {
       clearAuthState();
     }

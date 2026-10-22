@@ -2,6 +2,7 @@ import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import './index.css';
 import App from './App';
+import { initAuthToken } from './services/api';
 
 if (typeof window !== 'undefined') {
   const isTouchDevice =
@@ -35,28 +36,15 @@ if (typeof window !== 'undefined') {
   }
 }
 
-/* ────────────────────────────────────────────────────────── */
-/* Service worker registration + auto-update                  */
-/*                                                            */
-/* Registers /sw.js. When a new SW version activates (because */
-/* you bumped SW_VERSION in public/sw.js), we reload the page */
-/* once so the user picks up the new JS bundle automatically. */
-/*                                                            */
-/* A session flag prevents an infinite reload loop if the SW  */
-/* keeps reporting "activated" on every check.                */
-/* ────────────────────────────────────────────────────────── */
-
 if (typeof window !== 'undefined' && 'serviceWorker' in navigator) {
   window.addEventListener('load', () => {
     navigator.serviceWorker
       .register('/sw.js')
       .then((registration) => {
-        // If a new SW is already waiting, activate it right away
         if (registration.waiting) {
           registration.waiting.postMessage({ type: 'SKIP_WAITING' });
         }
 
-        // Listen for future updates
         registration.addEventListener('updatefound', () => {
           const newWorker = registration.installing;
           if (!newWorker) return;
@@ -72,12 +60,9 @@ if (typeof window !== 'undefined' && 'serviceWorker' in navigator) {
           });
         });
 
-        // Periodically check for SW updates every 30 minutes while tab is open
         setInterval(
           () => {
-            registration.update().catch(() => {
-              /* ignore */
-            });
+            registration.update().catch(() => {});
           },
           30 * 60 * 1000,
         );
@@ -85,19 +70,23 @@ if (typeof window !== 'undefined' && 'serviceWorker' in navigator) {
       .catch((err) => {
         console.warn('[SW] registration failed', err);
       });
-
-    // Reload once when a fresh SW takes over an already-open tab
-
   });
 }
 
-const el = document.getElementById('root');
-if (!el) {
-  throw new Error('Missing #root element in index.html');
+async function startApp() {
+  // Load native token before rendering to prevent premature logouts
+  await initAuthToken();
+
+  const el = document.getElementById('root');
+  if (!el) {
+    throw new Error('Missing #root element in index.html');
+  }
+
+  createRoot(el).render(
+    <StrictMode>
+      <App />
+    </StrictMode>,
+  );
 }
 
-createRoot(el).render(
-  <StrictMode>
-    <App />
-  </StrictMode>,
-);
+void startApp();

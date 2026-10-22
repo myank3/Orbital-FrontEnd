@@ -3,6 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+import { Preferences } from '@capacitor/preferences';
 import {
   ApiMessage,
   CallSessionDto,
@@ -38,15 +39,33 @@ export const API_BASE_URL: string =
 export const TOKEN_KEY = 'orbital.token';
 export const MAX_FILE_SIZE = 5 * 1024 * 1024; // 5 MB
 
+/* ────────────────────────────────────────────────────────── */
+/* Native-safe Token Management                               */
+/* ────────────────────────────────────────────────────────── */
+
+let memoryToken: string | null = null;
+
+/** MUST be called in main.tsx before the app renders */
+export async function initAuthToken(): Promise<void> {
+  try {
+    const { value } = await Preferences.get({ key: TOKEN_KEY });
+    memoryToken = value;
+  } catch (e) {
+    console.error('[auth] Failed to load token from native storage', e);
+  }
+}
+
 export function getAccessToken(): string | null {
-  if (typeof window === 'undefined') return null;
-  return localStorage.getItem(TOKEN_KEY);
+  return memoryToken;
 }
 
 export function setAccessToken(token: string | null): void {
-  if (typeof window === 'undefined') return;
-  if (token) localStorage.setItem(TOKEN_KEY, token);
-  else localStorage.removeItem(TOKEN_KEY);
+  memoryToken = token;
+  if (token) {
+    void Preferences.set({ key: TOKEN_KEY, value: token }).catch(() => {});
+  } else {
+    void Preferences.remove({ key: TOKEN_KEY }).catch(() => {});
+  }
 }
 
 /**
@@ -57,17 +76,20 @@ export function setAccessToken(token: string | null): void {
  */
 export async function refreshAuthToken(): Promise<string | null> {
   const current = getAccessToken();
-  if (!current) return null;
 
-  try {
-    const payload = JSON.parse(atob(current.split('.')[1])) as { exp?: number };
-    const nowSec = Math.floor(Date.now() / 1000);
-    const expiresInSec = (payload.exp ?? 0) - nowSec;
-    if (expiresInSec > 60) return current;
-  } catch {
-    /* non-JWT or malformed — use as-is */
+  // 1. If token exists and is valid for > 60s, return it immediately
+  if (current) {
+    try {
+      const payload = JSON.parse(atob(current.split('.')[1])) as { exp?: number };
+      const nowSec = Math.floor(Date.now() / 1000);
+      const expiresInSec = (payload.exp ?? 0) - nowSec;
+      if (expiresInSec > 60) return current;
+    } catch {
+      /* non-JWT or malformed — try to refresh below */
+    }
   }
 
+  // 2. Try to use the httpOnly refresh cookie
   try {
     const res = await fetch(
       `${API_BASE_URL.replace(/\/+$/, '')}/api/Auth/refresh`,
@@ -86,8 +108,11 @@ export async function refreshAuthToken(): Promise<string | null> {
       accessToken?: string;
     };
     const newToken = data.token ?? data.accessToken ?? null;
-    if (newToken) setAccessToken(newToken);
-    return newToken ?? current;
+    if (newToken) {
+      setAccessToken(newToken);
+      return newToken;
+    }
+    return current;
   } catch {
     return current;
   }
@@ -141,13 +166,6 @@ export function formatFileSize(bytes: number): string {
   return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`;
 }
 
-/**
- * Merge presigned R2 URLs into messages so that existing rendering code
- * (which reads `message.mediaUrl`) keeps working without change.
- * Messages that have no `mediaKey` (legacy base64 rows) are left alone.
- * Returns the original array reference if nothing changed, preserving
- * referential equality for React.memo.
- */
 export function applyPresignedUrls<T extends { mediaKey?: string; mediaUrl?: string }>(
   messages: T[],
   presignedUrls: Record<string, string> | undefined | null,
@@ -174,8 +192,6 @@ interface RequestConfig extends Omit<RequestInit, 'headers'> {
 async function request<T>(endpoint: string, config: RequestConfig = {}): Promise<T> {
   const { headers = {}, skipAuth = false, _retry = false, ...customOptions } = config;
 
-  // Pre-emptively refresh the access token if it's expired or near expiry.
-  // refreshAuthToken() is a no-op if the token has > 60s of life left.
   if (!skipAuth) {
     await refreshAuthToken();
   }
@@ -209,21 +225,14 @@ async function request<T>(endpoint: string, config: RequestConfig = {}): Promise
   });
 
   if (response.status === 401) {
-    // The token was rejected. Try refreshing once and retrying the request.
-    // This handles the case where the access token expired between our
-    // pre-emptive check and the actual server call.
     if (!skipAuth && !_retry) {
       const fresh = await refreshAuthToken();
 
       if (fresh && fresh !== getAccessToken()) {
-        // Retry with the new token
         return request<T>(endpoint, { ...config, _retry: true });
       }
     }
 
-    // Refresh failed — genuinely logged out.
-    // Read the body ONCE as text, then try to parse as JSON. Never
-    // call .json() and .text() on the same Response.
     if (typeof window !== 'undefined') {
       let reason: string | null = null;
       try {
@@ -232,13 +241,9 @@ async function request<T>(endpoint: string, config: RequestConfig = {}): Promise
           try {
             const body = JSON.parse(raw) as { message?: string };
             reason = body?.message ?? null;
-          } catch {
-            /* body wasn't JSON — skip the reason */
-          }
+          } catch { /* not json */ }
         }
-      } catch {
-        /* body already consumed or unavailable — skip */
-      }
+      } catch { /* consumed */ }
       if (reason) {
         sessionStorage.setItem('orbital.auth.reason', reason);
       }
@@ -251,14 +256,6 @@ async function request<T>(endpoint: string, config: RequestConfig = {}): Promise
     return undefined as unknown as T;
   }
 
-  // ── Read the body exactly ONCE. ────────────────────────────────────
-  //
-  // Both the error path and the success path share this single read.
-  // We deliberately do NOT branch on content-type: some servers return
-  // JSON on success but plain text (or an HTML error page) on failure,
-  // and some return text/html on success too. Reading once and trying
-  // to parse covers every combination without ever hitting the
-  // "body stream already read" error.
   const raw = await response.text();
 
   let parsed: unknown = null;
@@ -266,7 +263,7 @@ async function request<T>(endpoint: string, config: RequestConfig = {}): Promise
     try {
       parsed = JSON.parse(raw);
     } catch {
-      parsed = null; // body wasn't JSON — keep raw for callers
+      parsed = null;
     }
   }
 
@@ -278,27 +275,13 @@ async function request<T>(endpoint: string, config: RequestConfig = {}): Promise
     throw new Error(message);
   }
 
-  // Successful response
   if (parsed !== null) {
     return parsed as T;
   }
 
-  // Success but body wasn't JSON — return the raw text (or empty string).
   return raw as unknown as T;
 }
 
-/**
- * Upload a file directly to R2 using a presigned PUT URL.
- *
- * This bypasses `request()` intentionally:
- *  - The URL is already signed for PUT against R2 — adding an Authorization
- *    header or cookies would invalidate the signature.
- *  - R2 rejects any header that wasn't included at signing time; we only
- *    send the exact `Content-Type` that was signed into the URL.
- *
- * The caller MUST send the same `contentType` that was passed to
- * `presignUpload`, or R2 returns 403 SignatureDoesNotMatch.
- */
 export async function uploadToR2(
   uploadUrl: string,
   file: File | Blob,
@@ -308,13 +291,9 @@ export async function uploadToR2(
     method: 'PUT',
     headers: { 'Content-Type': contentType },
     body: file,
-    // Deliberately NO `credentials: 'include'` — R2 would reject the request
-    // with a CORS error if cookies were sent against a signed URL.
   });
 
   if (!response.ok) {
-    // R2 returns 403 with a small XML body on signature mismatch. Don't
-    // try to parse it — just surface a useful message.
     throw new Error(
       `R2 upload failed (${response.status}). ` +
       `This usually means the Content-Type doesn't match what was signed.`,
@@ -497,8 +476,6 @@ const apiService = {
     });
   },
 
-  /* ── E2EE: public key endpoints ──────────────────────── */
-
   async uploadPublicKey(publicKey: string): Promise<void> {
     await request<void>('/api/Keys/upload', {
       method: 'POST',
@@ -522,17 +499,6 @@ const apiService = {
     return res.publicKey;
   },
 
-  /* ── Media (R2 presigns) ─────────────────────────────── */
-
-  /**
-   * Ask the backend for a presigned PUT URL. The returned `mediaKey`
-   * is what gets stored on the message; `uploadUrl` is where the file
-   * bytes go directly (browser → R2, never through MonsterASP).
-   *
-   * For DM media, the server generates keys prefixed with `dm/{senderId}/`.
-   * For group media, pass `kind: 'group'` and the target `groupId` — the
-   * server verifies membership before issuing the key.
-   */
   async presignUpload(
     fileName: string,
     contentType: string,
@@ -549,13 +515,6 @@ const apiService = {
     );
   },
 
-  /**
-   * Ask the backend for presigned GET URLs for a batch of keys.
-   * Returns a map of `{ mediaKey: presignedUrl }`. Max 100 keys per call.
-   * Used when:
-   *  - Rendering history (already handled by `getDmHistory`/`getGroupMessages`)
-   *  - A message arrives over SignalR carrying `mediaKey` but no `mediaUrl`
-   */
   async presignDownload(keys: string[]): Promise<Record<string, string>> {
     if (!keys || keys.length === 0) return {};
     return request<Record<string, string>>('/api/media/presign-download', {
@@ -563,8 +522,6 @@ const apiService = {
       body: JSON.stringify({ keys }),
     });
   },
-
-  /* ── Direct messages ─────────────────────────────────── */
 
   async getDmHistory(
     targetUserId: string,
@@ -579,11 +536,7 @@ const apiService = {
       `/api/DirectMessage/history/${encodeURIComponent(targetUserId)}?${params.toString()}`,
       { method: 'GET' },
     );
-    // Legacy backends returned a bare array. Normalize to the wrapper shape
-    // so the frontend works before and after the backend deploy.
-    return Array.isArray(raw)
-      ? { messages: raw, presignedUrls: {} }
-      : raw;
+    return Array.isArray(raw) ? { messages: raw, presignedUrls: {} } : raw;
   },
 
   async sendDm(dto: SendDirectMessageDto): Promise<DirectMessageDto> {
@@ -599,9 +552,7 @@ const apiService = {
         `/api/DirectMessage/read/${encodeURIComponent(senderId)}`,
         { method: 'POST' },
       );
-    } catch {
-      /* ignore */
-    }
+    } catch { /* ignore */ }
   },
 
   async deleteDm(messageId: string | number): Promise<void> {
@@ -624,8 +575,6 @@ const apiService = {
       { method: 'DELETE' },
     );
   },
-
-  /* ── Groups ──────────────────────────────────────────── */
 
   async getMyGroups(): Promise<GroupDto[]> {
     return request<GroupDto[]>('/api/Group/my-groups', { method: 'GET' });
@@ -662,11 +611,7 @@ const apiService = {
       `/api/Group/${groupId}/messages?${params.toString()}`,
       { method: 'GET' },
     );
-    // Legacy backends returned a bare array. Normalize to the wrapper shape
-    // so the frontend works before and after the backend deploy.
-    return Array.isArray(raw)
-      ? { messages: raw, presignedUrls: {} }
-      : raw;
+    return Array.isArray(raw) ? { messages: raw, presignedUrls: {} } : raw;
   },
 
   async sendGroupMessage(dto: SendGroupMessageDto): Promise<GroupMessageDto> {
@@ -691,20 +636,12 @@ const apiService = {
     await request<void>(`/api/Group/${groupId}`, { method: 'DELETE' });
   },
 
-  /**
-   * Soft-delete a single group message for everyone.
-   * Server checks that the caller is either the original sender or
-   * the group creator, then marks the row DeletedAt and broadcasts a
-   * "GroupMessageDeleted" event to the group channel.
-   */
   async deleteGroupMessageForEveryone(messageId: string | number): Promise<void> {
     await request<void>(
       `/api/Group/messages/${encodeURIComponent(String(messageId))}`,
       { method: 'DELETE' },
     );
   },
-
-  /* ── Calls ───────────────────────────────────────────── */
 
   async getIceServers(): Promise<IceServerConfigDto[]> {
     try {
@@ -716,9 +653,7 @@ const apiService = {
       if (result && Array.isArray((result as IceServerConfigDto).urls)) {
         return [result as IceServerConfigDto];
       }
-    } catch {
-      /* fall through */
-    }
+    } catch { /* fall through */ }
     return [
       {
         urls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302'],

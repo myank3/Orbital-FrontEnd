@@ -186,8 +186,6 @@ export default function App() {
             </Route>
 
             {/* ── Auth Callbacks (intercepted by TokenInterceptor above) ── */}
-            {/* These dummy routes prevent the wildcard from redirecting to "/" 
-                before the interceptor finishes hydrating the token. */}
             <Route path="/auth/google/success" element={<div className="h-screen w-screen bg-[#0B0A08]" />} />
             <Route path="/auth/callback" element={<div className="h-screen w-screen bg-[#0B0A08]" />} />
 
