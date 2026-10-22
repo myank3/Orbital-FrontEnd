@@ -655,7 +655,7 @@ function AppShell(): React.JSX.Element {
 
           <div className="mt-8 px-3 flex items-center gap-2 text-[10px] uppercase tracking-[0.2em] text-[#6B6259]">
             <span className="inline-block w-6 h-px bg-white/[0.1]" />
-            <span>Swipe left to close</span>
+       
           </div>
         </nav>
       </aside>
