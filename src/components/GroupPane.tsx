@@ -2561,8 +2561,14 @@ export default function GroupPane(): React.JSX.Element {
       }
     }
   }, [call.inCall, activeGroupId, call.leave]);
-
-  const [groups, setGroups] = useState<GroupDto[]>([]);
+  const [groups, setGroups] = useState<GroupDto[]>(() => {
+    if (typeof window === 'undefined' || !user?.id) return [];
+    try {
+      const raw = localStorage.getItem(`orbital.cachedGroups.${user.id}`);
+      return raw ? (JSON.parse(raw) as GroupDto[]) : [];
+    } catch { return []; }
+  });
+  const [groupsLoaded, setGroupsLoaded] = useState(false);
 
   useEffect(() => {
     if (call.inCall && activeGroupId && moduleActiveGroupCallId === activeGroupId) {
@@ -2717,8 +2723,15 @@ export default function GroupPane(): React.JSX.Element {
       startTransition(() => setGroups(data));
     } catch (err) { console.error('Failed to load groups:', err); }
   }, []);
-
   useEffect(() => { void fetchGroups(); }, [fetchGroups]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined' || !user?.id) return;
+    if (!groupsLoaded) return;
+    try {
+      localStorage.setItem(`orbital.cachedGroups.${user.id}`, JSON.stringify(groups));
+    } catch { /* quota */ }
+  }, [groups, groupsLoaded, user?.id]);
 
   useEffect(() => {
     if (!activeGroupId || isNaN(activeGroupId)) { setActiveGroup(null); setMessages([]); return; }
@@ -3344,10 +3357,22 @@ export default function GroupPane(): React.JSX.Element {
     className="groups-sidebar-scroll relative z-10 flex-1 overflow-y-auto px-2 py-2 space-y-0.5"
     style={{ overscrollBehavior: 'contain' }}
   >
-    {filteredGroups.length === 0 ? (
+        {!groupsLoaded && groups.length === 0 ? (
+      <div className="px-2 py-3 space-y-2">
+        {[0, 1, 2, 3, 4, 5].map((i) => (
+          <div key={i} className="flex items-center gap-3 px-3.5 py-2.5 rounded-2xl animate-pulse">
+            <div className="w-9 h-9 rounded-lg bg-white/[0.04] shrink-0" />
+            <div className="flex-1 space-y-1.5">
+              <div className="h-3 w-24 rounded bg-white/[0.04]" />
+              <div className="h-2.5 w-16 rounded bg-white/[0.03]" />
+            </div>
+          </div>
+        ))}
+      </div>
+    ) : filteredGroups.length === 0 ? (
       <div className="flex flex-col items-center justify-center text-center px-4 py-12 gap-2.5">
         <div className="w-12 h-12 rounded-full bg-white/[0.03] border border-white/[0.06] flex items-center justify-center">
-          {groups.length === 0 ? (
+    {groups.length === 0 ? (
             <Hash className="w-5 h-5 text-[#6B6259] opacity-60" />
           ) : (
             <Search className="w-5 h-5 text-[#6B6259] opacity-60" />

@@ -3238,7 +3238,19 @@ export function DirectMessagePane(): React.JSX.Element {
 
   const isPeerTyping = useDmTypingReceiver(userId);
 
-  const [friends, setFriends] = useState<FriendDto[]>([]);
+     const [friends, setFriends] = useState<FriendDto[]>(() => {
+    if (typeof window === 'undefined' || !user?.id) return [];
+    try {
+      const v2 = localStorage.getItem(`orbital.cachedFriends.v2.${user.id}`);
+      if (v2) {
+        const parsed = JSON.parse(v2) as { friends?: FriendDto[] };
+        return parsed?.friends ?? [];
+      }
+      // Legacy key fallback (unused after first persist)
+      const v1 = localStorage.getItem(`orbital.cachedFriends.${user.id}`);
+      return v1 ? (JSON.parse(v1) as FriendDto[]) : [];
+    } catch { return []; }
+  });
   const [friendsLoaded, setFriendsLoaded] = useState(false);
   const [targetUser, setTargetUser] = useState<UserProfileDto | null>(null);
   const [messages, setMessages] = useState<LocalMessage[]>([]);
@@ -3250,8 +3262,17 @@ export function DirectMessagePane(): React.JSX.Element {
   const [friendRequestStatus, setFriendRequestStatus] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
 
-  const [lastMessages, setLastMessages] = useState<Record<string, DirectMessageDto>>({});
-
+    const [lastMessages, setLastMessages] = useState<Record<string, DirectMessageDto>>(() => {
+    if (typeof window === 'undefined' || !user?.id) return {};
+    try {
+      const raw = localStorage.getItem(`orbital.cachedFriends.v2.${user.id}`);
+      if (!raw) return {};
+      const parsed = JSON.parse(raw) as {
+        lastMessages?: Record<string, DirectMessageDto>;
+      };
+      return parsed?.lastMessages ?? {};
+    } catch { return {}; }
+  });
   const [reactions, setReactions] = useState<Record<string, ReactionEntry[]>>(
     () => readReactions(user?.id, userId),
   );
@@ -3367,16 +3388,17 @@ export function DirectMessagePane(): React.JSX.Element {
     if (el) el.scrollTop = el.scrollHeight;
   }, []);
 
-  const loadFriends = useCallback(async () => {
+    const loadFriends = useCallback(async () => {
     try {
       const friendList = await apiService.getFriends();
 
-      if (!user?.id) {
-        setFriends(friendList);
-        setFriendsLoaded(true);  
-        return;
-      }
+      // Show the friend list immediately — don't wait for previews.
+      setFriends(friendList);
+      setFriendsLoaded(true);
 
+      if (!user?.id) return;
+
+      // Fetch previews in the background; rows already show @handle.
       const previews = await Promise.all(
         friendList.map(async (f) => {
           try {
@@ -3395,17 +3417,26 @@ export function DirectMessagePane(): React.JSX.Element {
       for (const p of previews) {
         if (p) lastMap[p.userId] = p.msg;
       }
-
-      setFriends(friendList);
       setLastMessages(lastMap);
-      setFriendsLoaded(true);  
     } catch (err) {
       console.error('Failed to load friends list:', err);
+      setFriendsLoaded(true);
     }
   }, [user?.id]);
+   useEffect(() => { void loadFriends(); }, [loadFriends]);
 
-  useEffect(() => { void loadFriends(); }, [loadFriends]);
-
+    useEffect(() => {
+    if (typeof window === 'undefined' || !user?.id) return;
+    if (!friendsLoaded) return;
+    try {
+      localStorage.setItem(
+        `orbital.cachedFriends.v2.${user.id}`,
+        JSON.stringify({ friends, lastMessages }),
+      );
+      // Drop the old single-purpose key once we've migrated
+      localStorage.removeItem(`orbital.cachedFriends.${user.id}`);
+    } catch { /* quota */ }
+  }, [friends, lastMessages, friendsLoaded, user?.id]);
   useEffect(() => {
     const unsub = presenceStore.subscribe(() => setPresenceTick((v) => v + 1));
     return () => unsub();
@@ -4357,7 +4388,19 @@ export function DirectMessagePane(): React.JSX.Element {
     className={`dm-sidebar-scroll relative z-10 flex-1 overflow-y-auto px-2 py-2 space-y-0.5`}
     style={{ overscrollBehavior: 'contain' }}
   >
-    {filteredFriends.length === 0 ? (
+       {!friendsLoaded && friends.length === 0 ? (
+      <div className="px-2 py-3 space-y-2">
+        {[0, 1, 2, 3, 4, 5].map((i) => (
+          <div key={i} className="flex items-center gap-3 px-3.5 py-2.5 rounded-2xl animate-pulse">
+            <div className={`w-9 h-9 rounded-full ${theme.subtleBg} shrink-0`} />
+            <div className="flex-1 space-y-1.5">
+              <div className={`h-3 w-24 rounded ${theme.subtleBg}`} />
+              <div className={`h-2.5 w-16 rounded ${theme.subtleBg}`} />
+            </div>
+          </div>
+        ))}
+      </div>
+    ) : filteredFriends.length === 0 ? (
       <div className="flex flex-col items-center justify-center text-center px-4 py-12 gap-2.5">
         <div
           className={`w-12 h-12 rounded-full ${theme.subtleBg} border ${theme.subtleBorder} flex items-center justify-center`}
