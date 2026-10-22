@@ -123,7 +123,6 @@ interface NavItem {
 
 const DRAWER_W = 280;
 
-/** Swipe routes include Calls so you can swipe past Friends */
 const TAB_ROUTES = [
   '/app/dm',
   '/app/groups',
@@ -197,23 +196,47 @@ const SHELL_CSS = `
   .route-back    { animation: route-back    260ms cubic-bezier(0.16,1,0.3,1) both; }
   .route-fade    { animation: route-fade    200ms ease-out both; }
 
+  /* ── App shell: premium smooth mesh-gradient ambient ── */
   .app-shell {
     position: relative;
     isolation: isolate;
-    background-color: #0B0A08;
+    background-color: #09080A;
     background-image:
-      radial-gradient(1200px 800px at 82% -12%, rgba(217,119,6,0.13), transparent 62%),
-      radial-gradient(1000px 700px at -8% 108%, rgba(217,119,6,0.07), transparent 58%),
-      radial-gradient(700px 500px at 50% 45%, rgba(255,255,255,0.015), transparent 70%);
+      /* Warm amber bloom — main light source, top-right */
+      radial-gradient(ellipse 2000px 1500px at 100% -25%,
+        rgba(217, 119, 6, 0.16) 0%,
+        rgba(217, 119, 6, 0.06) 25%,
+        rgba(217, 119, 6, 0.02) 50%,
+        transparent 75%),
+      /* Warm bounce — bottom-right corner */
+      radial-gradient(ellipse 1400px 1000px at 105% 110%,
+        rgba(180, 83, 9, 0.07) 0%,
+        transparent 60%),
+      /* Cool complementary tint — bottom-left */
+      radial-gradient(ellipse 1600px 1200px at -20% 105%,
+        rgba(79, 70, 229, 0.055) 0%,
+        transparent 55%),
+      /* Soft top-center highlight — depth */
+      radial-gradient(ellipse 900px 600px at 50% -15%,
+        rgba(255, 255, 255, 0.015) 0%,
+        transparent 70%);
   }
-  .app-shell::before {
+  /* Subtle top edge highlight for polish */
+  .app-shell::after {
     content: '';
     position: fixed;
-    inset: 0;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 1px;
     pointer-events: none;
-    z-index: -1;
-    opacity: 0.9;
-    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='160' height='160'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' seed='7' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 1  0 0 0 0 1  0 0 0 0 1  0 0 0 0.028 0'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>");
+    z-index: 100;
+    background: linear-gradient(90deg,
+      transparent 0%,
+      rgba(255, 255, 255, 0.05) 30%,
+      rgba(255, 255, 255, 0.08) 50%,
+      rgba(255, 255, 255, 0.05) 70%,
+      transparent 100%);
   }
 
   .app-shell button,
@@ -302,26 +325,61 @@ function AppShell(): React.JSX.Element {
   openDrawerRef.current = openDrawer;
   closeDrawerRef.current = closeDrawer;
 
-  /* ── Detect soft keyboard via visualViewport ───────── */
+  /* ── Keyboard detection: focus tracking + visualViewport ── */
   useEffect(() => {
-    const vv = window.visualViewport;
-    if (!vv) return;
-
-    const check = () => {
-      // When the soft keyboard is up, the visual viewport is significantly
-      // shorter than the layout viewport. 150px threshold filters out
-      // browser URL-bar show/hide (which is < 120px).
-      const gap = window.innerHeight - vv.height;
-      const open = gap > 150;
-      setKeyboardOpen((prev) => (prev === open ? prev : open));
+    const isEditable = (el: Element | null): boolean => {
+      if (!el) return false;
+      const tag = el.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA') return true;
+      if ((el as HTMLElement).isContentEditable) return true;
+      return false;
     };
 
-    check();
-    vv.addEventListener('resize', check);
-    vv.addEventListener('scroll', check);
+    // Primary: focus tracking (works on Android WebView adjustResize)
+    const onFocusIn = (e: FocusEvent) => {
+      if (isEditable(e.target as Element)) {
+        setKeyboardOpen(true);
+      }
+    };
+
+    const onFocusOut = () => {
+      // Small delay to allow the browser to move focus to the next input
+      window.setTimeout(() => {
+        if (!isEditable(document.activeElement)) {
+          setKeyboardOpen(false);
+        }
+      }, 100);
+    };
+
+    document.addEventListener('focusin', onFocusIn);
+    document.addEventListener('focusout', onFocusOut);
+
+    // Secondary: visualViewport gap check (works on iOS & adjustPan)
+    const vv = window.visualViewport;
+    const checkVV = () => {
+      if (!vv) return;
+      const gap = window.innerHeight - vv.height;
+      if (gap > 150) {
+        setKeyboardOpen(true);
+      } else if (!isEditable(document.activeElement)) {
+        setKeyboardOpen(false);
+      }
+    };
+
+    if (vv) {
+      vv.addEventListener('resize', checkVV);
+      vv.addEventListener('scroll', checkVV);
+    }
+    window.addEventListener('resize', checkVV);
+
     return () => {
-      vv.removeEventListener('resize', check);
-      vv.removeEventListener('scroll', check);
+      document.removeEventListener('focusin', onFocusIn);
+      document.removeEventListener('focusout', onFocusOut);
+      if (vv) {
+        vv.removeEventListener('resize', checkVV);
+        vv.removeEventListener('scroll', checkVV);
+      }
+      window.removeEventListener('resize', checkVV);
     };
   }, []);
 
@@ -370,7 +428,6 @@ function AppShell(): React.JSX.Element {
     };
   }, [drawerOpen]);
 
-  /* ── Edge-swipe-to-open drawer ── */
   useEffect(() => {
     const el = shellRef.current;
     if (!el) return;
@@ -501,11 +558,11 @@ function AppShell(): React.JSX.Element {
     }
   };
 
-  /* ── Tab swipe navigation ── */
   useEffect(() => {
     const el = mainRef.current;
     if (!el) return;
     if (getTabIndex(location.pathname) < 0) return;
+    if (keyboardOpen) return; // don't swipe while typing
 
     let active = false;
     let startX = 0;
@@ -607,7 +664,7 @@ function AppShell(): React.JSX.Element {
       el.removeEventListener('touchend', onEnd);
       el.removeEventListener('touchcancel', onEnd);
     };
-  }, [location.pathname, navigate]);
+  }, [location.pathname, navigate, keyboardOpen]);
 
   const primaryNav: NavItem[] = useMemo(
     () => [
@@ -627,7 +684,6 @@ function AppShell(): React.JSX.Element {
     [],
   );
 
-  // Bottom nav only shows 3 primary tabs
   const allNav = useMemo(() => [...primaryNav], [primaryNav]);
 
   const railWidth = railHovered ? 224 : 68;
@@ -787,7 +843,7 @@ function AppShell(): React.JSX.Element {
             transition: 'width 260ms cubic-bezier(0.16, 1, 0.3, 1)',
           }}
           className="shell-rail absolute inset-y-0 left-0 flex flex-col overflow-hidden z-30
-                     bg-[#0C0A08] border-r border-white/[0.07]
+                     bg-[#0C0A08]/85 backdrop-blur-md border-r border-white/[0.07]
                      shadow-[10px_0_50px_-15px_rgba(0,0,0,0.9),inset_-1px_0_0_rgba(255,255,255,0.02)]"
         >
           <div className="h-16 flex items-center px-4 shrink-0 border-b border-white/[0.06]">
@@ -926,7 +982,7 @@ function AppShell(): React.JSX.Element {
       <div className="flex-1 flex flex-col h-screen overflow-hidden min-w-0 relative">
         {!hideMobileChrome && (
           <header
-            className="md:hidden h-14 bg-[#0E0C09] border-b border-white/[0.06] px-4 flex items-center justify-between shrink-0"
+            className="md:hidden h-14 bg-[#0E0C09]/85 backdrop-blur-md border-b border-white/[0.06] px-4 flex items-center justify-between shrink-0"
             style={{
               paddingTop: 'env(safe-area-inset-top, 0px)',
               height: 'calc(3.5rem + env(safe-area-inset-top, 0px))',
@@ -997,7 +1053,7 @@ function AppShell(): React.JSX.Element {
 
         {!hideMobileChrome && (
           <nav
-            className={`md:hidden fixed bottom-0 left-0 right-0 bg-[#0C0A08] border-t border-white/[0.06] z-40 transition-transform duration-200 ease-out ${
+            className={`md:hidden fixed bottom-0 left-0 right-0 bg-[#0C0A08]/95 backdrop-blur-xl border-t border-white/[0.06] z-40 transition-transform duration-200 ease-out ${
               keyboardOpen ? 'translate-y-full' : 'translate-y-0'
             }`}
             style={{
@@ -1006,8 +1062,6 @@ function AppShell(): React.JSX.Element {
             }}
           >
             <div className="flex items-center h-16 w-full">
-              
-              {/* Tabs fill remaining space evenly */}
               <div
                 ref={bottomNavRef}
                 className="relative flex items-center justify-around flex-1 h-full"
@@ -1044,8 +1098,7 @@ function AppShell(): React.JSX.Element {
                 ))}
               </div>
 
-              {/* Avatar — fixed 56px on the right */}
-              <div className="relative flex items-center justify-center w-14 h-16 shrink-0 bg-[#0C0A08] shadow-[-10px_0_15px_-3px_rgba(12,10,8,0.9)] z-20">
+              <div className="relative flex items-center justify-center w-14 h-16 shrink-0 bg-[#0C0A08]/60 shadow-[-10px_0_15px_-3px_rgba(12,10,8,0.6)] z-20">
                 <button
                   onClick={(e) => {
                     e.stopPropagation();
