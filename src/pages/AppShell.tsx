@@ -125,13 +125,13 @@ interface NavItem {
 
 const DRAWER_W = 280;
 
-/** Ordered tab routes for swipe navigation (all tabs). */
+/** Ordered tab routes for swipe navigation. 
+ *  Bottom nav visually shows 3, but swipe goes up to Calls. */
 const TAB_ROUTES = [
   '/app/dm',
   '/app/groups',
   '/app/friends',
   '/app/calls',
-  '/app/notifications',
 ] as const;
 
 function getTabIndex(pathname: string): number {
@@ -621,8 +621,8 @@ function AppShell(): React.JSX.Element {
     [],
   );
 
-  // Combined list for the scrollable mobile bottom nav (excludes Satellite)
-  const allNav = useMemo(() => [...primaryNav, ...activityNav.slice(0, 2)], [primaryNav, activityNav]);
+  // Bottom mobile nav only shows the 3 primary tabs
+  const allNav = useMemo(() => [...primaryNav], [primaryNav]);
 
   const railWidth = railHovered ? 224 : 68;
   const incomingDisplayName = callerName ?? 'Someone';
