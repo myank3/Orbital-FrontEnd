@@ -39,11 +39,11 @@ import {
   LifeBuoy,
   FileText,
   ScrollText,
+  Fingerprint,
 } from 'lucide-react';
 
 const SPRING = { type: 'spring' as const, stiffness: 240, damping: 26 };
 
-/* Support inbox — change here if it ever moves */
 const SUPPORT_EMAIL = 'prolium7@outlook.com';
 
 function toAbsoluteAvatar(url: string | null | undefined): string | undefined {
@@ -218,7 +218,7 @@ function SettingsPane(): React.JSX.Element {
         try {
           detail = JSON.parse(raw);
         } catch {
-          /* not JSON — keep raw */
+          /* not JSON */
         }
         throw new Error(extractErrorMessage(detail, 'Upload failed.'));
       }
@@ -236,7 +236,6 @@ function SettingsPane(): React.JSX.Element {
     }
   };
 
-  /* ── Blocked users ──────────────────────────────────────── */
   const openBlockedModal = useCallback(async () => {
     setBlockedModalOpen(true);
     setBlockedLoading(true);
@@ -273,64 +272,88 @@ function SettingsPane(): React.JSX.Element {
     reduceMotion
       ? {}
       : {
-          initial: { opacity: 0, y: 8 },
+          initial: { opacity: 0, y: 12 },
           animate: { opacity: 1, y: 0 },
           transition: { ...SPRING, delay },
         };
 
   return (
-    <div className="h-full overflow-y-auto bg-[#0F0D0A] text-[#EDE5D4]">
+    <div className="h-full overflow-y-auto bg-[#0B0A08] text-[#EDE5D4] custom-scrollbar">
       <div className="max-w-2xl mx-auto px-4 sm:px-6 py-8 space-y-6">
 
         {/* ── Hero profile card ─────────────────────────── */}
         <motion.div {...stagger(0)}>
-          <div className="relative overflow-hidden rounded-[24px] border border-white/[0.08] bg-gradient-to-b from-[#1C1A17] to-[#131110]">
-            <div className="h-24 bg-gradient-to-br from-[#D97706]/25 via-[#D97706]/[0.06] to-transparent" />
+          <div className="relative overflow-hidden rounded-[28px] border border-white/[0.08] bg-[#14120F] shadow-[0_8px_30px_-12px_rgba(0,0,0,0.8)]">
+            {/* Ambient Banner */}
+            <div className="h-32 relative overflow-hidden bg-[#1C1A17]">
+              <div className="absolute inset-0 bg-gradient-to-tr from-[#D97706]/25 via-[#D97706]/5 to-transparent" />
+              <div 
+                className="absolute inset-0 opacity-20"
+                style={{
+                  backgroundImage: `radial-gradient(circle at 20% 120%, #D97706 0%, transparent 50%), radial-gradient(circle at 80% -20%, #4ADE80 0%, transparent 40%)`,
+                  filter: 'blur(40px)'
+                }}
+              />
+              {/* Subtle grid pattern */}
+              <div 
+                className="absolute inset-0 opacity-[0.03]"
+                style={{
+                  backgroundImage: `linear-gradient(rgba(255,255,255,1) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,1) 1px, transparent 1px)`,
+                  backgroundSize: '20px 20px'
+                }}
+              />
+            </div>
 
-            <div className="px-5 sm:px-6 pb-6 -mt-12">
-              <div className="flex items-end gap-4">
-                <button
-                  type="button"
-                  onClick={openAvatarModal}
-                  className="relative shrink-0 group rounded-full focus:outline-none focus-visible:ring-2 focus-visible:ring-[#D97706]/60"
-                  aria-label="Change avatar"
-                >
-                  <div className="p-[3px] rounded-full bg-gradient-to-tr from-[#D97706] via-[#D97706]/40 to-transparent">
-                    <div className="p-[3px] rounded-full bg-[#131110]">
-                      <Avatar
-                        name={displayName || user?.displayName || 'User'}
-                        src={toAbsoluteAvatar(user?.avatarUrl)}
-                        size="xl"
-                        isOnline={false}
-                      />
-                    </div>
-                  </div>
-                  <span className="absolute bottom-0 right-0 w-7 h-7 rounded-full bg-[#D97706] hover:bg-[#B45309] text-[#171106] flex items-center justify-center border-[3px] border-[#131110] transition-colors">
-                    <Camera className="w-3.5 h-3.5" />
-                  </span>
-                </button>
-
-                <div className="min-w-0 flex-1 pb-1.5">
-                  <h1 className="text-[20px] font-semibold text-[#EDE5D4] tracking-tight truncate">
-                    {user?.displayName || 'Your name'}
-                  </h1>
-                  <p className="text-[12.5px] text-[#7A6F65] truncate mt-0.5">
-                    @{user?.userHandle || 'guest'}
-                  </p>
+            <div className="px-5 sm:px-8 pb-7 -mt-14 relative z-10 flex flex-col sm:flex-row sm:items-end gap-5">
+              
+              {/* Avatar Button */}
+              <button
+                type="button"
+                onClick={openAvatarModal}
+                className="relative shrink-0 group rounded-full focus:outline-none focus-visible:ring-2 focus-visible:ring-[#D97706]/60"
+                aria-label="Change avatar"
+              >
+                {/* Glow Effect */}
+                <div className="absolute inset-0 bg-[#D97706] rounded-full blur-md opacity-0 group-hover:opacity-30 transition-opacity duration-300" />
+                
+                <div className="relative border-[3px] border-[#14120F] rounded-full">
+                  <Avatar
+                    name={displayName || user?.displayName || 'User'}
+                    src={toAbsoluteAvatar(user?.avatarUrl)}
+                    size="xl"
+                    isOnline={false}
+                  />
                 </div>
+                
+                {/* Hover Overlay */}
+                <div className="absolute inset-0 rounded-full bg-black/60 flex flex-col items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity duration-200 backdrop-blur-sm">
+                  <Camera className="w-6 h-6 text-white mb-1" />
+                  <span className="text-[10px] font-semibold text-white uppercase tracking-wider">Edit</span>
+                </div>
+              </button>
+
+              {/* Name & Handle */}
+              <div className="min-w-0 flex-1 pb-1">
+                <h1 className="text-[24px] font-bold text-[#EDE5D4] tracking-tight truncate leading-tight">
+                  {user?.displayName || 'Your name'}
+                </h1>
+                <p className="text-[13px] text-[#A8A29E] truncate mt-1 font-medium">
+                  @{user?.userHandle || 'guest'}
+                </p>
               </div>
-
-              <div className="mt-4 flex items-center gap-4 flex-wrap">
-                {user?.createdAt && (
-                  <div className="inline-flex items-center gap-1.5 text-[11.5px] text-[#7A6F65]">
-                    <Calendar className="w-3.5 h-3.5" />
-                    Joined {memberSince(user.createdAt)}
-                  </div>
-                )}
-                <div className="inline-flex items-center gap-1.5 text-[11.5px] text-[#4ADE80]">
-                  <Lock className="w-3.5 h-3.5" />
-                  
+            </div>
+            
+            {/* Meta Pills */}
+            <div className="px-5 sm:px-8 pb-6 flex items-center gap-2 flex-wrap">
+              {user?.createdAt && (
+                <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-white/[0.03] border border-white/[0.05] text-[11px] text-[#A8A29E]">
+                  <Calendar className="w-3.5 h-3.5 opacity-70" />
+                  Joined {memberSince(user.createdAt)}
                 </div>
+              )}
+              <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-[#4ADE80]/10 border border-[#4ADE80]/20 text-[11px] text-[#4ADE80] font-medium">
+                <Lock className="w-3 h-3" />
+                
               </div>
             </div>
           </div>
@@ -339,17 +362,17 @@ function SettingsPane(): React.JSX.Element {
         {/* ── Edit profile section ──────────────────────── */}
         <motion.section
           {...stagger(0.06)}
-          className="rounded-2xl bg-[#14120F] border border-white/[0.06] overflow-hidden"
+          className="rounded-[24px] bg-[#14120F] border border-white/[0.06] overflow-hidden shadow-sm"
         >
-          <div className="px-5 py-3.5 border-b border-white/[0.06] flex items-center gap-2">
-            <h2 className="text-[14px] font-semibold text-[#EDE5D4] tracking-tight">
-              Edit profile
+          <div className="px-6 py-4 border-b border-white/[0.04] bg-white/[0.01] flex items-center gap-2">
+            <h2 className="text-[14.5px] font-semibold text-[#EDE5D4] tracking-tight">
+              Edit Profile
             </h2>
           </div>
 
-          <form onSubmit={handleSaveProfile} className="p-5 space-y-5">
-            <div className="space-y-1.5">
-              <label className="block text-[11px] uppercase tracking-[0.16em] text-[#7A6F65] font-medium">
+          <form onSubmit={handleSaveProfile} className="p-6 space-y-5">
+            <div className="space-y-2">
+              <label className="block text-[11px] uppercase tracking-[0.16em] text-[#7A6F65] font-bold">
                 Display name
               </label>
               <input
@@ -360,17 +383,17 @@ function SettingsPane(): React.JSX.Element {
                   if (saveError) setSaveError(null);
                 }}
                 placeholder="Your name"
-                className="w-full h-11 px-3.5 rounded-xl bg-white/[0.04] border border-white/[0.06] text-[14px] text-[#EDE5D4] placeholder:text-[#5A524A] focus:outline-none focus:border-[#D97706]/40 focus:bg-white/[0.06] transition-colors"
+                className="w-full h-11 px-4 rounded-xl bg-[#0B0A08] border border-white/[0.08] text-[14px] text-[#EDE5D4] placeholder:text-[#5A524A] focus:outline-none focus:border-[#D97706]/60 focus:ring-1 focus:ring-[#D97706]/60 transition-all"
                 required
               />
             </div>
 
-            <div className="space-y-1.5">
-              <label className="block text-[11px] uppercase tracking-[0.16em] text-[#7A6F65] font-medium">
+            <div className="space-y-2">
+              <label className="block text-[11px] uppercase tracking-[0.16em] text-[#7A6F65] font-bold">
                 Email
               </label>
-              <div className="flex items-center gap-2 h-11 px-3.5 rounded-xl bg-white/[0.02] border border-white/[0.05]">
-                <Mail className="w-3.5 h-3.5 text-[#5A524A] shrink-0" />
+              <div className="flex items-center gap-3 h-11 px-4 rounded-xl bg-[#0B0A08] border border-white/[0.05]">
+                <Mail className="w-4 h-4 text-[#5A524A] shrink-0" />
                 <span className="text-[13.5px] text-[#A8A29E] truncate flex-1">
                   {user?.email || 'Not available'}
                 </span>
@@ -384,7 +407,7 @@ function SettingsPane(): React.JSX.Element {
                   animate={{ opacity: 1, y: 0 }}
                   exit={{ opacity: 0 }}
                   transition={{ duration: 0.2 }}
-                  className="rounded-xl bg-[#B91C1C]/10 border border-[#B91C1C]/25 px-3.5 py-2.5 text-[12.5px] text-[#F87171] flex items-center gap-2"
+                  className="rounded-xl bg-[#B91C1C]/10 border border-[#B91C1C]/25 px-4 py-3 text-[12.5px] text-[#F87171] flex items-center gap-2.5"
                 >
                   <AlertCircle className="w-4 h-4 shrink-0" />
                   <span>{saveError}</span>
@@ -397,22 +420,22 @@ function SettingsPane(): React.JSX.Element {
                   animate={{ opacity: 1, y: 0 }}
                   exit={{ opacity: 0 }}
                   transition={{ duration: 0.2 }}
-                  className="rounded-xl bg-[#15803D]/10 border border-[#15803D]/25 px-3.5 py-2.5 text-[12.5px] text-[#4ADE80] flex items-center gap-2"
+                  className="rounded-xl bg-[#15803D]/10 border border-[#15803D]/25 px-4 py-3 text-[12.5px] text-[#4ADE80] flex items-center gap-2.5"
                 >
                   <CheckCircle2 className="w-4 h-4 shrink-0" />
-                  <span>Saved.</span>
+                  <span>Profile saved successfully.</span>
                 </motion.div>
               )}
             </AnimatePresence>
 
-            <div className="flex justify-end">
+            <div className="flex justify-end pt-2">
               <button
                 type="submit"
                 disabled={saving || displayName.trim() === (user?.displayName ?? '')}
-                className="h-10 px-5 rounded-xl bg-[#D97706] hover:bg-[#B45309] disabled:opacity-30 disabled:cursor-not-allowed text-[#171106] text-[13px] font-semibold inline-flex items-center gap-2 transition-colors"
+                className="h-10 px-6 rounded-xl bg-gradient-to-r from-[#D97706] to-[#F59E0B] hover:from-[#B45309] hover:to-[#D97706] disabled:opacity-30 disabled:cursor-not-allowed text-[#171106] text-[13px] font-bold inline-flex items-center gap-2 transition-all shadow-[0_4px_14px_-4px_rgba(217,119,6,0.5)] disabled:shadow-none"
               >
                 {saving && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
-                <span>{saving ? 'Saving…' : 'Save'}</span>
+                <span>{saving ? 'Saving…' : 'Save Changes'}</span>
               </button>
             </div>
           </form>
@@ -421,21 +444,21 @@ function SettingsPane(): React.JSX.Element {
         {/* ── Account section ───────────────────────────── */}
         <motion.section
           {...stagger(0.12)}
-          className="rounded-2xl bg-[#14120F] border border-white/[0.06] overflow-hidden"
+          className="rounded-[24px] bg-[#14120F] border border-white/[0.06] overflow-hidden shadow-sm"
         >
-          <div className="px-5 py-3.5 border-b border-white/[0.06]">
-            <h2 className="text-[14px] font-semibold text-[#EDE5D4] tracking-tight">
+          <div className="px-6 py-4 border-b border-white/[0.04] bg-white/[0.01]">
+            <h2 className="text-[14.5px] font-semibold text-[#EDE5D4] tracking-tight">
               Account
             </h2>
           </div>
 
-          <div className="divide-y divide-white/[0.04]">
+          <div className="divide-y divide-white/[0.03]">
             <Row
-              icon={<AtSign className="w-4 h-4 text-[#D97706]" />}
+              icon={<AtSign className="w-[18px] h-[18px] text-[#D97706]" />}
               label="Handle"
               hint="Used by others to find you"
             >
-              <div className="flex items-center gap-1">
+              <div className="flex items-center gap-1.5">
                 <span className="text-[13px] text-[#EDE5D4] font-medium truncate max-w-[180px] tabular-nums">
                   {user?.userHandle || 'guest'}@orbit
                 </span>
@@ -448,26 +471,26 @@ function SettingsPane(): React.JSX.Element {
                       'handle',
                     )
                   }
-                  className="p-1.5 rounded-lg text-[#5A524A] hover:text-[#EDE5D4] hover:bg-white/[0.05] transition-colors"
+                  className="p-2 rounded-lg text-[#5A524A] hover:text-[#EDE5D4] hover:bg-white/[0.06] transition-colors"
                   title="Copy handle"
                 >
                   {copiedField === 'handle' ? (
-                    <Check className="w-3.5 h-3.5 text-[#4ADE80]" />
+                    <Check className="w-4 h-4 text-[#4ADE80]" />
                   ) : (
-                    <Copy className="w-3.5 h-3.5" />
+                    <Copy className="w-4 h-4" />
                   )}
                 </button>
               </div>
             </Row>
 
             <Row
-              icon={<KeyRound className="w-4 h-4 text-[#A8A29E]" />}
+              icon={<KeyRound className="w-[18px] h-[18px] text-[#A8A29E]" />}
               label="Password"
               hint="Change your account password"
             >
               <Link
                 to="/forgot-password"
-                className="text-[13px] text-[#D97706] hover:text-[#B45309] font-medium transition-colors"
+                className="text-[13px] text-[#D97706] hover:text-[#F59E0B] font-semibold transition-colors"
               >
                 Change
               </Link>
@@ -478,43 +501,42 @@ function SettingsPane(): React.JSX.Element {
         {/* ── Privacy section ───────────────────────────── */}
         <motion.section
           {...stagger(0.18)}
-          className="rounded-2xl bg-[#14120F] border border-white/[0.06] overflow-hidden"
+          className="rounded-[24px] bg-[#14120F] border border-white/[0.06] overflow-hidden shadow-sm"
         >
-          <div className="px-5 py-3.5 border-b border-white/[0.06]">
-            <h2 className="text-[14px] font-semibold text-[#EDE5D4] tracking-tight">
+          <div className="px-6 py-4 border-b border-white/[0.04] bg-white/[0.01]">
+            <h2 className="text-[14.5px] font-semibold text-[#EDE5D4] tracking-tight">
               Privacy
             </h2>
           </div>
 
-          <div className="divide-y divide-white/[0.04]">
+          <div className="divide-y divide-white/[0.03]">
             <Row
-              icon={<Lock className="w-4 h-4 text-[#4ADE80]" />}
-              label="End-to-end encrypted"
-              hint="Messages and calls are encrypted on your device"
+              icon={<Fingerprint className="w-[18px] h-[18px] text-[#4ADE80]" />}
+              label="Encryption"
+              hint="Messages and calls are secured"
             >
-              <span className="inline-flex items-center gap-1 text-[11px] uppercase tracking-[0.14em] text-[#4ADE80] font-medium">
-                <CheckCircle2 className="w-3 h-3" />
-                On
+              <span className="inline-flex items-center gap-1.5 px-2 py-1 rounded-md bg-[#4ADE80]/10 border border-[#4ADE80]/20 text-[10.5px] uppercase tracking-[0.14em] text-[#4ADE80] font-bold">
+                Active
               </span>
             </Row>
 
             <Row
-              icon={<ShieldOff className="w-4 h-4 text-[#A8A29E]" />}
+              icon={<ShieldOff className="w-[18px] h-[18px] text-[#A8A29E]" />}
               label="Blocked users"
               hint="Manage people you've blocked"
             >
               <button
                 type="button"
                 onClick={() => void openBlockedModal()}
-                className="text-[13px] text-[#D97706] hover:text-[#B45309] font-medium inline-flex items-center gap-1 transition-colors"
+                className="text-[13px] text-[#D97706] hover:text-[#F59E0B] font-semibold inline-flex items-center gap-1 transition-colors"
               >
                 Manage
-                <ChevronRight className="w-3.5 h-3.5" />
+                <ChevronRight className="w-4 h-4" />
               </button>
             </Row>
 
             <Row
-              icon={<Shield className="w-4 h-4 text-[#5A524A]" />}
+              icon={<Shield className="w-[18px] h-[18px] text-[#5A524A]" />}
               label="Data export"
               hint="Download a copy of your account data"
             >
@@ -522,7 +544,7 @@ function SettingsPane(): React.JSX.Element {
                 type="button"
                 disabled
                 title="Coming soon"
-                className="text-[13px] text-[#5A524A] cursor-not-allowed"
+                className="text-[13px] text-[#5A524A] cursor-not-allowed font-medium"
               >
                 Soon
               </button>
@@ -533,26 +555,26 @@ function SettingsPane(): React.JSX.Element {
         {/* ── Support section ───────────────────────────── */}
         <motion.section
           {...stagger(0.22)}
-          className="rounded-2xl bg-[#14120F] border border-white/[0.06] overflow-hidden"
+          className="rounded-[24px] bg-[#14120F] border border-white/[0.06] overflow-hidden shadow-sm"
         >
-          <div className="px-5 py-3.5 border-b border-white/[0.06]">
-            <h2 className="text-[14px] font-semibold text-[#EDE5D4] tracking-tight">
+          <div className="px-6 py-4 border-b border-white/[0.04] bg-white/[0.01]">
+            <h2 className="text-[14.5px] font-semibold text-[#EDE5D4] tracking-tight">
               Support
             </h2>
           </div>
 
-          <div className="divide-y divide-white/[0.04]">
+          <div className="divide-y divide-white/[0.03]">
             <Row
-              icon={<LifeBuoy className="w-4 h-4 text-[#D97706]" />}
+              icon={<LifeBuoy className="w-[18px] h-[18px] text-[#D97706]" />}
               label="Contact support"
               hint="We usually reply within 24 hours"
             >
               <a
                 href={`mailto:${SUPPORT_EMAIL}?subject=Orbital%20Support%20Request`}
-                className="text-[13px] text-[#D97706] hover:text-[#B45309] font-medium inline-flex items-center gap-1 transition-colors"
+                className="text-[13px] text-[#D97706] hover:text-[#F59E0B] font-semibold inline-flex items-center gap-1 transition-colors"
               >
                 Email us
-                <ChevronRight className="w-3.5 h-3.5" />
+                <ChevronRight className="w-4 h-4" />
               </a>
             </Row>
           </div>
@@ -561,34 +583,33 @@ function SettingsPane(): React.JSX.Element {
         {/* ── Legal & Info section ──────────────────────── */}
         <motion.section
           {...stagger(0.24)}
-          className="rounded-2xl bg-[#14120F] border border-white/[0.06] overflow-hidden"
+          className="rounded-[24px] bg-[#14120F] border border-white/[0.06] overflow-hidden shadow-sm"
         >
-          <div className="px-5 py-3.5 border-b border-white/[0.06] flex items-center justify-between">
-            <h2 className="text-[14px] font-semibold text-[#EDE5D4] tracking-tight">
+          <div className="px-6 py-4 border-b border-white/[0.04] bg-white/[0.01] flex items-center justify-between">
+            <h2 className="text-[14.5px] font-semibold text-[#EDE5D4] tracking-tight">
               Legal &amp; Info
             </h2>
-            <span className="text-[9.5px] font-mono uppercase tracking-[0.18em] text-[#5A524A] px-2 py-0.5 rounded-md bg-white/[0.03] border border-white/[0.05]">
+            <span className="text-[10px] font-mono uppercase tracking-[0.18em] text-[#5A524A] px-2 py-1 rounded-md bg-white/[0.03] border border-white/[0.05]">
               v1.0
             </span>
           </div>
 
-          <div className="p-4 grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div className="p-5 grid grid-cols-1 sm:grid-cols-2 gap-4">
             {/* Terms card */}
             <Link
               to="/terms"
-              className="group relative overflow-hidden rounded-xl border border-white/[0.06] bg-white/[0.02] hover:bg-white/[0.04] hover:border-[#D97706]/30 p-4 transition-all duration-200"
+              className="group relative overflow-hidden rounded-xl border border-white/[0.06] bg-[#0B0A08] hover:bg-[#181510] hover:border-[#D97706]/30 p-4 transition-all duration-300"
             >
               <div
                 className="pointer-events-none absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-300"
                 style={{
                   background:
-                    'radial-gradient(circle at top right, rgba(217,119,6,0.10) 0%, transparent 60%)',
+                    'radial-gradient(circle at top right, rgba(217,119,6,0.08) 0%, transparent 60%)',
                 }}
               />
-
               <div className="relative flex items-start gap-3">
-                <div className="w-10 h-10 rounded-lg bg-[#D97706]/10 border border-[#D97706]/20 flex items-center justify-center shrink-0">
-                  <FileText className="w-4 h-4 text-[#D97706]" />
+                <div className="w-10 h-10 rounded-xl bg-[#D97706]/10 border border-[#D97706]/20 flex items-center justify-center shrink-0 group-hover:scale-105 transition-transform">
+                  <FileText className="w-[18px] h-[18px] text-[#D97706]" />
                 </div>
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center justify-between gap-2">
@@ -600,9 +621,6 @@ function SettingsPane(): React.JSX.Element {
                   <p className="text-[11px] text-[#7A6F65] mt-1 leading-snug">
                     The agreement between you and Orbital
                   </p>
-                  <p className="text-[9.5px] font-mono uppercase tracking-[0.16em] text-[#5A524A] mt-2.5">
-                    2 min read · Oct 2026
-                  </p>
                 </div>
               </div>
             </Link>
@@ -610,19 +628,18 @@ function SettingsPane(): React.JSX.Element {
             {/* Privacy card */}
             <Link
               to="/privacy"
-              className="group relative overflow-hidden rounded-xl border border-white/[0.06] bg-white/[0.02] hover:bg-white/[0.04] hover:border-[#4ADE80]/30 p-4 transition-all duration-200"
+              className="group relative overflow-hidden rounded-xl border border-white/[0.06] bg-[#0B0A08] hover:bg-[#181510] hover:border-[#4ADE80]/30 p-4 transition-all duration-300"
             >
               <div
                 className="pointer-events-none absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-300"
                 style={{
                   background:
-                    'radial-gradient(circle at top right, rgba(74,222,128,0.08) 0%, transparent 60%)',
+                    'radial-gradient(circle at top right, rgba(74,222,128,0.06) 0%, transparent 60%)',
                 }}
               />
-
               <div className="relative flex items-start gap-3">
-                <div className="w-10 h-10 rounded-lg bg-[#4ADE80]/10 border border-[#4ADE80]/20 flex items-center justify-center shrink-0">
-                  <ScrollText className="w-4 h-4 text-[#4ADE80]" />
+                <div className="w-10 h-10 rounded-xl bg-[#4ADE80]/10 border border-[#4ADE80]/20 flex items-center justify-center shrink-0 group-hover:scale-105 transition-transform">
+                  <ScrollText className="w-[18px] h-[18px] text-[#4ADE80]" />
                 </div>
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center justify-between gap-2">
@@ -634,9 +651,6 @@ function SettingsPane(): React.JSX.Element {
                   <p className="text-[11px] text-[#7A6F65] mt-1 leading-snug">
                     What we do with your data — and don&apos;t
                   </p>
-                  <p className="text-[9.5px] font-mono uppercase tracking-[0.16em] text-[#5A524A] mt-2.5">
-                    3 min read · Oct 2026
-                  </p>
                 </div>
               </div>
             </Link>
@@ -646,30 +660,29 @@ function SettingsPane(): React.JSX.Element {
         {/* ── Danger zone ───────────────────────────────── */}
         <motion.section
           {...stagger(0.28)}
-          className="rounded-2xl bg-[#B91C1C]/[0.05] border border-[#B91C1C]/20 overflow-hidden"
+          className="rounded-[24px] bg-[#B91C1C]/[0.03] border border-[#B91C1C]/20 overflow-hidden"
         >
-          <div className="p-5 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+          <div className="p-6 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-5">
             <div className="min-w-0">
-              <h3 className="text-[14.5px] font-semibold text-[#EDE5D4] tracking-tight">
+              <h3 className="text-[15px] font-semibold text-[#EDE5D4] tracking-tight flex items-center gap-2">
                 Sign out
               </h3>
-              <p className="text-[12.5px] text-[#A8A29E] mt-0.5">
+              <p className="text-[12.5px] text-[#A8A29E] mt-1">
                 Log out of this device. You can sign back in any time.
               </p>
             </div>
 
             <button
               onClick={() => void handleSignOut()}
-              className="shrink-0 h-10 px-4 rounded-xl bg-[#B91C1C] hover:bg-[#991B1B] text-white text-[13px] font-semibold inline-flex items-center gap-2 transition-colors"
+              className="shrink-0 h-10 px-5 rounded-xl bg-[#B91C1C]/10 hover:bg-[#B91C1C] border border-[#B91C1C]/30 hover:border-[#B91C1C] text-[#F87171] hover:text-white text-[13px] font-semibold inline-flex items-center gap-2 transition-all duration-200"
             >
-              <LogOut className="w-3.5 h-3.5" />
+              <LogOut className="w-4 h-4" />
               Sign out
             </button>
           </div>
         </motion.section>
 
-        {/* ── Footer ────────────────────────────────────── */}
-       
+        <div className="h-8" />
       </div>
 
       {/* ── Avatar modal ────────────────────────────────── */}
@@ -679,34 +692,34 @@ function SettingsPane(): React.JSX.Element {
             initial={reduceMotion ? false : { opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            transition={{ duration: 0.18 }}
-            className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4"
+            transition={{ duration: 0.2 }}
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-md p-4"
             onClick={closeAvatarModal}
           >
             <motion.div
-              initial={reduceMotion ? false : { opacity: 0, scale: 0.96, y: 8 }}
+              initial={reduceMotion ? false : { opacity: 0, scale: 0.95, y: 10 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
-              exit={reduceMotion ? undefined : { opacity: 0, scale: 0.96, y: 8 }}
-              transition={{ type: 'spring', stiffness: 260, damping: 26 }}
+              exit={reduceMotion ? undefined : { opacity: 0, scale: 0.95, y: 10 }}
+              transition={{ type: 'spring', stiffness: 280, damping: 28 }}
               onClick={(e) => e.stopPropagation()}
-              className="w-full max-w-md rounded-[22px] bg-[#1C1A17] border border-white/[0.08] overflow-hidden shadow-2xl"
+              className="w-full max-w-md rounded-[24px] bg-[#14120F] border border-white/[0.08] overflow-hidden shadow-2xl"
             >
-              <div className="flex items-center justify-between px-5 py-3.5 border-b border-white/[0.06]">
-                <h3 className="text-[14.5px] font-semibold text-[#EDE5D4] tracking-tight">
-                  Change profile photo
+              <div className="flex items-center justify-between px-6 py-4 border-b border-white/[0.04]">
+                <h3 className="text-[15px] font-semibold text-[#EDE5D4] tracking-tight">
+                  Profile Photo
                 </h3>
                 <button
                   type="button"
                   onClick={closeAvatarModal}
                   disabled={uploading}
-                  className="w-8 h-8 rounded-lg flex items-center justify-center text-[#7A6F65] hover:text-[#EDE5D4] hover:bg-white/[0.05] disabled:opacity-40 transition-colors"
+                  className="w-8 h-8 rounded-full flex items-center justify-center text-[#7A6F65] hover:text-[#EDE5D4] hover:bg-white/[0.06] disabled:opacity-40 transition-colors"
                   aria-label="Close"
                 >
                   <X className="w-4 h-4" />
                 </button>
               </div>
 
-              <div className="p-5 space-y-4">
+              <div className="p-6 space-y-5">
                 <div
                   onDragOver={(e) => {
                     e.preventDefault();
@@ -717,29 +730,32 @@ function SettingsPane(): React.JSX.Element {
                   onClick={() => fileInputRef.current?.click()}
                   role="button"
                   tabIndex={0}
-                  className={`relative rounded-2xl border-2 border-dashed transition-colors cursor-pointer flex flex-col items-center justify-center py-10 px-4 ${
+                  className={`relative rounded-[20px] border-2 border-dashed transition-all duration-200 cursor-pointer flex flex-col items-center justify-center py-12 px-6 ${
                     dragActive
-                      ? 'border-[#D97706]/70 bg-[#D97706]/[0.06]'
-                      : 'border-white/[0.10] hover:border-white/[0.18] bg-white/[0.02]'
+                      ? 'border-[#D97706] bg-[#D97706]/[0.08] scale-[0.99]'
+                      : 'border-white/[0.1] hover:border-white/[0.2] hover:bg-white/[0.02]'
                   }`}
                 >
                   {pendingPreview ? (
-                    <img
-                      src={pendingPreview}
-                      alt="Preview"
-                      className="w-32 h-32 rounded-full object-cover border-2 border-white/[0.10]"
-                    />
+                    <div className="relative">
+                      <div className="absolute inset-0 bg-[#D97706] blur-xl opacity-20" />
+                      <img
+                        src={pendingPreview}
+                        alt="Preview"
+                        className="relative w-32 h-32 rounded-full object-cover border-4 border-[#14120F] shadow-xl"
+                      />
+                    </div>
                   ) : (
-                    <div className="w-16 h-16 rounded-full bg-white/[0.04] border border-white/[0.08] flex items-center justify-center mb-3">
-                      <Upload className="w-6 h-6 text-[#7A6F65]" />
+                    <div className="w-20 h-20 rounded-full bg-white/[0.03] border border-white/[0.08] flex items-center justify-center mb-4 group-hover:scale-105 transition-transform">
+                      <Upload className="w-8 h-8 text-[#7A6F65] group-hover:text-[#D97706] transition-colors" />
                     </div>
                   )}
 
-                  <p className="text-[13px] text-[#A8A29E] mt-3 text-center max-w-[260px] truncate">
-                    {pendingFile ? pendingFile.name : 'Drag & drop or click to browse'}
+                  <p className="text-[14px] font-medium text-[#EDE5D4] mt-4 text-center max-w-[260px] truncate">
+                    {pendingFile ? pendingFile.name : 'Click to upload or drag & drop'}
                   </p>
-                  <p className="text-[11px] text-[#5A524A] mt-1 text-center">
-                    Resized to 256px · ~200 KB
+                  <p className="text-[11.5px] text-[#5A524A] mt-1 text-center">
+                    JPG, PNG or GIF (max. 10MB)
                   </p>
 
                   <input
@@ -757,7 +773,7 @@ function SettingsPane(): React.JSX.Element {
                       initial={reduceMotion ? false : { opacity: 0, y: -4 }}
                       animate={{ opacity: 1, y: 0 }}
                       exit={{ opacity: 0 }}
-                      className="rounded-xl bg-[#B91C1C]/10 border border-[#B91C1C]/25 px-3 py-2.5 text-[12.5px] text-[#F87171] flex items-center gap-2"
+                      className="rounded-xl bg-[#B91C1C]/10 border border-[#B91C1C]/25 px-4 py-3 text-[12.5px] text-[#F87171] flex items-center gap-2"
                     >
                       <AlertCircle className="w-4 h-4 shrink-0" />
                       <span>{uploadError}</span>
@@ -766,12 +782,12 @@ function SettingsPane(): React.JSX.Element {
                 </AnimatePresence>
               </div>
 
-              <div className="px-5 py-3.5 border-t border-white/[0.06] flex items-center justify-end gap-2 bg-[#0F0D0A]/40">
+              <div className="px-6 py-4 border-t border-white/[0.04] flex items-center justify-end gap-3 bg-[#0B0A08]/50">
                 <button
                   type="button"
                   onClick={closeAvatarModal}
                   disabled={uploading}
-                  className="h-9 px-4 rounded-xl bg-white/[0.04] hover:bg-white/[0.08] border border-white/[0.06] text-[12.5px] text-[#EDE5D4] disabled:opacity-40 transition-colors"
+                  className="h-10 px-4 rounded-xl bg-transparent hover:bg-white/[0.04] text-[13px] font-medium text-[#A8A29E] hover:text-[#EDE5D4] disabled:opacity-40 transition-colors"
                 >
                   Cancel
                 </button>
@@ -779,17 +795,17 @@ function SettingsPane(): React.JSX.Element {
                   type="button"
                   onClick={() => void handleUpload()}
                   disabled={!pendingFile || uploading}
-                  className="h-9 px-4 rounded-xl bg-[#D97706] hover:bg-[#B45309] disabled:opacity-30 disabled:cursor-not-allowed text-[#171106] text-[12.5px] font-semibold inline-flex items-center gap-2 transition-colors"
+                  className="h-10 px-6 rounded-xl bg-[#D97706] hover:bg-[#B45309] disabled:opacity-30 disabled:cursor-not-allowed text-[#171106] text-[13px] font-bold inline-flex items-center gap-2 transition-all shadow-[0_4px_14px_-4px_rgba(217,119,6,0.4)] disabled:shadow-none"
                 >
                   {uploading ? (
                     <>
-                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      <Loader2 className="w-4 h-4 animate-spin" />
                       Uploading…
                     </>
                   ) : (
                     <>
-                      <Upload className="w-3.5 h-3.5" />
-                      Save
+                      <Check className="w-4 h-4" />
+                      Save Photo
                     </>
                   )}
                 </button>
@@ -806,76 +822,76 @@ function SettingsPane(): React.JSX.Element {
             initial={reduceMotion ? false : { opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            transition={{ duration: 0.18 }}
-            className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4"
+            transition={{ duration: 0.2 }}
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-md p-4"
             onClick={() => setBlockedModalOpen(false)}
           >
             <motion.div
-              initial={reduceMotion ? false : { opacity: 0, scale: 0.96, y: 8 }}
+              initial={reduceMotion ? false : { opacity: 0, scale: 0.95, y: 10 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
-              exit={reduceMotion ? undefined : { opacity: 0, scale: 0.96, y: 8 }}
-              transition={{ type: 'spring', stiffness: 260, damping: 26 }}
+              exit={reduceMotion ? undefined : { opacity: 0, scale: 0.95, y: 10 }}
+              transition={{ type: 'spring', stiffness: 280, damping: 28 }}
               onClick={(e) => e.stopPropagation()}
-              className="w-full max-w-md rounded-[22px] bg-[#1C1A17] border border-white/[0.08] overflow-hidden shadow-2xl flex flex-col max-h-[85vh]"
+              className="w-full max-w-md rounded-[24px] bg-[#14120F] border border-white/[0.08] overflow-hidden shadow-2xl flex flex-col max-h-[85vh]"
             >
-              <div className="flex items-center justify-between px-5 py-3.5 border-b border-white/[0.06] shrink-0">
-                <div className="flex items-center gap-2.5">
-                  <div className="w-8 h-8 rounded-lg bg-[#B91C1C]/10 border border-[#B91C1C]/25 flex items-center justify-center text-[#F87171]">
-                    <ShieldOff className="w-4 h-4" />
+              <div className="flex items-center justify-between px-6 py-4 border-b border-white/[0.04] shrink-0">
+                <div className="flex items-center gap-3">
+                  <div className="w-9 h-9 rounded-xl bg-[#B91C1C]/10 border border-[#B91C1C]/25 flex items-center justify-center text-[#F87171]">
+                    <ShieldOff className="w-[18px] h-[18px]" />
                   </div>
                   <div>
-                    <h3 className="text-[14.5px] font-semibold text-[#EDE5D4] tracking-tight">
-                      Blocked users
+                    <h3 className="text-[15px] font-semibold text-[#EDE5D4] tracking-tight">
+                      Blocked Users
                     </h3>
-                    <p className="text-[11px] text-[#7A6F65] mt-0.5">
-                      {blockedUsers.length} blocked
+                    <p className="text-[11.5px] text-[#7A6F65] mt-0.5">
+                      {blockedUsers.length} user{blockedUsers.length === 1 ? '' : 's'} blocked
                     </p>
                   </div>
                 </div>
                 <button
                   type="button"
                   onClick={() => setBlockedModalOpen(false)}
-                  className="w-8 h-8 rounded-lg flex items-center justify-center text-[#7A6F65] hover:text-[#EDE5D4] hover:bg-white/[0.05] transition-colors"
+                  className="w-8 h-8 rounded-full flex items-center justify-center text-[#7A6F65] hover:text-[#EDE5D4] hover:bg-white/[0.06] transition-colors"
                   aria-label="Close"
                 >
                   <X className="w-4 h-4" />
                 </button>
               </div>
 
-              <div className="flex-1 overflow-y-auto">
+              <div className="flex-1 overflow-y-auto custom-scrollbar">
                 {blockedLoading ? (
-                  <div className="py-12 flex items-center justify-center text-[12.5px] text-[#7A6F65]">
-                    <Loader2 className="w-4 h-4 animate-spin mr-2 text-[#D97706]" />
-                    Loading…
+                  <div className="py-16 flex flex-col items-center justify-center text-[13px] text-[#7A6F65]">
+                    <Loader2 className="w-6 h-6 animate-spin text-[#D97706] mb-3" />
+                    Loading blocked users…
                   </div>
                 ) : blockedError ? (
-                  <div className="p-6 text-center">
-                    <AlertCircle className="w-8 h-8 text-[#F87171] mx-auto mb-3" />
-                    <p className="text-[13px] text-[#F87171]">{blockedError}</p>
+                  <div className="p-8 text-center">
+                    <AlertCircle className="w-10 h-10 text-[#F87171] mx-auto mb-4 opacity-80" />
+                    <p className="text-[13.5px] text-[#F87171] font-medium">{blockedError}</p>
                   </div>
                 ) : blockedUsers.length === 0 ? (
-                  <div className="py-12 text-center px-6">
-                    <div className="w-14 h-14 rounded-2xl bg-white/[0.03] border border-white/[0.06] flex items-center justify-center mx-auto">
-                      <Inbox className="w-6 h-6 text-[#7A6F65]" />
+                  <div className="py-16 text-center px-6">
+                    <div className="w-16 h-16 rounded-[20px] bg-white/[0.02] border border-white/[0.05] flex items-center justify-center mx-auto mb-4">
+                      <Inbox className="w-7 h-7 text-[#7A6F65]" />
                     </div>
-                    <p className="text-[14px] text-[#EDE5D4] font-semibold mt-3 tracking-tight">
+                    <p className="text-[15px] text-[#EDE5D4] font-semibold tracking-tight">
                       No blocked users
                     </p>
-                    <p className="text-[12px] text-[#7A6F65] mt-1">
+                    <p className="text-[12.5px] text-[#7A6F65] mt-1">
                       Anyone you block will appear here.
                     </p>
                   </div>
                 ) : (
-                  <div className="divide-y divide-white/[0.04]">
+                  <div className="divide-y divide-white/[0.03]">
                     {blockedUsers.map((u) => (
                       <div
                         key={u.id}
-                        className="px-5 py-3 flex items-center gap-3"
+                        className="px-6 py-3.5 flex items-center gap-3 hover:bg-white/[0.015] transition-colors"
                       >
                         <button
                           type="button"
                           onClick={() => setBlockedProfileModalUserId(u.id)}
-                          className="shrink-0 rounded-full focus:outline-none focus-visible:ring-2 focus-visible:ring-[#D97706]/50"
+                          className="shrink-0 rounded-full focus:outline-none focus-visible:ring-2 focus-visible:ring-[#D97706]/50 hover:opacity-80 transition-opacity"
                           aria-label={`View ${u.displayName}'s profile`}
                         >
                           <Avatar
@@ -885,10 +901,10 @@ function SettingsPane(): React.JSX.Element {
                           />
                         </button>
                         <div className="min-w-0 flex-1">
-                          <p className="text-[13px] text-[#EDE5D4] truncate font-medium">
+                          <p className="text-[13.5px] text-[#EDE5D4] truncate font-semibold">
                             {u.displayName}
                           </p>
-                          <p className="text-[11px] text-[#7A6F65] truncate mt-0.5">
+                          <p className="text-[11.5px] text-[#7A6F65] truncate mt-0.5">
                             @{u.userHandle}
                           </p>
                         </div>
@@ -896,7 +912,7 @@ function SettingsPane(): React.JSX.Element {
                           type="button"
                           onClick={() => void handleUnblock(u.id)}
                           disabled={unblockingId === u.id}
-                          className="shrink-0 h-8 px-3 rounded-lg bg-white/[0.04] hover:bg-[#15803D]/[0.12] border border-white/[0.06] hover:border-[#15803D]/30 disabled:opacity-40 text-[12px] font-medium text-[#4ADE80] inline-flex items-center gap-1.5 transition-colors"
+                          className="shrink-0 h-8 px-3 rounded-lg bg-[#15803D]/10 hover:bg-[#15803D]/20 border border-[#15803D]/20 hover:border-[#15803D]/40 disabled:opacity-40 text-[12px] font-semibold text-[#4ADE80] inline-flex items-center gap-1.5 transition-colors"
                         >
                           {unblockingId === u.id ? (
                             <Loader2 className="w-3.5 h-3.5 animate-spin" />
@@ -911,11 +927,11 @@ function SettingsPane(): React.JSX.Element {
                 )}
               </div>
 
-              <div className="px-5 py-3 border-t border-white/[0.06] flex items-center justify-end bg-[#0F0D0A]/40 shrink-0">
+              <div className="px-6 py-3.5 border-t border-white/[0.04] flex items-center justify-end bg-[#0B0A08]/50 shrink-0">
                 <button
                   type="button"
                   onClick={() => setBlockedModalOpen(false)}
-                  className="h-9 px-4 rounded-xl bg-white/[0.04] hover:bg-white/[0.08] border border-white/[0.06] text-[12.5px] text-[#EDE5D4] transition-colors"
+                  className="h-10 px-5 rounded-xl bg-white/[0.04] hover:bg-white/[0.08] border border-white/[0.06] text-[13px] font-semibold text-[#EDE5D4] transition-colors"
                 >
                   Close
                 </button>
@@ -945,13 +961,13 @@ function Row({
   children: React.ReactNode;
 }) {
   return (
-    <div className="px-5 py-3.5 flex items-center justify-between gap-4 hover:bg-white/[0.015] transition-colors">
-      <div className="flex items-center gap-3 min-w-0">
-        <div className="w-8 h-8 rounded-lg bg-white/[0.04] border border-white/[0.06] flex items-center justify-center shrink-0">
+    <div className="px-6 py-4 flex items-center justify-between gap-4 hover:bg-white/[0.02] transition-colors group">
+      <div className="flex items-center gap-3.5 min-w-0">
+        <div className="w-9 h-9 rounded-xl bg-white/[0.03] border border-white/[0.05] flex items-center justify-center shrink-0 group-hover:bg-white/[0.06] group-hover:border-white/[0.1] transition-all">
           {icon}
         </div>
         <div className="min-w-0">
-          <p className="text-[13.5px] text-[#EDE5D4] font-medium">{label}</p>
+          <p className="text-[13.5px] text-[#EDE5D4] font-semibold">{label}</p>
           {hint && (
             <p className="text-[11.5px] text-[#7A6F65] mt-0.5 truncate">
               {hint}
