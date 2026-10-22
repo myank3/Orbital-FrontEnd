@@ -3,27 +3,110 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useEffect, useMemo, useState } from 'react';
+import React, {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import { NavLink, Outlet, useNavigate, Link, useLocation } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { useCall } from '../context/CallContext';
 import { apiService } from '../services/api';
 import { Avatar } from '../components/Avatar';
 import VideoCallOverlay from '../components/VideoCallOverlay';
-import {
-  MessageSquare,
-  Users,
-  UserCheck,
-  Phone,
-  Image as ImageIcon,
-  Settings,
-  LogOut,
-  PhoneOff,
-  Menu,
-  X,
-  Orbit,
-  Compass,
-} from 'lucide-react';
+import { Menu, X, Phone, PhoneOff, LogOut, SlidersHorizontal } from 'lucide-react';
+
+/* ────────────────────────────────────────────────────────── */
+/* Custom icon set — rounded 1.8 stroke, cohesive feel       */
+/* ────────────────────────────────────────────────────────── */
+
+type IconProps = React.SVGProps<SVGSVGElement> & { size?: number };
+
+function SvgBase({
+  size = 20,
+  children,
+  strokeWidth = 1.8,
+  ...rest
+}: IconProps & { children: React.ReactNode }) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={strokeWidth}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+      {...rest}
+    >
+      {children}
+    </svg>
+  );
+}
+
+const IconMessages = (p: IconProps) => (
+  <SvgBase {...p}>
+    <path d="M20.5 11.6c0 4.6-3.8 8.3-8.5 8.3-1.3 0-2.6-.3-3.7-.8L3.5 20.5l1.4-4.4a8.1 8.1 0 0 1-1.4-4.5c0-4.6 3.8-8.3 8.5-8.3s8.5 3.7 8.5 8.3Z" />
+    <path d="M8.7 11.6h.01M12 11.6h.01M15.3 11.6h.01" />
+  </SvgBase>
+);
+
+const IconGroups = (p: IconProps) => (
+  <SvgBase {...p}>
+    <circle cx="9" cy="8" r="3.25" />
+    <path d="M2.8 19.5c.4-3.2 3-5.6 6.2-5.6s5.8 2.4 6.2 5.6" />
+    <circle cx="17.2" cy="8.5" r="2.4" />
+    <path d="M15.7 14.1c.5-.1 1-.15 1.5-.15 2.3 0 4.2 1.7 4.5 3.9" />
+  </SvgBase>
+);
+
+const IconFriends = (p: IconProps) => (
+  <SvgBase {...p}>
+    <circle cx="9.5" cy="8" r="3.5" />
+    <path d="M3 19.8c.3-3.3 3.1-5.9 6.5-5.9 1.3 0 2.6.4 3.6 1.1" />
+    <path d="m15.2 17.6 1.9 1.9 4-4" />
+  </SvgBase>
+);
+
+const IconCalls = (p: IconProps) => (
+  <SvgBase {...p}>
+    <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92Z" />
+  </SvgBase>
+);
+
+const IconMedia = (p: IconProps) => (
+  <SvgBase {...p}>
+    <rect x="3" y="3" width="18" height="18" rx="4" />
+    <circle cx="8.5" cy="8.5" r="1.4" />
+    <path d="m3 16 4.5-4 4 4 2.5-2.5L21 18" />
+  </SvgBase>
+);
+
+const IconSignals = (p: IconProps) => (
+  <SvgBase {...p}>
+    <circle cx="12" cy="12" r="1.5" fill="currentColor" stroke="none" />
+    <path d="M8.2 15.8a5.4 5.4 0 0 1 0-7.6M15.8 8.2a5.4 5.4 0 0 1 0 7.6" />
+    <path d="M5.3 18.7a9.5 9.5 0 0 1 0-13.4M18.7 5.3a9.5 9.5 0 0 1 0 13.4" />
+  </SvgBase>
+);
+
+const IconOrbit = (p: IconProps) => (
+  <SvgBase {...p}>
+    <circle cx="12" cy="12" r="2.25" />
+    <ellipse cx="12" cy="12" rx="9.75" ry="4" transform="rotate(-20 12 12)" />
+  </SvgBase>
+);
+
+const IconSettings = (p: IconProps) => <SlidersHorizontal {...(p as any)} size={p.size ?? 18} strokeWidth={1.8} />;
+
+/* ────────────────────────────────────────────────────────── */
+/* Nav types                                                  */
+/* ────────────────────────────────────────────────────────── */
 
 interface NavItem {
   to: string;
@@ -34,54 +117,108 @@ interface NavItem {
   highlight?: boolean;
 }
 
+const DRAWER_W = 280;
+
 const SHELL_CSS = `
+  /* ── GPU-only keyframes ─────────────────────────────── */
   @keyframes signal-shine {
-    0% { transform: translateX(-200%) skewX(-20deg); }
-    100% { transform: translateX(200%) skewX(-20deg); }
+    0%   { transform: translate3d(-200%, 0, 0) skewX(-20deg); }
+    100% { transform: translate3d(200%, 0, 0) skewX(-20deg); }
   }
   .signal-shine {
     animation: signal-shine 2.5s ease-in-out infinite;
     animation-delay: 1s;
+    backface-visibility: hidden;
   }
 
   @keyframes call-pulse {
     0%, 100% { transform: scale(1); opacity: 1; }
-    50% { transform: scale(1.08); opacity: 0.8; }
+    50%      { transform: scale(1.08); opacity: 0.8; }
   }
   .call-pulse {
     animation: call-pulse 1.6s ease-in-out infinite;
+    backface-visibility: hidden;
   }
 
-  @keyframes drawer-in {
-    from { transform: translateX(-100%); }
-    to { transform: translateX(0); }
+  @keyframes menu-pop {
+    from { opacity: 0; transform: translate3d(0, 6px, 0) scale(0.98); }
+    to   { opacity: 1; transform: translate3d(0, 0, 0) scale(1); }
   }
-  .drawer-in {
-    animation: drawer-in 200ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
-    will-change: transform;
+  .menu-pop {
+    animation: menu-pop 180ms cubic-bezier(0.16, 1, 0.3, 1) both;
+    transform-origin: bottom left;
+    backface-visibility: hidden;
+  }
+  .menu-pop-right {
+    animation: menu-pop 180ms cubic-bezier(0.16, 1, 0.3, 1) both;
+    transform-origin: bottom right;
+    backface-visibility: hidden;
   }
 
-  /* Android: disable tap highlight on all interactive chrome */
+  /* ── Route transitions (direction-aware "swipe") ────── */
+  @keyframes route-forward {
+    from { opacity: 0; transform: translate3d(18px, 0, 0); }
+    to   { opacity: 1; transform: none; }
+  }
+  @keyframes route-back {
+    from { opacity: 0; transform: translate3d(-18px, 0, 0); }
+    to   { opacity: 1; transform: none; }
+  }
+  @keyframes route-fade {
+    from { opacity: 0; }
+    to   { opacity: 1; }
+  }
+  .route-forward { animation: route-forward 260ms cubic-bezier(0.16,1,0.3,1) both; }
+  .route-back    { animation: route-back    260ms cubic-bezier(0.16,1,0.3,1) both; }
+  .route-fade    { animation: route-fade    200ms ease-out both; }
+
+  /* ── App shell atmosphere (static, zero runtime) ────── */
+  .app-shell {
+    position: relative;
+    isolation: isolate;
+    background-color: #0B0A08;
+    background-image:
+      radial-gradient(1200px 800px at 82% -12%, rgba(217,119,6,0.13), transparent 62%),
+      radial-gradient(1000px 700px at -8% 108%, rgba(217,119,6,0.07), transparent 58%),
+      radial-gradient(700px 500px at 50% 45%, rgba(255,255,255,0.015), transparent 70%);
+  }
+  .app-shell::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    z-index: -1;
+    opacity: 0.9;
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='160' height='160'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' seed='7' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 1  0 0 0 0 1  0 0 0 0 1  0 0 0 0.028 0'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>");
+  }
+
   .app-shell button,
   .app-shell a,
   .app-shell [role="button"] {
     -webkit-tap-highlight-color: transparent;
   }
 
+  .shell-rail   { contain: paint; }
+  .shell-main   { contain: paint; }
+  .shell-drawer { contain: paint; }
+
+  .drawer-panel {
+    backface-visibility: hidden;
+    touch-action: pan-y;
+  }
+
   @media (prefers-reduced-motion: reduce) {
-    .signal-shine,
-    .call-pulse,
-    .drawer-in {
+    .signal-shine, .call-pulse, .menu-pop, .menu-pop-right,
+    .route-forward, .route-back, .route-fade {
       animation: none !important;
     }
+    .drawer-panel { transition: none !important; }
   }
 `;
 
 /** Route helpers -------------------------------------------------- */
 
 function isFullScreenRoute(pathname: string): boolean {
-  // DMs (but not the list) and groups (but not the list) get a full-screen
-  // chat surface on mobile. Signals is also full-screen on mobile.
   const isDmDetail = pathname.startsWith('/app/dm/') && pathname !== '/app/dm';
   const isGroupDetail =
     pathname.startsWith('/app/groups/') && pathname !== '/app/groups';
@@ -89,7 +226,9 @@ function isFullScreenRoute(pathname: string): boolean {
   return isDmDetail || isGroupDetail || isSignals;
 }
 
-/** Main shell ---------------------------------------------------- */
+/* ────────────────────────────────────────────────────────── */
+/* AppShell                                                   */
+/* ────────────────────────────────────────────────────────── */
 
 function AppShell(): React.JSX.Element {
   const navigate = useNavigate();
@@ -98,25 +237,66 @@ function AppShell(): React.JSX.Element {
   const { incomingCall, acceptCall, rejectCall } = useCall();
 
   const fullScreen = isFullScreenRoute(location.pathname);
-  // The shell chrome (mobile header, bottom bar, drawer) is hidden on full-
-  // screen routes, but the desktop rail stays mounted always.
   const hideMobileChrome = fullScreen;
 
-  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const shellRef = useRef<HTMLDivElement | null>(null);
+  const drawerRef = useRef<HTMLElement | null>(null);
+  const backdropRef = useRef<HTMLDivElement | null>(null);
+
+  const [drawerOpen, setDrawerOpen] = useState(false);
   const [railHovered, setRailHovered] = useState(false);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const [mobileUserMenuOpen, setMobileUserMenuOpen] = useState(false);
-
   const [callerName, setCallerName] = useState<string | null>(null);
 
-  // Close the mobile drawer whenever the route changes.
+  // Refs used inside native (non-React) touch listeners.
+  const drawerOpenRef = useRef(false);
+  const openDrawerRef = useRef<() => void>(() => {});
+  const closeDrawerRef = useRef<() => void>(() => {});
+  drawerOpenRef.current = drawerOpen;
+
+  /* ── Drawer imperative helpers ─────────────────────── */
+  const setBackdrop = useCallback((opacity: number, animate: boolean) => {
+    const bd = backdropRef.current;
+    if (!bd) return;
+    bd.style.transition = animate
+      ? 'opacity 320ms cubic-bezier(0.16,1,0.3,1)'
+      : 'none';
+    bd.style.opacity = String(opacity);
+    bd.style.pointerEvents = opacity > 0 ? 'auto' : 'none';
+  }, []);
+
+  const openDrawer = useCallback(() => {
+    const d = drawerRef.current;
+    if (d) {
+      d.style.transition = 'transform 320ms cubic-bezier(0.16,1,0.3,1)';
+      d.style.transform = 'translate3d(0,0,0)';
+    }
+    setBackdrop(1, true);
+    setDrawerOpen(true);
+  }, [setBackdrop]);
+
+  const closeDrawer = useCallback(() => {
+    const d = drawerRef.current;
+    if (d) {
+      d.style.transition = 'transform 320ms cubic-bezier(0.16,1,0.3,1)';
+      d.style.transform = `translate3d(-${DRAWER_W}px,0,0)`;
+    }
+    setBackdrop(0, true);
+    setDrawerOpen(false);
+  }, [setBackdrop]);
+
+  openDrawerRef.current = openDrawer;
+  closeDrawerRef.current = closeDrawer;
+
+  /* ── Close everything on route change ───────────────── */
   useEffect(() => {
-    setMobileMenuOpen(false);
+    closeDrawerRef.current();
     setMobileUserMenuOpen(false);
     setUserMenuOpen(false);
   }, [location.pathname]);
 
-  // Resolve caller display name.
+  /* ── Resolve caller display name ───────────────────── */
   useEffect(() => {
     const id = incomingCall?.initiatorId;
     if (!id) {
@@ -127,8 +307,8 @@ function AppShell(): React.JSX.Element {
     apiService
       .getUserProfile(id)
       .then((profile) => {
-        if (cancelled) return;
-        setCallerName(profile?.displayName || profile?.userHandle || null);
+        if (!cancelled)
+          setCallerName(profile?.displayName || profile?.userHandle || null);
       })
       .catch(() => {
         if (!cancelled) setCallerName(null);
@@ -147,35 +327,185 @@ function AppShell(): React.JSX.Element {
     }
   };
 
-  // Lock body scroll only while the mobile drawer is open (mobile only).
+  /* ── Lock body scroll while drawer is open ─────────── */
   useEffect(() => {
-    if (!mobileMenuOpen) return;
+    if (!drawerOpen) return;
     const prev = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
     return () => {
       document.body.style.overflow = prev;
     };
-  }, [mobileMenuOpen]);
+  }, [drawerOpen]);
 
-  // Note: intentionally no global "click outside" listener here. It used to
-  // swallow the first tap on menu items on Android Chrome (the mousedown that
-  // closed the menu also cancelled the link's click). Each menu item closes
-  // its own menu on click instead.
+  /* ── Edge-swipe-to-open (native, non-passive) ──────── */
+  useEffect(() => {
+    const el = shellRef.current;
+    if (!el) return;
 
+    let active = false;
+    let startX = 0;
+    let startY = 0;
+    let axis: '' | 'x' | 'y' = '';
+    let currentX = -DRAWER_W;
+
+    const applyX = (x: number) => {
+      const clamped = Math.max(-DRAWER_W, Math.min(0, x));
+      const d = drawerRef.current;
+      if (d) d.style.transform = `translate3d(${clamped}px,0,0)`;
+      const b = backdropRef.current;
+      if (b) {
+        b.style.opacity = String((DRAWER_W + clamped) / DRAWER_W);
+        b.style.pointerEvents = clamped > -DRAWER_W ? 'auto' : 'none';
+      }
+      currentX = clamped;
+    };
+
+    const onStart = (e: TouchEvent) => {
+      if (drawerOpenRef.current) return;
+      if (window.innerWidth >= 768) return;
+      const t = e.touches[0];
+      if (t.clientX > 28) return;
+      active = true;
+      axis = '';
+      startX = t.clientX;
+      startY = t.clientY;
+      currentX = -DRAWER_W;
+    };
+
+    const onMove = (e: TouchEvent) => {
+      if (!active) return;
+      const t = e.touches[0];
+      const dx = t.clientX - startX;
+      const dy = t.clientY - startY;
+
+      if (!axis) {
+        if (Math.abs(dx) > 6 || Math.abs(dy) > 6) {
+          axis = Math.abs(dx) > Math.abs(dy) ? 'x' : 'y';
+          if (axis === 'x') {
+            const d = drawerRef.current;
+            if (d) d.style.transition = 'none';
+            const b = backdropRef.current;
+            if (b) b.style.transition = 'none';
+          }
+        }
+      }
+      if (axis !== 'x') return;
+
+      e.preventDefault();
+      applyX(-DRAWER_W + Math.max(0, dx));
+    };
+
+    const onEnd = () => {
+      if (!active) return;
+      active = false;
+      if (axis !== 'x') return;
+      const d = drawerRef.current;
+      const b = backdropRef.current;
+      if (d) d.style.transition = 'transform 320ms cubic-bezier(0.16,1,0.3,1)';
+      if (b) b.style.transition = 'opacity 320ms cubic-bezier(0.16,1,0.3,1)';
+      if (currentX > -DRAWER_W * 0.45) {
+        openDrawerRef.current();
+      } else {
+        if (d) d.style.transform = `translate3d(-${DRAWER_W}px,0,0)`;
+        if (b) {
+          b.style.opacity = '0';
+          b.style.pointerEvents = 'none';
+        }
+      }
+    };
+
+    el.addEventListener('touchstart', onStart, { passive: true });
+    el.addEventListener('touchmove', onMove, { passive: false });
+    el.addEventListener('touchend', onEnd, { passive: true });
+    el.addEventListener('touchcancel', onEnd, { passive: true });
+    return () => {
+      el.removeEventListener('touchstart', onStart);
+      el.removeEventListener('touchmove', onMove);
+      el.removeEventListener('touchend', onEnd);
+      el.removeEventListener('touchcancel', onEnd);
+    };
+  }, []);
+
+  /* ── Drawer's own drag-to-close ────────────────────── */
+  const drawerDrag = useRef({
+    active: false,
+    startX: 0,
+    startY: 0,
+    axis: '' as '' | 'x' | 'y',
+    currentX: 0,
+  });
+
+  const onDrawerTouchStart = (e: React.TouchEvent<HTMLElement>) => {
+    const t = e.touches[0];
+    drawerDrag.current = {
+      active: true,
+      startX: t.clientX,
+      startY: t.clientY,
+      axis: '',
+      currentX: 0,
+    };
+    const d = drawerRef.current;
+    if (d) d.style.transition = 'none';
+  };
+
+  const onDrawerTouchMove = (e: React.TouchEvent<HTMLElement>) => {
+    const s = drawerDrag.current;
+    if (!s.active) return;
+    const t = e.touches[0];
+    const dx = t.clientX - s.startX;
+    const dy = t.clientY - s.startY;
+
+    if (!s.axis) {
+      if (Math.abs(dx) > 6 || Math.abs(dy) > 6) {
+        s.axis = Math.abs(dx) > Math.abs(dy) ? 'x' : 'y';
+        if (s.axis === 'x') {
+          const b = backdropRef.current;
+          if (b) b.style.transition = 'none';
+        }
+      }
+    }
+    if (s.axis !== 'x') return;
+
+    const clamped = Math.max(-DRAWER_W, Math.min(0, dx));
+    s.currentX = clamped;
+    const d = drawerRef.current;
+    if (d) d.style.transform = `translate3d(${clamped}px,0,0)`;
+    const b = backdropRef.current;
+    if (b) b.style.opacity = String((DRAWER_W + clamped) / DRAWER_W);
+  };
+
+  const onDrawerTouchEnd = () => {
+    const s = drawerDrag.current;
+    if (!s.active) return;
+    s.active = false;
+    if (s.axis !== 'x') return;
+    const d = drawerRef.current;
+    const b = backdropRef.current;
+    if (d) d.style.transition = 'transform 320ms cubic-bezier(0.16,1,0.3,1)';
+    if (b) b.style.transition = 'opacity 320ms cubic-bezier(0.16,1,0.3,1)';
+    if (s.currentX < -DRAWER_W * 0.4) {
+      closeDrawer();
+    } else {
+      openDrawer();
+    }
+  };
+
+  /* ── Nav items (Orbit ↔ Signals swapped) ───────────── */
   const primaryNav: NavItem[] = useMemo(
     () => [
-      { to: '/app/dm', label: 'Messages', icon: MessageSquare },
-      { to: '/app/groups', label: 'Groups', icon: Users },
-      { to: '/app/friends', label: 'Friends', icon: UserCheck },
+      { to: '/app/dm', label: 'Messages', icon: IconMessages },
+      { to: '/app/groups', label: 'Groups', icon: IconGroups },
+      { to: '/app/friends', label: 'Friends', icon: IconFriends },
     ],
     [],
   );
 
   const activityNav: NavItem[] = useMemo(
     () => [
-      { to: '/app/calls', label: 'Calls', icon: Phone },
-      { to: '/app/notifications', label: 'Media', icon: ImageIcon },
-      { to: '/app/orbit', label: 'Your Orbit', icon: Orbit },
+      { to: '/app/calls', label: 'Calls', icon: IconCalls },
+      { to: '/app/notifications', label: 'Media', icon: IconMedia },
+      // Signals now occupies the slot "Your Orbit" used to sit in
+      { to: '/app/signals', label: 'Signals', icon: IconSignals },
     ],
     [],
   );
@@ -183,79 +513,154 @@ function AppShell(): React.JSX.Element {
   const railWidth = railHovered ? 224 : 68;
   const incomingDisplayName = callerName ?? 'Someone';
 
-  const closeMobileMenu = () => setMobileMenuOpen(false);
+  /* ── Direction-aware route transition ──────────────── */
+  const routeRef = useRef({
+    path: location.pathname,
+    dir: 'fade' as 'forward' | 'back' | 'fade',
+  });
+  if (routeRef.current.path !== location.pathname) {
+    const pd = routeRef.current.path.split('/').filter(Boolean).length;
+    const nd = location.pathname.split('/').filter(Boolean).length;
+    routeRef.current = {
+      path: location.pathname,
+      dir: nd > pd ? 'forward' : nd < pd ? 'back' : 'fade',
+    };
+  }
+  const routeDir = routeRef.current.dir;
+
+  /* ── Sliding bottom-nav indicator ──────────────────── */
+  const bottomNavRef = useRef<HTMLDivElement | null>(null);
+  const indicatorRef = useRef<HTMLSpanElement | null>(null);
+  const tabRefs = useRef<Record<string, HTMLAnchorElement | null>>({});
+
+  useLayoutEffect(() => {
+    const ind = indicatorRef.current;
+    const wrap = bottomNavRef.current;
+    if (!ind || !wrap) return;
+    const active = primaryNav.find(
+      (i) =>
+        location.pathname === i.to ||
+        location.pathname.startsWith(i.to + '/'),
+    );
+    if (!active) {
+      ind.style.opacity = '0';
+      return;
+    }
+    const tab = tabRefs.current[active.to];
+    if (!tab) {
+      ind.style.opacity = '0';
+      return;
+    }
+    const wr = wrap.getBoundingClientRect();
+    const tr = tab.getBoundingClientRect();
+    if (!wr.width || !tr.width) {
+      ind.style.opacity = '0';
+      return;
+    }
+    ind.style.opacity = '1';
+    ind.style.width = `${tr.width}px`;
+    ind.style.transform = `translate3d(${tr.left - wr.left}px, 0, 0)`;
+  }, [location.pathname, primaryNav, hideMobileChrome]);
 
   return (
-    <div className="app-shell flex h-screen bg-[#0B0A08] text-[#EDE5D4] overflow-hidden selection:bg-[#D97706]/30 selection:text-[#EDE5D4]">
+    <div
+      ref={shellRef}
+      className="app-shell flex h-screen text-[#EDE5D4] overflow-hidden selection:bg-[#D97706]/30 selection:text-[#EDE5D4]"
+      style={{ overscrollBehaviorX: 'none' }}
+    >
       <style>{SHELL_CSS}</style>
 
-      {/* ─── MOBILE DRAWER ─────────────────────────────────── */}
-      {mobileMenuOpen && (
-        <>
-          <div
-            className="fixed inset-0 bg-black/60 backdrop-blur-sm z-30 md:hidden"
-            onClick={closeMobileMenu}
-            aria-hidden
-          />
-          <aside
-            className="drawer-in fixed inset-y-0 left-0 z-40 w-[280px] bg-[#0F0D0A]/95 md:backdrop-blur-3xl backdrop-blur-xl border-r border-white/[0.08] shadow-[20px_0_60px_rgba(0,0,0,0.8)] flex flex-col md:hidden overscroll-contain"
-            style={{ paddingTop: 'env(safe-area-inset-top, 0px)' }}
-            role="dialog"
-            aria-modal="true"
-            aria-label="Main menu"
+      {/* ─── MOBILE DRAWER (always mounted, off-screen when closed) ─── */}
+      <div
+        ref={backdropRef}
+        className="fixed inset-0 bg-black/65 z-30 md:hidden"
+        style={{
+          opacity: 0,
+          pointerEvents: 'none',
+          transition: 'opacity 320ms cubic-bezier(0.16,1,0.3,1)',
+        }}
+        onClick={closeDrawer}
+        aria-hidden
+      />
+      <aside
+        ref={drawerRef}
+        className="drawer-panel shell-drawer fixed inset-y-0 left-0 z-40 w-[280px]
+                   bg-[#0E0C09] border-r border-white/[0.08]
+                   shadow-[20px_0_60px_rgba(0,0,0,0.85)]
+                   flex flex-col md:hidden overscroll-contain"
+        style={{
+          transform: `translate3d(-${DRAWER_W}px,0,0)`,
+          transition: 'transform 320ms cubic-bezier(0.16,1,0.3,1)',
+          paddingTop: 'env(safe-area-inset-top, 0px)',
+        }}
+        role="dialog"
+        aria-modal="true"
+        aria-label="Main menu"
+        onTouchStart={onDrawerTouchStart}
+        onTouchMove={onDrawerTouchMove}
+        onTouchEnd={onDrawerTouchEnd}
+        onTouchCancel={onDrawerTouchEnd}
+      >
+        {/* Grab handle */}
+        <div className="pt-2 pb-1 flex justify-center">
+          <span className="h-1 w-9 rounded-full bg-white/[0.18]" aria-hidden />
+        </div>
+
+        <div className="h-14 px-4 border-b border-white/[0.06] flex items-center justify-between shrink-0">
+          <Link
+            to="/app/orbit"
+            onClick={closeDrawer}
+            className="flex items-baseline gap-2 touch-manipulation"
           >
-            <div className="h-16 px-4 border-b border-white/[0.06] flex items-center justify-between shrink-0">
-              <Link
-                to="/app/orbit"
-                onClick={closeMobileMenu}
-                className="flex items-baseline gap-2 touch-manipulation"
-              >
-                <span
-                  className="text-[22px] leading-none text-[#EDE5D4] tracking-tight drop-shadow-[0_0_15px_rgba(237,229,212,0.2)]"
-                  style={{ fontFamily: '"Instrument Serif", Georgia, serif' }}
-                >
-                  Orbital
-                </span>
-                <span
-                  aria-hidden
-                  className="w-1.5 h-1.5 rounded-full bg-[#D97706] inline-block translate-y-[-2px] shadow-[0_0_12px_rgba(217,119,6,0.8)]"
-                />
-              </Link>
-              <button
-                onClick={closeMobileMenu}
-                className="p-2 -mr-1 rounded-md text-[#A8A29E] active:bg-white/[0.08] hover:bg-white/[0.06] transition-colors touch-manipulation"
-                aria-label="Close menu"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
+            <span
+              className="text-[22px] leading-none text-[#EDE5D4] tracking-tight drop-shadow-[0_0_15px_rgba(237,229,212,0.2)]"
+              style={{ fontFamily: '"Instrument Serif", Georgia, serif' }}
+            >
+              Orbital
+            </span>
+            <span
+              aria-hidden
+              className="w-1.5 h-1.5 rounded-full bg-[#D97706] inline-block translate-y-[-2px] shadow-[0_0_12px_rgba(217,119,6,0.8)]"
+            />
+          </Link>
+          <button
+            onClick={closeDrawer}
+            className="p-2 -mr-1 rounded-md text-[#A8A29E] active:bg-white/[0.08] hover:bg-white/[0.06] transition-colors touch-manipulation"
+            aria-label="Close menu"
+          >
+            <X className="w-5 h-5" strokeWidth={1.8} />
+          </button>
+        </div>
 
-            <nav className="flex-1 px-3 py-5 overflow-y-auto overscroll-contain custom-scrollbar">
-              <MobileSection label="Messages">
-                {primaryNav.map((item) => (
-                  <MobileItem
-                    key={item.to}
-                    item={item}
-                    onNavigate={closeMobileMenu}
-                  />
-                ))}
-              </MobileSection>
+        <nav className="flex-1 px-3 py-5 overflow-y-auto overscroll-contain custom-scrollbar">
+          <MobileSection label="Messages">
+            {primaryNav.map((item) => (
+              <MobileItem
+                key={item.to}
+                item={item}
+                onNavigate={closeDrawer}
+              />
+            ))}
+          </MobileSection>
 
-              <MobileSection label="Activity" className="mt-6">
-                {activityNav.map((item) => (
-                  <MobileItem
-                    key={item.to}
-                    item={item}
-                    onNavigate={closeMobileMenu}
-                  />
-                ))}
-              </MobileSection>
-            </nav>
-          </aside>
-        </>
-      )}
+          <MobileSection label="Activity" className="mt-6">
+            {activityNav.map((item) => (
+              <MobileItem
+                key={item.to}
+                item={item}
+                onNavigate={closeDrawer}
+              />
+            ))}
+          </MobileSection>
 
-      {/* ─── DESKTOP RAIL (always mounted on desktop) ─── */}
+          <div className="mt-8 px-3 flex items-center gap-2 text-[10px] uppercase tracking-[0.2em] text-[#6B6259]">
+            <span className="inline-block w-6 h-px bg-white/[0.1]" />
+            <span>Swipe left to close</span>
+          </div>
+        </nav>
+      </aside>
+
+      {/* ─── DESKTOP RAIL ─── */}
       <div
         className="hidden md:block relative shrink-0 w-[68px]"
         onMouseEnter={() => setRailHovered(true)}
@@ -264,14 +669,12 @@ function AppShell(): React.JSX.Element {
         <aside
           style={{
             width: railWidth,
-            transition: 'width 250ms cubic-bezier(0.16, 1, 0.3, 1)',
+            transition: 'width 260ms cubic-bezier(0.16, 1, 0.3, 1)',
           }}
-          className="absolute inset-y-0 left-0 flex flex-col overflow-hidden z-30
-                     bg-[#0F0D0A]/60 backdrop-blur-[40px]
-                     border-r border-white/[0.08]
+          className="shell-rail absolute inset-y-0 left-0 flex flex-col overflow-hidden z-30
+                     bg-[#0C0A08] border-r border-white/[0.07]
                      shadow-[10px_0_50px_-15px_rgba(0,0,0,0.9),inset_-1px_0_0_rgba(255,255,255,0.02)]"
         >
-          {/* Logo */}
           <div className="h-16 flex items-center px-4 shrink-0 border-b border-white/[0.06]">
             <Link
               to="/app/orbit"
@@ -290,15 +693,10 @@ function AppShell(): React.JSX.Element {
             </Link>
           </div>
 
-          {/* Nav */}
           <nav className="flex-1 py-4 px-2 overflow-y-auto overflow-x-hidden custom-scrollbar">
             <div className="space-y-0.5">
               {primaryNav.map((item) => (
-                <RailItem
-                  key={item.to}
-                  item={item}
-                  expanded={railHovered}
-                />
+                <RailItem key={item.to} item={item} expanded={railHovered} />
               ))}
             </div>
 
@@ -306,16 +704,11 @@ function AppShell(): React.JSX.Element {
 
             <div className="space-y-0.5">
               {activityNav.map((item) => (
-                <RailItem
-                  key={item.to}
-                  item={item}
-                  expanded={railHovered}
-                />
+                <RailItem key={item.to} item={item} expanded={railHovered} />
               ))}
             </div>
           </nav>
 
-          {/* Profile / user menu */}
           <div className="py-3 px-2 border-t border-white/[0.06]">
             <div className="relative mt-1">
               <button
@@ -354,7 +747,7 @@ function AppShell(): React.JSX.Element {
 
               {userMenuOpen && (
                 <div
-                  className="absolute bottom-full mb-3 left-0 right-0 min-w-[220px] rounded-2xl bg-[#131110]/95 backdrop-blur-3xl border border-white/[0.1] shadow-[0_20px_60px_-12px_rgba(0,0,0,0.95),inset_0_1px_0_rgba(255,255,255,0.05)] overflow-hidden z-50 origin-bottom-left"
+                  className="menu-pop absolute bottom-full mb-3 left-0 right-0 min-w-[220px] rounded-2xl bg-[#131110] border border-white/[0.1] shadow-[0_20px_60px_-12px_rgba(0,0,0,0.95),inset_0_1px_0_rgba(255,255,255,0.05)] overflow-hidden z-50"
                   onClick={(e) => e.stopPropagation()}
                   role="menu"
                 >
@@ -383,17 +776,18 @@ function AppShell(): React.JSX.Element {
                       className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-[13px] font-medium text-[#A8A29E] hover:text-[#EDE5D4] hover:bg-white/[0.06] transition-colors"
                       role="menuitem"
                     >
-                      <Settings className="w-4 h-4" />
+                      <IconSettings size={16} />
                       <span>Settings</span>
                     </Link>
+                    {/* Your Orbit now sits where Signals used to */}
                     <Link
-                      to="/app/signals"
+                      to="/app/orbit"
                       onClick={() => setUserMenuOpen(false)}
                       className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-[13px] font-medium text-[#A8A29E] hover:text-[#EDE5D4] hover:bg-white/[0.06] transition-colors"
                       role="menuitem"
                     >
-                      <Compass className="w-4 h-4" />
-                      <span>Signals</span>
+                      <IconOrbit size={16} />
+                      <span>Your Orbit</span>
                     </Link>
                   </div>
 
@@ -403,7 +797,7 @@ function AppShell(): React.JSX.Element {
                       className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-[13px] font-medium text-[#A8A29E] hover:text-[#F87171] hover:bg-[#B91C1C]/[0.1] transition-colors"
                       role="menuitem"
                     >
-                      <LogOut className="w-4 h-4" />
+                      <LogOut className="w-4 h-4" strokeWidth={1.8} />
                       <span>Sign out</span>
                     </button>
                   </div>
@@ -414,20 +808,22 @@ function AppShell(): React.JSX.Element {
         </aside>
       </div>
 
-      {/* ─── MAIN COLUMN ───────────────────────────────────── */}
+      {/* ─── MAIN COLUMN ─── */}
       <div className="flex-1 flex flex-col h-screen overflow-hidden min-w-0 relative">
-        {/* Mobile header — hidden on full-screen routes (DM, group, signals) */}
         {!hideMobileChrome && (
           <header
-            className="md:hidden h-14 bg-[#0F0D0A]/80 backdrop-blur-xl border-b border-white/[0.06] px-4 flex items-center justify-between shrink-0"
-            style={{ paddingTop: 'env(safe-area-inset-top, 0px)', height: 'calc(3.5rem + env(safe-area-inset-top, 0px))' }}
+            className="md:hidden h-14 bg-[#0E0C09] border-b border-white/[0.06] px-4 flex items-center justify-between shrink-0"
+            style={{
+              paddingTop: 'env(safe-area-inset-top, 0px)',
+              height: 'calc(3.5rem + env(safe-area-inset-top, 0px))',
+            }}
           >
             <button
-              onClick={() => setMobileMenuOpen(true)}
+              onClick={openDrawer}
               className="p-2 -ml-1 rounded-md text-[#A8A29E] active:bg-white/[0.08] hover:bg-white/[0.06] transition-colors touch-manipulation"
               aria-label="Open menu"
             >
-              <Menu className="w-5 h-5" />
+              <Menu className="w-5 h-5" strokeWidth={1.8} />
             </button>
             <span
               className="text-[18px] tracking-tight text-[#EDE5D4]"
@@ -439,13 +835,12 @@ function AppShell(): React.JSX.Element {
           </header>
         )}
 
-        {/* Incoming call banner — always visible, even on full-screen routes */}
         {incomingCall && (
           <div className="shrink-0 z-30 px-4 sm:px-6 py-3 bg-[#0F0D0A] border-b border-[#22C55E]/30 shadow-[0_10px_30px_-10px_rgba(34,197,94,0.15)]">
             <div className="flex items-center justify-between gap-4">
               <div className="flex items-center gap-3 min-w-0">
                 <div className="call-pulse w-10 h-10 rounded-full bg-[#22C55E]/15 border border-[#22C55E]/30 text-[#22C55E] flex items-center justify-center shrink-0 shadow-[0_0_20px_rgba(34,197,94,0.3)]">
-                  <Phone className="w-4 h-4" />
+                  <Phone className="w-4 h-4" strokeWidth={1.8} />
                 </div>
                 <div className="min-w-0">
                   <p className="text-[11px] uppercase tracking-[0.24em] text-[#22C55E] font-semibold">
@@ -461,14 +856,14 @@ function AppShell(): React.JSX.Element {
                   onClick={() => void rejectCall()}
                   className="h-9 px-4 rounded-xl bg-white/[0.05] hover:bg-[#B91C1C]/15 border border-white/[0.08] hover:border-[#B91C1C]/40 text-[#EDE5D4] hover:text-[#F87171] text-[13px] font-medium transition-colors inline-flex items-center gap-1.5 touch-manipulation"
                 >
-                  <PhoneOff className="w-3.5 h-3.5" />
+                  <PhoneOff className="w-3.5 h-3.5" strokeWidth={1.8} />
                   <span className="hidden sm:inline">Decline</span>
                 </button>
                 <button
                   onClick={() => void acceptCall()}
                   className="h-9 px-4 rounded-xl bg-[#22C55E] hover:bg-[#16A34A] text-[#0F0D0A] text-[13px] font-semibold transition-colors shadow-[0_6px_20px_-8px_rgba(34,197,94,0.7)] inline-flex items-center gap-1.5 touch-manipulation"
                 >
-                  <Phone className="w-3.5 h-3.5" />
+                  <Phone className="w-3.5 h-3.5" strokeWidth={2} />
                   <span>Accept</span>
                 </button>
               </div>
@@ -476,122 +871,144 @@ function AppShell(): React.JSX.Element {
           </div>
         )}
 
-        {/* Main content — full-bleed on full-screen routes */}
         <main
-          className={`flex-1 overflow-y-auto bg-[#0B0A08] relative custom-scrollbar overscroll-contain ${
+          key={location.pathname}
+          className={`shell-main flex-1 overflow-y-auto bg-transparent relative custom-scrollbar overscroll-contain route-${routeDir} ${
             !hideMobileChrome ? 'pb-16 md:pb-0' : ''
           }`}
         >
           <Outlet />
         </main>
 
-        {/* Mobile bottom bar — hidden on full-screen routes */}
         {!hideMobileChrome && (
           <nav
-            className="md:hidden fixed bottom-0 left-0 right-0 bg-[#0F0D0A]/90 backdrop-blur-xl border-t border-white/[0.06] z-40 flex items-center justify-around px-2"
+            className="md:hidden fixed bottom-0 left-0 right-0 bg-[#0C0A08] border-t border-white/[0.06] z-40 px-2"
             style={{
               height: 'calc(4rem + env(safe-area-inset-bottom, 0px))',
               paddingBottom: 'env(safe-area-inset-bottom, 0px)',
             }}
           >
-            {primaryNav.slice(0, 3).map((item) => (
-              <NavLink
-                key={item.to}
-                to={item.to}
-                className={({ isActive }) =>
-                  `flex flex-col items-center justify-center w-14 h-16 gap-1 touch-manipulation ${
-                    isActive
-                      ? 'text-[#D97706]'
-                      : 'text-[#A8A29E] hover:text-[#EDE5D4]'
-                  }`
-                }
+            <div className="flex items-center h-16">
+              {/* Sliding pill under the three primary tabs */}
+              <div
+                ref={bottomNavRef}
+                className="relative flex items-center justify-around flex-1 h-full"
               >
-                <item.icon size={20} />
-                <span className="text-[9px] font-medium">{item.label}</span>
-              </NavLink>
-            ))}
-
-            {/* Mobile avatar / user menu */}
-            <div className="relative flex items-center justify-center w-14 h-16">
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setMobileUserMenuOpen((v) => !v);
-                }}
-                className={`flex items-center justify-center p-1 rounded-full transition-all touch-manipulation ${
-                  mobileUserMenuOpen
-                    ? 'bg-white/[0.1] ring-1 ring-white/[0.2]'
-                    : ''
-                }`}
-                aria-haspopup="menu"
-                aria-expanded={mobileUserMenuOpen}
-                aria-label="Open profile menu"
-              >
-                <Avatar
-                  name={user?.displayName || 'User'}
-                  src={user?.avatarUrl}
-                  size="sm"
-                  isOnline
+                <span
+                  ref={indicatorRef}
+                  aria-hidden
+                  className="pointer-events-none absolute top-2 left-0 h-12 w-14 rounded-2xl bg-[#D97706]/12 ring-1 ring-inset ring-[#D97706]/22 opacity-0"
+                  style={{
+                    transition:
+                      'transform 340ms cubic-bezier(0.16,1,0.3,1), width 340ms cubic-bezier(0.16,1,0.3,1), opacity 180ms ease-out',
+                    willChange: 'transform',
+                  }}
                 />
-              </button>
 
-              {mobileUserMenuOpen && (
-                <div
-                  className="absolute bottom-[calc(100%+10px)] right-0 w-[220px] rounded-2xl bg-[#131110]/95 backdrop-blur-xl border border-white/[0.1] shadow-[0_20px_60px_-12px_rgba(0,0,0,0.95),inset_0_1px_0_rgba(255,255,255,0.05)] overflow-hidden z-50 origin-bottom-right"
-                  onClick={() => setMobileUserMenuOpen(false)}
-                  role="menu"
+                {primaryNav.slice(0, 3).map((item) => (
+                  <NavLink
+                    key={item.to}
+                    to={item.to}
+                    ref={(el) => {
+                      tabRefs.current[item.to] = el;
+                    }}
+                    className={({ isActive }) =>
+                      `relative z-10 flex flex-col items-center justify-center w-14 h-16 gap-1 touch-manipulation transition-colors ${
+                        isActive
+                          ? 'text-[#D97706]'
+                          : 'text-[#A8A29E] hover:text-[#EDE5D4]'
+                      }`
+                    }
+                  >
+                    <item.icon size={20} />
+                    <span className="text-[9px] font-medium">{item.label}</span>
+                  </NavLink>
+                ))}
+              </div>
+
+              {/* Avatar / user menu */}
+              <div className="relative flex items-center justify-center w-14 h-16">
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setMobileUserMenuOpen((v) => !v);
+                  }}
+                  className={`flex items-center justify-center p-1 rounded-full transition-all touch-manipulation ${
+                    mobileUserMenuOpen
+                      ? 'bg-white/[0.1] ring-1 ring-white/[0.2]'
+                      : ''
+                  }`}
+                  aria-haspopup="menu"
+                  aria-expanded={mobileUserMenuOpen}
+                  aria-label="Open profile menu"
                 >
-                  <div className="px-4 py-4 border-b border-white/[0.06] bg-gradient-to-b from-white/[0.02] to-transparent">
-                    <div className="flex items-center gap-3">
-                      <Avatar
-                        name={user?.displayName || 'User'}
-                        src={user?.avatarUrl}
-                        size="sm"
-                      />
-                      <div className="min-w-0">
-                        <p className="text-[13px] font-medium text-[#EDE5D4] truncate">
-                          {user?.displayName || 'Active User'}
-                        </p>
-                        <p className="text-[11px] text-[#6B6259] truncate mt-0.5">
-                          @{user?.userHandle || 'guest'}
-                        </p>
+                  <Avatar
+                    name={user?.displayName || 'User'}
+                    src={user?.avatarUrl}
+                    size="sm"
+                    isOnline
+                  />
+                </button>
+
+                {mobileUserMenuOpen && (
+                  <div
+                    className="menu-pop-right absolute bottom-[calc(100%+10px)] right-0 w-[220px] rounded-2xl bg-[#131110] border border-white/[0.1] shadow-[0_20px_60px_-12px_rgba(0,0,0,0.95),inset_0_1px_0_rgba(255,255,255,0.05)] overflow-hidden z-50"
+                    onClick={() => setMobileUserMenuOpen(false)}
+                    role="menu"
+                  >
+                    <div className="px-4 py-4 border-b border-white/[0.06] bg-gradient-to-b from-white/[0.02] to-transparent">
+                      <div className="flex items-center gap-3">
+                        <Avatar
+                          name={user?.displayName || 'User'}
+                          src={user?.avatarUrl}
+                          size="sm"
+                        />
+                        <div className="min-w-0">
+                          <p className="text-[13px] font-medium text-[#EDE5D4] truncate">
+                            {user?.displayName || 'Active User'}
+                          </p>
+                          <p className="text-[11px] text-[#6B6259] truncate mt-0.5">
+                            @{user?.userHandle || 'guest'}
+                          </p>
+                        </div>
                       </div>
                     </div>
-                  </div>
 
-                  <div className="p-1.5">
-                    <Link
-                      to="/app/signals"
-                      onClick={() => setMobileUserMenuOpen(false)}
-                      className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-[13px] font-medium text-[#A8A29E] hover:text-[#EDE5D4] hover:bg-white/[0.06] transition-colors touch-manipulation"
-                      role="menuitem"
-                    >
-                      <Compass className="w-4 h-4" />
-                      <span>Signals</span>
-                    </Link>
-                    <Link
-                      to="/app/settings"
-                      onClick={() => setMobileUserMenuOpen(false)}
-                      className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-[13px] font-medium text-[#A8A29E] hover:text-[#EDE5D4] hover:bg-white/[0.06] transition-colors touch-manipulation"
-                      role="menuitem"
-                    >
-                      <Settings className="w-4 h-4" />
-                      <span>Settings</span>
-                    </Link>
-                  </div>
+                    <div className="p-1.5">
+                      {/* Your Orbit now sits where Signals used to */}
+                      <Link
+                        to="/app/orbit"
+                        onClick={() => setMobileUserMenuOpen(false)}
+                        className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-[13px] font-medium text-[#A8A29E] hover:text-[#EDE5D4] hover:bg-white/[0.06] transition-colors touch-manipulation"
+                        role="menuitem"
+                      >
+                        <IconOrbit size={16} />
+                        <span>Your Orbit</span>
+                      </Link>
+                      <Link
+                        to="/app/settings"
+                        onClick={() => setMobileUserMenuOpen(false)}
+                        className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-[13px] font-medium text-[#A8A29E] hover:text-[#EDE5D4] hover:bg-white/[0.06] transition-colors touch-manipulation"
+                        role="menuitem"
+                      >
+                        <IconSettings size={16} />
+                        <span>Settings</span>
+                      </Link>
+                    </div>
 
-                  <div className="p-1.5 border-t border-white/[0.06]">
-                    <button
-                      onClick={() => void handleSignOut()}
-                      className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-[13px] font-medium text-[#A8A29E] hover:text-[#F87171] hover:bg-[#B91C1C]/[0.1] transition-colors touch-manipulation"
-                      role="menuitem"
-                    >
-                      <LogOut className="w-4 h-4" />
-                      <span>Sign out</span>
-                    </button>
+                    <div className="p-1.5 border-t border-white/[0.06]">
+                      <button
+                        onClick={() => void handleSignOut()}
+                        className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-[13px] font-medium text-[#A8A29E] hover:text-[#F87171] hover:bg-[#B91C1C]/[0.1] transition-colors touch-manipulation"
+                        role="menuitem"
+                      >
+                        <LogOut className="w-4 h-4" strokeWidth={1.8} />
+                        <span>Sign out</span>
+                      </button>
+                    </div>
                   </div>
-                </div>
-              )}
+                )}
+              </div>
             </div>
           </nav>
         )}
@@ -637,21 +1054,20 @@ function RailItem({
           )}
 
           {isActive && (
-            <div
-              className={`absolute inset-0 rounded-xl ring-1 ring-inset z-0 ${
-                accent
-                  ? 'bg-gradient-to-r from-[#D97706]/20 to-transparent ring-[#D97706]/40'
-                  : 'bg-gradient-to-r from-[#D97706]/15 to-transparent ring-[#D97706]/20'
-              }`}
-            />
-          )}
-
-          {isActive && (
-            <div className="absolute left-0 top-2.5 bottom-2.5 w-[3px] rounded-r-full bg-[#D97706] shadow-[0_0_15px_rgba(217,119,6,1)] z-10" />
+            <>
+              <span
+                className={`absolute inset-0 rounded-xl ring-1 ring-inset z-0 ${
+                  accent
+                    ? 'bg-gradient-to-r from-[#D97706]/22 to-transparent ring-[#D97706]/40'
+                    : 'bg-gradient-to-r from-[#D97706]/16 via-[#D97706]/5 to-transparent ring-[#D97706]/22'
+                }`}
+              />
+              <span className="absolute left-0 top-1/2 -translate-y-1/2 h-6 w-[3px] rounded-r-full bg-[#D97706] shadow-[0_0_12px_rgba(217,119,6,0.9)] z-10" />
+            </>
           )}
 
           <span className="w-[68px] shrink-0 flex items-center justify-center relative z-10">
-            <span className="inline-flex transition-transform group-hover:scale-110 group-active:scale-90">
+            <span className="inline-flex transition-transform duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] group-hover:scale-110 group-active:scale-90">
               <Icon
                 className={`w-[19px] h-[19px] transition-all duration-300 ${
                   isActive
@@ -665,8 +1081,10 @@ function RailItem({
           </span>
 
           <span
-            className={`relative z-10 text-[14px] font-medium truncate whitespace-nowrap transition-opacity duration-300 ${
-              expanded ? 'opacity-100' : 'opacity-0'
+            className={`relative z-10 text-[14px] font-medium truncate whitespace-nowrap transition-all duration-300 ${
+              expanded
+                ? 'opacity-100 translate-x-0'
+                : 'opacity-0 -translate-x-1'
             }`}
           >
             {item.label}
@@ -684,7 +1102,7 @@ function RailItem({
 }
 
 /* ────────────────────────────────────────────────────────── */
-/* Mobile drawer helpers                                      */
+/* Drawer helpers                                             */
 /* ────────────────────────────────────────────────────────── */
 
 function MobileSection({
