@@ -282,82 +282,94 @@ function SettingsPane(): React.JSX.Element {
       <div className="max-w-2xl mx-auto px-4 sm:px-6 py-8 space-y-6">
 
         {/* ── Hero profile card ─────────────────────────── */}
-        <motion.div {...stagger(0)}>
-          <div className="relative overflow-hidden rounded-[28px] border border-white/[0.08] bg-[#14120F] shadow-[0_8px_30px_-12px_rgba(0,0,0,0.8)]">
-            {/* Ambient Banner */}
-            <div className="h-32 relative overflow-hidden bg-[#1C1A17]">
-              <div className="absolute inset-0 bg-gradient-to-tr from-[#D97706]/25 via-[#D97706]/5 to-transparent" />
-              <div 
-                className="absolute inset-0 opacity-20"
-                style={{
-                  backgroundImage: `radial-gradient(circle at 20% 120%, #D97706 0%, transparent 50%), radial-gradient(circle at 80% -20%, #4ADE80 0%, transparent 40%)`,
-                  filter: 'blur(40px)'
-                }}
-              />
-              <div 
-                className="absolute inset-0 opacity-[0.03]"
-                style={{
-                  backgroundImage: `linear-gradient(rgba(255,255,255,1) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,1) 1px, transparent 1px)`,
-                  backgroundSize: '20px 20px'
-                }}
-              />
-            </div>
+      <motion.div {...stagger(0)}>
+  <div
+    className="relative overflow-hidden rounded-[28px]"
+    style={{
+      background: '#14120F',
+      border: '1px solid rgba(255,255,255,0.07)',
+      boxShadow: '0 8px 30px -12px rgba(0,0,0,0.8)',
+    }}
+  >
+    {/* Banner — same surface as the card, lit by one amber spotlight */}
+    <div
+      className="relative"
+      style={{ height: '128px' }}
+    >
+      {/* Warm spotlight behind the avatar */}
+      <div
+        aria-hidden
+        className="absolute inset-0 pointer-events-none"
+        style={{
+          background:
+            'radial-gradient(ellipse 80% 140% at 15% 100%, rgba(217,119,6,0.30) 0%, rgba(217,119,6,0.10) 30%, rgba(217,119,6,0.02) 60%, transparent 80%)',
+        }}
+      />
 
-            <div className="px-5 sm:px-8 pb-7 -mt-14 relative z-10 flex flex-col sm:flex-row sm:items-end gap-5">
-              
-              {/* Avatar — plain, no ring */}
-              <div className="shrink-0 -mb-1">
-                <Avatar
-                  name={displayName || user?.displayName || 'User'}
-                  src={toAbsoluteAvatar(user?.avatarUrl)}
-                  size="xl"
-                  isOnline={false}
-                />
-              </div>
+      {/* Top bezel highlight — the 1px "physical frame" detail */}
+      <div
+        aria-hidden
+        className="absolute top-0 left-0 right-0 h-px pointer-events-none"
+        style={{
+          background:
+            'linear-gradient(90deg, transparent 0%, rgba(255,255,255,0.08) 50%, transparent 100%)',
+        }}
+      />
+    </div>
 
-              {/* Name & Change photo button */}
-              <div className="min-w-0 flex-1 pb-1">
-                <h1 className="text-[24px] font-bold text-[#EDE5D4] tracking-tight truncate leading-tight">
-                  {user?.displayName || 'Your name'}
-                </h1>
-                <p className="text-[13px] text-[#A8A29E] truncate mt-0.5 font-medium">
-                  @{user?.userHandle || 'guest'}
-                </p>
-                <button
-                  type="button"
-                  onClick={openAvatarModal}
-                  className="mt-2 inline-flex items-center gap-1.5 text-[12.5px] font-semibold text-[#D97706] hover:text-[#F59E0B] active:text-[#B45309] transition-colors touch-manipulation"
-                >
-                  <Camera className="w-3.5 h-3.5" />
-                  Change photo
-                </button>
-              </div>
-            </div>
-            
-            {/* Meta Pills */}
-            <div className="px-5 sm:px-8 pb-6 flex items-center gap-2 flex-wrap">
-              {user?.createdAt && (
-                <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-white/[0.03] border border-white/[0.05] text-[11px] text-[#A8A29E]">
-                  <Calendar className="w-3.5 h-3.5 opacity-70" />
-                  Joined {memberSince(user.createdAt)}
-                </div>
-              )}
-              
-            </div>
-          </div>
-        </motion.div>
+    <div className="px-5 sm:px-8 pb-7 -mt-14 relative z-10 flex flex-col sm:flex-row sm:items-end gap-5">
+      
+      {/* Avatar — plain, no ring */}
+      <div className="shrink-0 -mb-1">
+        <Avatar
+          name={displayName || user?.displayName || 'User'}
+          src={toAbsoluteAvatar(user?.avatarUrl)}
+          size="xl"
+          isOnline={false}
+        />
+      </div>
 
-        {/* ── Edit profile section ──────────────────────── */}
-        <motion.section
-          {...stagger(0.06)}
-          className="rounded-[24px] bg-[#14120F] border border-white/[0.06] overflow-hidden shadow-sm"
+      {/* Name & Change photo button */}
+      <div className="min-w-0 flex-1 pb-1">
+        <h1 className="text-[24px] font-bold text-[#EDE5D4] tracking-tight truncate leading-tight">
+          {user?.displayName || 'Your name'}
+        </h1>
+        <p className="text-[13px] text-[#A8A29E] truncate mt-0.5 font-medium">
+          @{user?.userHandle || 'guest'}
+        </p>
+        <button
+          type="button"
+          onClick={openAvatarModal}
+          className="mt-2 inline-flex items-center gap-1.5 text-[12.5px] font-semibold text-[#D97706] hover:text-[#F59E0B] active:text-[#B45309] transition-colors touch-manipulation"
         >
-          <div className="px-6 py-4 border-b border-white/[0.04] bg-white/[0.01]">
-            <h2 className="text-[14.5px] font-semibold text-[#EDE5D4] tracking-tight">
-              Edit Profile
-            </h2>
-          </div>
+          <Camera className="w-3.5 h-3.5" />
+          Change photo
+        </button>
+      </div>
+    </div>
+    
+    {/* Meta Pills */}
+    <div className="px-5 sm:px-8 pb-6 flex items-center gap-2 flex-wrap">
+      {user?.createdAt && (
+        <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-white/[0.03] border border-white/[0.05] text-[11px] text-[#A8A29E]">
+          <Calendar className="w-3.5 h-3.5 opacity-70" />
+          Joined {memberSince(user.createdAt)}
+        </div>
+      )}
+    </div>
+  </div>
+</motion.div>
 
+{/* ── Edit profile section ──────────────────────── */}
+<motion.section
+  {...stagger(0.06)}
+  className="rounded-[24px] bg-[#14120F] border border-white/[0.06] overflow-hidden shadow-sm"
+>
+  <div className="px-6 py-4 border-b border-white/[0.04] bg-white/[0.01]">
+    <h2 className="text-[14.5px] font-semibold text-[#EDE5D4] tracking-tight">
+      Edit Profile
+    </h2>
+  </div>
           <form onSubmit={handleSaveProfile} className="p-6 space-y-5">
             <div className="space-y-2">
               <label className="block text-[11px] uppercase tracking-[0.16em] text-[#7A6F65] font-bold">
