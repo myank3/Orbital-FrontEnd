@@ -11,7 +11,6 @@ import {
   Film,
   Newspaper,
   RefreshCw,
-  ExternalLink,
 } from 'lucide-react';
 
 /* ────────────────────────────────────────────────────────── */
@@ -89,14 +88,12 @@ const SIGNALS_CSS = `
   .s-blink       { animation: s-blink 1.8s ease-in-out infinite; }
   .s-drift       { animation: s-drift 11s linear infinite; will-change: transform; }
 
-  /* Mobile portrait: slower rings, no scan line */
   @media (max-width: 767px) and (orientation: portrait) {
     .s-rotate     { animation-duration: 60s; }
     .s-rotate-rev { animation-duration: 44s; }
     .s-drift      { display: none; }
   }
 
-  /* Mobile landscape: panels go side-by-side, panel goes column */
   @media (orientation: landscape) and (max-width: 767px) {
     .signals-grid {
       grid-template-rows: 1fr !important;
@@ -184,7 +181,6 @@ function ChannelPanel({ channel, index, onOpen }: ChannelPanelProps) {
         border: '1px solid rgba(255,255,255,0.06)',
       }}
     >
-      {/* Ambient center glow */}
       <div
         aria-hidden
         className="pointer-events-none absolute inset-0"
@@ -192,7 +188,6 @@ function ChannelPanel({ channel, index, onOpen }: ChannelPanelProps) {
           background: `radial-gradient(circle at 50% 55%, rgba(${channel.accentRgb},0.10) 0%, transparent 55%)`,
         }}
       />
-      {/* Bottom bloom — brightens on hover */}
       <div
         aria-hidden
         className="pointer-events-none absolute inset-x-0 bottom-0 h-[55%] opacity-50 md:opacity-60 group-hover:opacity-100 transition-opacity duration-500"
@@ -201,7 +196,6 @@ function ChannelPanel({ channel, index, onOpen }: ChannelPanelProps) {
         }}
       />
 
-      {/* Corner brackets */}
       {(['tl', 'tr', 'bl', 'br'] as const).map((corner) => (
         <span
           key={corner}
@@ -219,11 +213,8 @@ function ChannelPanel({ channel, index, onOpen }: ChannelPanelProps) {
         />
       ))}
 
-      {/* ── Content ── */}
       <div className="signal-panel-inner relative z-10 flex h-full w-full items-center gap-3 p-3 md:flex-col md:justify-center md:gap-0 md:p-7">
-        {/* Orbital icon block */}
         <div className="signal-orbital relative shrink-0 flex items-center justify-center w-[100px] h-[100px] sm:w-[120px] sm:h-[120px] md:w-[240px] md:h-[240px]">
-          {/* Outer rotating ring + satellites */}
           <div
             aria-hidden
             className="absolute inset-0 rounded-full border border-dashed s-rotate pointer-events-none"
@@ -242,7 +233,6 @@ function ChannelPanel({ channel, index, onOpen }: ChannelPanelProps) {
             />
           </div>
 
-          {/* Inner counter-rotating ring + satellite */}
           <div
             aria-hidden
             className="absolute inset-[20%] rounded-full border s-rotate-rev pointer-events-none"
@@ -254,7 +244,6 @@ function ChannelPanel({ channel, index, onOpen }: ChannelPanelProps) {
             />
           </div>
 
-          {/* Icon with pulse rings */}
           <div className="relative">
             <span
               aria-hidden
@@ -284,9 +273,7 @@ function ChannelPanel({ channel, index, onOpen }: ChannelPanelProps) {
           </div>
         </div>
 
-        {/* Text block */}
         <div className="signal-panel-text flex-1 min-w-0 text-left md:text-center md:flex-none md:mt-4">
-          {/* Kicker + live pill */}
           <div className="signal-kicker-row flex items-center gap-2 mb-1 md:justify-center md:mb-2">
             <span
               className="text-[8.5px] md:text-[10px] font-bold tracking-[0.28em] uppercase whitespace-nowrap"
@@ -305,7 +292,6 @@ function ChannelPanel({ channel, index, onOpen }: ChannelPanelProps) {
             </span>
           </div>
 
-          {/* Title */}
           <h2
             className="text-[22px] sm:text-[26px] md:text-[40px] font-medium text-[#EDE5D4] tracking-[-0.02em] leading-[1.02]"
             style={{ fontFamily: '"Instrument Serif", Georgia, serif' }}
@@ -313,12 +299,10 @@ function ChannelPanel({ channel, index, onOpen }: ChannelPanelProps) {
             {channel.title}
           </h2>
 
-          {/* Subtitle */}
           <p className="signal-subtitle text-[11.5px] md:text-[13px] text-[#A8A29E] leading-snug mt-1 md:mt-2 max-w-[280px] md:max-w-[260px] md:mx-auto">
             {channel.subtitle}
           </p>
 
-          {/* CTA — desktop only */}
           <div className="hidden md:inline-flex items-center gap-2 h-9 px-4 rounded-full border mt-4 transition-all duration-300 group-hover:gap-2.5"
             style={{
               borderColor: `rgba(${channel.accentRgb},0.35)`,
@@ -394,7 +378,7 @@ function AmbientBackground() {
 }
 
 /* ────────────────────────────────────────────────────────── */
-/* Viewer                                                     */
+/* Viewer — full screen with premium floating controls        */
 /* ────────────────────────────────────────────────────────── */
 
 interface ViewerProps {
@@ -403,7 +387,6 @@ interface ViewerProps {
   reloadKey: number;
   onClose: () => void;
   onReload: () => void;
-  onOpenNewTab: () => void;
   onLoaded: () => void;
 }
 
@@ -413,12 +396,23 @@ function Viewer({
   reloadKey,
   onClose,
   onReload,
-  onOpenNewTab,
   onLoaded,
 }: ViewerProps) {
-  const Icon = channel.icon;
   return (
-    <div className="relative h-full w-full bg-[#0B0A08]">
+    <div
+      className="relative h-full w-full overflow-hidden"
+      style={{ backgroundColor: '#0B0A09' }}
+    >
+      {/* Thin accent line at very top — native panel frame */}
+      <div
+        aria-hidden
+        className="absolute top-0 left-0 right-0 h-[2px] z-20 pointer-events-none"
+        style={{
+          background: `linear-gradient(90deg, transparent 0%, rgba(${channel.accentRgb},0.6) 50%, transparent 100%)`,
+        }}
+      />
+
+      {/* Full-screen iframe */}
       <iframe
         key={`${channel.id}-${reloadKey}`}
         src={channel.url}
@@ -430,61 +424,72 @@ function Viewer({
         referrerPolicy="no-referrer-when-downgrade"
       />
 
-      {/* Floating chrome pill */}
-      <div
-        className="absolute top-2 left-1/2 -translate-x-1/2 z-30 flex items-center gap-0.5 h-9 md:h-10 px-1.5 rounded-full bg-[#0F0D0A] border border-white/[0.10] shadow-[0_12px_32px_-8px_rgba(0,0,0,0.9)] max-w-[calc(100%-24px)]"
-        role="toolbar"
-        aria-label="Signal controls"
+      {/* ── Floating back pill — glass, with label ── */}
+      <button
+        type="button"
+        onClick={onClose}
+        className="absolute z-30 h-11 pl-2 pr-4 rounded-full flex items-center gap-2.5
+                   bg-[#0B0A09]/80 backdrop-blur-xl
+                   border border-white/[0.12]
+                   shadow-[0_8px_24px_-4px_rgba(0,0,0,0.85),inset_0_1px_0_rgba(255,255,255,0.08)]
+                   text-[#EDE5D4]
+                   hover:bg-[#0B0A09]/95 hover:border-white/[0.2]
+                   active:scale-[0.97]
+                   transition-all duration-200 touch-manipulation"
+        style={{
+          top: 'calc(0.75rem + env(safe-area-inset-top, 0px))',
+          left: 'calc(0.75rem + env(safe-area-inset-left, 0px))',
+        }}
+        aria-label="Back to Signals"
+        title="Back to Signals"
       >
-        <button
-          type="button"
-          onClick={onClose}
-          className="shrink-0 w-7 h-7 rounded-full flex items-center justify-center text-[#A8A29E] hover:text-[#EDE5D4] hover:bg-white/[0.06] active:bg-white/[0.10] transition-colors touch-manipulation"
-          aria-label="Back to Signals"
-          title="Back to Signals"
+        {/* Circular arrow badge */}
+        <span
+          className="w-7 h-7 rounded-full flex items-center justify-center shrink-0
+                     bg-white/[0.06] border border-white/[0.08]"
         >
-          <ArrowLeft className="w-3.5 h-3.5 md:w-4 md:h-4" />
-        </button>
-
-        <span aria-hidden className="w-px h-5 bg-white/[0.08] shrink-0" />
-
-        <div className="flex items-center gap-1.5 px-2 shrink-0 max-w-[160px]">
-          <Icon
-            className="w-3.5 h-3.5 shrink-0"
-            style={{ color: channel.accent }}
+          <ArrowLeft
+            className="w-3.5 h-3.5"
+            strokeWidth={2.2}
           />
-          <span className="text-[11.5px] md:text-[12px] font-semibold text-[#EDE5D4] tracking-tight truncate">
-            {channel.shortTitle}
-          </span>
-          <span
-            className="w-1.5 h-1.5 rounded-full s-blink shrink-0"
-            style={{ background: '#22C55E' }}
-          />
-        </div>
+        </span>
+        <span className="text-[12.5px] font-semibold tracking-tight whitespace-nowrap">
+          Satellite
+        </span>
+      </button>
 
-        <span aria-hidden className="w-px h-5 bg-white/[0.08] shrink-0" />
+      {/* ── Floating reload circle — glass, spins when loading or hovered ── */}
+      <button
+        type="button"
+        onClick={onReload}
+        disabled={isLoading}
+        className="absolute z-30 w-11 h-11 rounded-full flex items-center justify-center
+                   bg-[#0B0A09]/80 backdrop-blur-xl
+                   border border-white/[0.12]
+                   shadow-[0_8px_24px_-4px_rgba(0,0,0,0.85),inset_0_1px_0_rgba(255,255,255,0.08)]
+                   text-[#EDE5D4]
+                   hover:bg-[#0B0A09]/95 hover:border-white/[0.2]
+                   active:scale-90
+                   disabled:opacity-60 disabled:cursor-wait
+                   transition-all duration-200 touch-manipulation group"
+        style={{
+          top: 'calc(0.75rem + env(safe-area-inset-top, 0px))',
+          right: 'calc(0.75rem + env(safe-area-inset-right, 0px))',
+        }}
+        aria-label="Reload channel"
+        title="Reload channel"
+      >
+        <RefreshCw
+          className={`w-4 h-4 ${
+            isLoading
+              ? 'animate-spin'
+              : 'transition-transform duration-500 group-hover:rotate-180'
+          }`}
+          strokeWidth={2}
+        />
+      </button>
 
-        <button
-          type="button"
-          onClick={onReload}
-          className="shrink-0 w-7 h-7 rounded-full flex items-center justify-center text-[#A8A29E] hover:text-[#EDE5D4] hover:bg-white/[0.06] active:bg-white/[0.10] transition-colors touch-manipulation"
-          aria-label="Reload"
-          title="Reload"
-        >
-          <RefreshCw className="w-3.5 h-3.5" />
-        </button>
-
-        <button
-          type="button"
-          onClick={onOpenNewTab}
-          className="shrink-0 w-7 h-7 rounded-full flex items-center justify-center text-[#A8A29E] hover:text-[#EDE5D4] hover:bg-white/[0.06] active:bg-white/[0.10] transition-colors touch-manipulation"
-          aria-label="Open in new tab"
-          title="Open in new tab"
-        >
-          <ExternalLink className="w-3.5 h-3.5" />
-        </button>
-      </div>
-
+      {/* Loading overlay */}
       <AnimatePresence>
         {isLoading && (
           <motion.div
@@ -492,7 +497,7 @@ function Viewer({
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             transition={{ duration: 0.35 }}
-            className="absolute inset-0 z-20 flex flex-col items-center justify-center bg-[#0B0A08] pointer-events-none"
+            className="absolute inset-0 z-20 flex flex-col items-center justify-center bg-[#0B0A09] pointer-events-none"
           >
             <div className="relative w-16 h-16 md:w-20 md:h-20 mb-5">
               <div
@@ -554,10 +559,6 @@ export default function SignalsPage() {
     setIsLoading(true);
     setReloadKey((k) => k + 1);
   };
-  const openInNewTab = () => {
-    if (!activeSignal) return;
-    window.open(CHANNELS[activeSignal].url, '_blank', 'noopener,noreferrer');
-  };
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -585,7 +586,6 @@ export default function SignalsPage() {
             transition={{ duration: 0.2 }}
             className="relative z-10 h-full w-full flex flex-col p-2 md:p-3 gap-2 md:gap-3"
           >
-            {/* HUD row — always inline, never floating */}
             <div className="shrink-0 h-9 flex items-center justify-between gap-2">
               <button
                 type="button"
@@ -603,7 +603,6 @@ export default function SignalsPage() {
               </div>
             </div>
 
-            {/* Panels — stacked portrait, side-by-side landscape/desktop */}
             <div className="signals-grid flex-1 min-h-0 grid grid-rows-2 gap-2 md:grid-rows-1 md:grid-cols-2 md:gap-3">
               <div className="min-h-0">
                 <ChannelPanel
@@ -636,7 +635,6 @@ export default function SignalsPage() {
               reloadKey={reloadKey}
               onClose={close}
               onReload={reload}
-              onOpenNewTab={openInNewTab}
               onLoaded={() => setIsLoading(false)}
             />
           </motion.div>

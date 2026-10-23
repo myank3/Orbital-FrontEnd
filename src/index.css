@@ -3,7 +3,7 @@
 
 /* ──────────────────────────────────────────────────────────
    Focus ring strategy
-   - Mouse click: no outline anywhere (kills stray amber rectangles)
+   - Mouse click: no outline anywhere
    - Keyboard tab: amber ring for accessibility
    ────────────────────────────────────────────────────────── */
 
@@ -17,41 +17,93 @@
   border-radius: 6px;
 }
 
-/* Firefox: remove inner dotted line */
 *::-moz-focus-inner {
   border: 0;
 }
 
 /* ──────────────────────────────────────────────────────────
-   Base styles
+   Base styles — grain-free dark
    ────────────────────────────────────────────────────────── */
 
 html,
 body,
 #root {
   height: 100%;
-  background-color: #0B0A08;
-  color: #EDE5D4;
+  background-color: #0C0B09;
+  color: #D4CCBC;
 }
 
 body {
   margin: 0;
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto',
     'Helvetica Neue', Arial, sans-serif;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
+
+  /*
+   * `auto` lets the OS pick subpixel-AA on displays that support it.
+   * Forcing `antialiased` on dark backgrounds produces grainy text.
+   */
+  -webkit-font-smoothing: auto;
+  -moz-osx-font-smoothing: auto;
+
+  /*
+   * CRITICAL: geometricPrecision, NOT optimizeLegibility.
+   * optimizeLegibility triggers subpixel glyph positioning on Android
+   * WebView, which produces visible color fringing on every character —
+   * the #1 cause of "grainy text". geometricPrecision uses smooth
+   * grayscale AA with proper glyph metrics.
+   */
+  text-rendering: geometricPrecision;
+
+  /*
+   * kern + liga only. No calt — contextual alternates substitute glyphs
+   * at small sizes which adds visible noise to UI text.
+   */
+  font-feature-settings: "kern" 1, "liga" 1;
 }
 
-/* Selection color — matches the amber accent */
+/* ──────────────────────────────────────────────────────────
+   TEXT GRAIN KILLER — dim every palette color globally
+   Contrast drops from 15.9:1 → 11.2:1 (the sweet spot for dark UI)
+   ────────────────────────────────────────────────────────── */
+
+/* Primary text: #EDE5D4 → #D4CCBC */
+.text-\[\#EDE5D4\] {
+  color: #D4CCBC !important;
+}
+
+/* Secondary text: #A8A29E → #8E8780 */
+.text-\[\#A8A29E\] {
+  color: #8E8780 !important;
+}
+
+/* Tertiary text: #6B6259 → #5A5450 */
+.text-\[\#6B6259\] {
+  color: #5A5450 !important;
+}
+
+/* Quaternary text: #7A6F65 → #6A615A */
+.text-\[\#7A6F65\] {
+  color: #6A615A !important;
+}
+
+/* Deep muted: #5A524A → #4A443E */
+.text-\[\#5A524A\] {
+  color: #4A443E !important;
+}
+
+/* Selection color — subtle amber, not bright */
 ::selection {
-  background-color: rgba(217, 119, 6, 0.35);
-  color: #EDE5D4;
+  background-color: rgba(217, 119, 6, 0.22);
+  color: #F5EFE2;
 }
 
-/* Custom scrollbars, dark theme */
+/* ──────────────────────────────────────────────────────────
+   Scrollbars — simple, thin, single-color, no border tricks
+   ────────────────────────────────────────────────────────── */
+
 ::-webkit-scrollbar {
-  width: 10px;
-  height: 10px;
+  width: 8px;
+  height: 8px;
 }
 
 ::-webkit-scrollbar-track {
@@ -59,18 +111,14 @@ body {
 }
 
 ::-webkit-scrollbar-thumb {
-  background-color: rgba(255, 255, 255, 0.06);
-  border-radius: 8px;
-  border: 2px solid transparent;
-  background-clip: content-box;
+  background-color: rgba(255, 255, 255, 0.08);
+  border-radius: 4px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background-color: rgba(255, 255, 255, 0.12);
-  background-clip: content-box;
+  background-color: rgba(255, 255, 255, 0.14);
 }
 
-/* Firefox scrollbars */
 * {
   scrollbar-width: thin;
   scrollbar-color: rgba(255, 255, 255, 0.10) transparent;
@@ -78,13 +126,9 @@ body {
 
 /* ──────────────────────────────────────────────────────────
    Mobile-only app-like behavior
-   Only applies on touch devices (phones/tablets).
-   Desktop with mouse/trackpad is completely untouched.
    ────────────────────────────────────────────────────────── */
 
 @media (pointer: coarse), (hover: none) {
-  /* Kill text selection globally on touch devices.
-     Re-enabled only for inputs and textareas. */
   *,
   *::before,
   *::after {
@@ -95,7 +139,6 @@ body {
     -webkit-tap-highlight-color: transparent;
   }
 
-  /* Allow typing + selecting in form fields */
   input,
   textarea,
   [contenteditable='true'],
@@ -106,21 +149,18 @@ body {
     user-select: text;
   }
 
-  /* No long-press context menu on links, images, buttons */
   a,
   img,
   button {
     -webkit-touch-callout: none;
   }
 
-  /* Kill rubber-band overscroll */
   html,
   body {
     overscroll-behavior: none;
     -webkit-overflow-scrolling: touch;
   }
 
-  /* Prevent iOS's 300ms tap delay */
   button,
   a,
   input,
@@ -128,13 +168,20 @@ body {
     touch-action: manipulation;
   }
 }
+
 /* ────────────────────────────────────────────────────────── */
-/* Lightweight entrance animations (replaces motion/react)    */
+/* Lightweight entrance animations                             */
 /* ────────────────────────────────────────────────────────── */
 
 @keyframes orbital-fade-up {
-  from { opacity: 0; transform: translateY(8px); }
-  to   { opacity: 1; transform: translateY(0);   }
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 .orbital-fade-up {
@@ -142,5 +189,7 @@ body {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .orbital-fade-up { animation: none; }
+  .orbital-fade-up {
+    animation: none;
+  }
 }
