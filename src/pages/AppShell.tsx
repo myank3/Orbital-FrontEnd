@@ -196,47 +196,11 @@ const SHELL_CSS = `
   .route-back    { animation: route-back    260ms cubic-bezier(0.16,1,0.3,1) both; }
   .route-fade    { animation: route-fade    200ms ease-out both; }
 
-  /* ── App shell: premium smooth mesh-gradient ambient ── */
+  /* ── App shell: pure flat warm-black. No grain, no banding, no lines. ── */
   .app-shell {
     position: relative;
     isolation: isolate;
-    background-color: #09080A;
-    background-image:
-      /* Warm amber bloom — main light source, top-right */
-      radial-gradient(ellipse 2000px 1500px at 100% -25%,
-        rgba(217, 119, 6, 0.16) 0%,
-        rgba(217, 119, 6, 0.06) 25%,
-        rgba(217, 119, 6, 0.02) 50%,
-        transparent 75%),
-      /* Warm bounce — bottom-right corner */
-      radial-gradient(ellipse 1400px 1000px at 105% 110%,
-        rgba(180, 83, 9, 0.07) 0%,
-        transparent 60%),
-      /* Cool complementary tint — bottom-left */
-      radial-gradient(ellipse 1600px 1200px at -20% 105%,
-        rgba(79, 70, 229, 0.055) 0%,
-        transparent 55%),
-      /* Soft top-center highlight — depth */
-      radial-gradient(ellipse 900px 600px at 50% -15%,
-        rgba(255, 255, 255, 0.015) 0%,
-        transparent 70%);
-  }
-  /* Subtle top edge highlight for polish */
-  .app-shell::after {
-    content: '';
-    position: fixed;
-    top: 0;
-    left: 0;
-    right: 0;
-    height: 1px;
-    pointer-events: none;
-    z-index: 100;
-    background: linear-gradient(90deg,
-      transparent 0%,
-      rgba(255, 255, 255, 0.05) 30%,
-      rgba(255, 255, 255, 0.08) 50%,
-      rgba(255, 255, 255, 0.05) 70%,
-      transparent 100%);
+    background-color: #0B0A09;
   }
 
   .app-shell button,
@@ -335,7 +299,6 @@ function AppShell(): React.JSX.Element {
       return false;
     };
 
-    // Primary: focus tracking (works on Android WebView adjustResize)
     const onFocusIn = (e: FocusEvent) => {
       if (isEditable(e.target as Element)) {
         setKeyboardOpen(true);
@@ -343,7 +306,6 @@ function AppShell(): React.JSX.Element {
     };
 
     const onFocusOut = () => {
-      // Small delay to allow the browser to move focus to the next input
       window.setTimeout(() => {
         if (!isEditable(document.activeElement)) {
           setKeyboardOpen(false);
@@ -354,7 +316,6 @@ function AppShell(): React.JSX.Element {
     document.addEventListener('focusin', onFocusIn);
     document.addEventListener('focusout', onFocusOut);
 
-    // Secondary: visualViewport gap check (works on iOS & adjustPan)
     const vv = window.visualViewport;
     const checkVV = () => {
       if (!vv) return;
@@ -562,7 +523,7 @@ function AppShell(): React.JSX.Element {
     const el = mainRef.current;
     if (!el) return;
     if (getTabIndex(location.pathname) < 0) return;
-    if (keyboardOpen) return; // don't swipe while typing
+    if (keyboardOpen) return;
 
     let active = false;
     let startX = 0;
@@ -770,8 +731,8 @@ function AppShell(): React.JSX.Element {
       <aside
         ref={drawerRef}
         className="drawer-panel shell-drawer fixed inset-y-0 left-0 z-40 w-[280px]
-                   bg-[#0E0C09] border-r border-white/[0.07]
-                   shadow-[6px_0_24px_-8px_rgba(0,0,0,0.5)]
+                   bg-[#0B0A09] border-r border-white/[0.06]
+                   shadow-[6px_0_24px_-8px_rgba(0,0,0,0.6)]
                    flex flex-col md:hidden overscroll-contain"
         style={{
           transform: `translate3d(-${DRAWER_W}px,0,0)`,
@@ -790,7 +751,7 @@ function AppShell(): React.JSX.Element {
           <span className="h-1 w-9 rounded-full bg-white/[0.18]" aria-hidden />
         </div>
 
-        <div className="h-14 px-4 border-b border-white/[0.06] flex items-center justify-between shrink-0">
+        <div className="h-14 px-4 flex items-center justify-between shrink-0">
           <Link
             to="/app/orbit"
             onClick={closeDrawer}
@@ -843,10 +804,10 @@ function AppShell(): React.JSX.Element {
             transition: 'width 260ms cubic-bezier(0.16, 1, 0.3, 1)',
           }}
           className="shell-rail absolute inset-y-0 left-0 flex flex-col overflow-hidden z-30
-                     bg-[#0C0A08]/85 backdrop-blur-md border-r border-white/[0.07]
-                     shadow-[10px_0_50px_-15px_rgba(0,0,0,0.9),inset_-1px_0_0_rgba(255,255,255,0.02)]"
+                     bg-[#0B0A09] border-r border-white/[0.06]
+                     shadow-[10px_0_50px_-15px_rgba(0,0,0,0.9)]"
         >
-          <div className="h-16 flex items-center px-4 shrink-0 border-b border-white/[0.06]">
+          <div className="h-16 flex items-center px-4 shrink-0">
             <Link
               to="/app/orbit"
               className="flex items-baseline gap-2 select-none whitespace-nowrap group"
@@ -880,7 +841,7 @@ function AppShell(): React.JSX.Element {
             </div>
           </nav>
 
-          <div className="py-3 px-2 border-t border-white/[0.06]">
+          <div className="py-3 px-2">
             <div className="relative mt-1">
               <button
                 onClick={(e) => {
@@ -980,9 +941,10 @@ function AppShell(): React.JSX.Element {
 
       {/* ─── MAIN COLUMN ─── */}
       <div className="flex-1 flex flex-col h-screen overflow-hidden min-w-0 relative">
+        {/* Mobile header — NO border, NO blur, transparent so it merges with shell */}
         {!hideMobileChrome && (
           <header
-            className="md:hidden h-14 bg-[#0E0C09]/85 backdrop-blur-md border-b border-white/[0.06] px-4 flex items-center justify-between shrink-0"
+            className="md:hidden bg-transparent px-4 flex items-center justify-between shrink-0"
             style={{
               paddingTop: 'env(safe-area-inset-top, 0px)',
               height: 'calc(3.5rem + env(safe-area-inset-top, 0px))',
@@ -1006,7 +968,7 @@ function AppShell(): React.JSX.Element {
         )}
 
         {incomingCall && (
-          <div className="shrink-0 z-30 px-4 sm:px-6 py-3 bg-[#0F0D0A] border-b border-[#22C55E]/30 shadow-[0_10px_30px_-10px_rgba(34,197,94,0.15)]">
+          <div className="shrink-0 z-30 px-4 sm:px-6 py-3 bg-[#0B0A09] border-b border-[#22C55E]/30 shadow-[0_10px_30px_-10px_rgba(34,197,94,0.15)]">
             <div className="flex items-center justify-between gap-4">
               <div className="flex items-center gap-3 min-w-0">
                 <div className="call-pulse w-10 h-10 rounded-full bg-[#22C55E]/15 border border-[#22C55E]/30 text-[#22C55E] flex items-center justify-center shrink-0 shadow-[0_0_20px_rgba(34,197,94,0.3)]">
@@ -1053,7 +1015,7 @@ function AppShell(): React.JSX.Element {
 
         {!hideMobileChrome && (
           <nav
-            className={`md:hidden fixed bottom-0 left-0 right-0 bg-[#0C0A08]/95 backdrop-blur-xl border-t border-white/[0.06] z-40 transition-transform duration-200 ease-out ${
+            className={`md:hidden fixed bottom-0 left-0 right-0 bg-[#0B0A09] z-40 transition-transform duration-200 ease-out ${
               keyboardOpen ? 'translate-y-full' : 'translate-y-0'
             }`}
             style={{
@@ -1098,7 +1060,7 @@ function AppShell(): React.JSX.Element {
                 ))}
               </div>
 
-              <div className="relative flex items-center justify-center w-14 h-16 shrink-0 bg-[#0C0A08]/60 shadow-[-10px_0_15px_-3px_rgba(12,10,8,0.6)] z-20">
+              <div className="relative flex items-center justify-center w-14 h-16 shrink-0 bg-[#0B0A09] z-20">
                 <button
                   onClick={(e) => {
                     e.stopPropagation();
