@@ -123,6 +123,7 @@ interface NavItem {
 }
 
 const DRAWER_W = 280;
+const MOBILE_HEADER_H = 40;   // collapsed height, in px (no safe-area)
 
 const TAB_ROUTES = [
   '/app/dm',
@@ -170,7 +171,6 @@ const SHELL_CSS = `
     backface-visibility: hidden;
   }
 
-  /* Downward-opening popover — used by the mobile header avatar menu. */
   @keyframes menu-pop-down {
     from { opacity: 0; transform: translate3d(0, -6px, 0) scale(0.98); }
     to   { opacity: 1; transform: translate3d(0, 0, 0) scale(1); }
@@ -234,25 +234,50 @@ const SHELL_CSS = `
     touch-action: pan-y;
   }
 
-  /* ── Visual viewport vars — driven by the vv hook below.
-        --vv-gap    = keyboard height (0 when closed)
-        --vv-height = visualViewport.height (visible area)
-     ── */
+  /* ── Visual viewport vars ── */
   :root {
     --vv-gap: 0px;
     --vv-height: 100vh;
   }
 
-  /* ── Content bottom = nav reserve, shrinking 1:1 with keyboard.
-        On desktop, the media query below doesn't match, so no padding. ── */
+  /* ── Mobile header — auto-hiding, floats above the main content.
+        Uses position: absolute so the main column gets its full
+        height back when the header translates away. ── */
   @media (max-width: 767px) {
+    .shell-mobile-header {
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      z-index: 30;
+      transform: translate3d(0, 0, 0);
+      transition: transform 220ms cubic-bezier(0.22, 1, 0.36, 1),
+                  opacity   180ms ease-out;
+      will-change: transform;
+    }
+
+    .shell-mobile-header.is-hidden {
+      transform: translate3d(0, calc(-100% - env(safe-area-inset-top, 0px)), 0);
+      opacity: 0;
+      pointer-events: none;
+    }
+
     .shell-main-with-nav {
       padding-bottom: max(0px, 4rem - var(--vv-gap, 0px));
     }
 
-    /* ── Chat detail top gap — DM detail and Group detail only.
-          Adds breathing room from the punch-hole / status bar while
-          keeping the pane near-fullscreen. */
+    /* Reserve space for the header only when it's visible.
+       The padding shrinks to 0 as soon as the header slides out. */
+    .shell-main-with-header {
+      padding-top: calc(${MOBILE_HEADER_H}px + env(safe-area-inset-top, 0px));
+      transition: padding-top 220ms cubic-bezier(0.22, 1, 0.36, 1);
+    }
+
+    .shell-main-with-header.is-header-hidden {
+      padding-top: env(safe-area-inset-top, 0px);
+    }
+
+    /* Chat detail top gap — DM detail and Group detail only. */
     .shell-main-chat-gap {
       padding-top: calc(env(safe-area-inset-top, 0px) + 10px);
     }
@@ -264,6 +289,8 @@ const SHELL_CSS = `
       animation: none !important;
     }
     .drawer-panel { transition: none !important; }
+    .shell-mobile-header { transition: none !important; }
+    .shell-main-with-header { transition: none !important; }
   }
 `;
 
@@ -275,11 +302,6 @@ function isFullScreenRoute(pathname: string): boolean {
   return isDmDetail || isGroupDetail || isSignals;
 }
 
-/**
- * Chat detail routes (DM conversation, group conversation) get the
- * top-gap treatment. Signals (also a full-screen route) keeps its
- * edge-to-edge layout since it has its own self-contained chrome.
- */
 function isChatDetailRoute(pathname: string): boolean {
   const isDmDetail = pathname.startsWith('/app/dm/') && pathname !== '/app/dm';
   const isGroupDetail =
@@ -311,6 +333,10 @@ function AppShell(): React.JSX.Element {
   const [mobileUserMenuOpen, setMobileUserMenuOpen] = useState(false);
   const [callerName, setCallerName] = useState<string | null>(null);
   const [keyboardOpen, setKeyboardOpen] = useState(false);
+  const [headerHidden, setHeaderHidden] = useState(false);
+
+  const headerHiddenRef = useRef(false);
+  headerHiddenRef.current = headerHidden;
 
   const drawerOpenRef = useRef(false);
   const openDrawerRef = useRef<() => void>(() => {});
@@ -338,8 +364,7 @@ function AppShell(): React.JSX.Element {
   openDrawerRef.current = openDrawer;
   closeDrawerRef.current = closeDrawer;
 
-  /* ── Keyboard tracking — visualViewport is the single source of truth.
-        Drives two CSS vars on :root every frame (~60fps). ── */
+  /* ── Keyboard tracking ── */
   useEffect(() => {
     const vv = window.visualViewport;
     if (!vv) return;
@@ -371,11 +396,60 @@ function AppShell(): React.JSX.Element {
     };
   }, []);
 
+  /* ── Reset on route change: close drawer, reset header to visible ── */
   useEffect(() => {
     closeDrawerRef.current();
     setMobileUserMenuOpen(false);
     setUserMenuOpen(false);
+    setHeaderHidden(false);
   }, [location.pathname]);
+
+  /* ── Auto-hide header on scroll down, reveal on scroll up.
+        Listens on the main scroll container; hysteresis prevents jitter. ── */
+  useEffect(() => {
+    const el = mainRef.current;
+    if (!el) return;
+    if (window.innerWidth >= 768) return;
+    if (hideMobileChrome) return;
+
+    let lastY = el.scrollTop;
+    let accumulated = 0;
+    const THRESHOLD = 24;    // px scrolled in one direction to flip state
+    const TOP_REVEAL_ZONE = 56; // always reveal when near the top
+
+    const onScroll = () => {
+      const y = el.scrollTop;
+
+      // Near top → always reveal. Covers pull-to-refresh and return-to-top.
+      if (y < TOP_REVEAL_ZONE) {
+        if (headerHiddenRef.current) setHeaderHidden(false);
+        lastY = y;
+        accumulated = 0;
+        return;
+      }
+
+      const dy = y - lastY;
+      lastY = y;
+
+      // Same-direction deltas accumulate; opposite-direction deltas reset.
+      if ((dy > 0 && accumulated >= 0) || (dy < 0 && accumulated <= 0)) {
+        accumulated += dy;
+      } else {
+        accumulated = dy;
+      }
+
+      if (!headerHiddenRef.current && accumulated > THRESHOLD) {
+        setHeaderHidden(true);
+        accumulated = 0;
+      } else if (headerHiddenRef.current && accumulated < -THRESHOLD) {
+        setHeaderHidden(false);
+        accumulated = 0;
+      }
+    };
+
+    el.addEventListener('scroll', onScroll, { passive: true });
+    return () => el.removeEventListener('scroll', onScroll);
+  }, [location.pathname, hideMobileChrome]);
 
   useEffect(() => {
     const id = incomingCall?.initiatorId;
@@ -672,7 +746,6 @@ function AppShell(): React.JSX.Element {
     [],
   );
 
-  /* Bottom nav — 4 tabs matching TAB_ROUTES so swipes and taps stay in sync. */
   const allNav = useMemo(
     () => [
       ...primaryNav,
@@ -744,6 +817,8 @@ function AppShell(): React.JSX.Element {
     ind.style.width = `${tr.width}px`;
     ind.style.transform = `translate3d(${tr.left - wr.left}px, 0, 0)`;
   }, [location.pathname, allNav, hideMobileChrome]);
+
+  const headerIsHidden = headerHidden && !hideMobileChrome;
 
   return (
     <div
@@ -978,22 +1053,24 @@ function AppShell(): React.JSX.Element {
 
       {/* ─── MAIN COLUMN ─── */}
       <div className="flex-1 flex flex-col overflow-hidden min-w-0 relative">
-        {/* Mobile header — no branding, no redundant title. Slim functional
-            chrome: hamburger (left) + user avatar (right). Native-app pattern. */}
+        {/* Mobile header — absolute positioned, auto-hides on scroll.
+            No branding. Hamburger left, avatar right. 40px tall. */}
         {!hideMobileChrome && (
           <header
-            className="md:hidden bg-transparent px-3 flex items-center justify-between shrink-0"
+            className={`shell-mobile-header md:hidden bg-[#0B0A09] px-3 flex items-center justify-between ${
+              headerIsHidden ? 'is-hidden' : ''
+            }`}
             style={{
               paddingTop: 'env(safe-area-inset-top, 0px)',
-              height: 'calc(3rem + env(safe-area-inset-top, 0px))',
+              height: `calc(${MOBILE_HEADER_H}px + env(safe-area-inset-top, 0px))`,
             }}
           >
             <button
               onClick={openDrawer}
-              className="p-2 -ml-1 rounded-md text-[#A8A29E] active:bg-white/[0.08] hover:bg-white/[0.06] transition-colors touch-manipulation"
+              className="p-1.5 -ml-1 rounded-md text-[#A8A29E] active:bg-white/[0.08] hover:bg-white/[0.06] transition-colors touch-manipulation"
               aria-label="Open menu"
             >
-              <Menu className="w-5 h-5" strokeWidth={1.8} />
+              <Menu className="w-[18px] h-[18px]" strokeWidth={1.8} />
             </button>
 
             <button
@@ -1001,7 +1078,7 @@ function AppShell(): React.JSX.Element {
                 e.stopPropagation();
                 setMobileUserMenuOpen((v) => !v);
               }}
-              className={`flex items-center justify-center w-10 h-10 -mr-1 rounded-full transition-colors touch-manipulation ${
+              className={`flex items-center justify-center p-1 rounded-full transition-colors touch-manipulation ${
                 mobileUserMenuOpen ? 'bg-white/[0.08]' : ''
               }`}
               aria-haspopup="menu"
@@ -1018,8 +1095,6 @@ function AppShell(): React.JSX.Element {
           </header>
         )}
 
-        {/* Mobile user menu — portaled so it can escape the main column's
-            overflow-hidden when it drops down from the header avatar. */}
         {!hideMobileChrome && mobileUserMenuOpen &&
           createPortal(
             <>
@@ -1031,7 +1106,7 @@ function AppShell(): React.JSX.Element {
               <div
                 className="menu-pop-down-right fixed right-3 w-[220px] rounded-2xl bg-[#131110] border border-white/[0.1] shadow-[0_20px_60px_-12px_rgba(0,0,0,0.95),inset_0_1px_0_rgba(255,255,255,0.05)] overflow-hidden z-50"
                 style={{
-                  top: 'calc(env(safe-area-inset-top, 0px) + 3rem + 8px)',
+                  top: `calc(env(safe-area-inset-top, 0px) + ${MOBILE_HEADER_H}px + 8px)`,
                 }}
                 onClick={() => setMobileUserMenuOpen(false)}
                 role="menu"
@@ -1128,7 +1203,11 @@ function AppShell(): React.JSX.Element {
           ref={mainRef}
           key={location.pathname}
           className={`tab-swipe-surface shell-main flex-1 overflow-y-auto bg-transparent relative custom-scrollbar overscroll-contain ${routeAnim} ${
-            !hideMobileChrome ? 'shell-main-with-nav' : ''
+            !hideMobileChrome
+              ? `shell-main-with-nav shell-main-with-header ${
+                  headerIsHidden ? 'is-header-hidden' : ''
+                }`
+              : ''
           } ${chatDetail ? 'shell-main-chat-gap' : ''}`}
         >
           <Outlet />
