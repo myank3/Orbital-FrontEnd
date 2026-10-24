@@ -222,6 +222,23 @@ const SHELL_CSS = `
     touch-action: pan-y;
   }
 
+  /* ── Visual viewport vars — driven by the vv hook below.
+        --vv-gap    = keyboard height (0 when closed)
+        --vv-height = visualViewport.height (visible area)
+     ── */
+  :root {
+    --vv-gap: 0px;
+    --vv-height: 100vh;
+  }
+
+  /* ── Content bottom = nav reserve, shrinking 1:1 with keyboard.
+        On desktop, the media query below doesn't match, so no padding. ── */
+  @media (max-width: 767px) {
+    .shell-main-with-nav {
+      padding-bottom: max(0px, 4rem - var(--vv-gap, 0px));
+    }
+  }
+
   @media (prefers-reduced-motion: reduce) {
     .signal-shine, .call-pulse, .menu-pop, .menu-pop-right,
     .tab-next, .tab-prev, .route-forward, .route-back, .route-fade {
@@ -289,58 +306,44 @@ function AppShell(): React.JSX.Element {
   openDrawerRef.current = openDrawer;
   closeDrawerRef.current = closeDrawer;
 
-  /* ── Keyboard detection: focus tracking + visualViewport ── */
+  /* ── Keyboard tracking — visualViewport is the single source of truth.
+        Drives two CSS vars on :root every frame (~60fps). The shell height
+        and .shell-main-with-nav padding both consume them, so panes shrink
+        in lockstep with the OS keyboard animation. No focusin, no timers. ── */
   useEffect(() => {
-    const isEditable = (el: Element | null): boolean => {
-      if (!el) return false;
-      const tag = el.tagName;
-      if (tag === 'INPUT' || tag === 'TEXTAREA') return true;
-      if ((el as HTMLElement).isContentEditable) return true;
-      return false;
-    };
-
-    const onFocusIn = (e: FocusEvent) => {
-      if (isEditable(e.target as Element)) {
-        setKeyboardOpen(true);
-      }
-    };
-
-    const onFocusOut = () => {
-      window.setTimeout(() => {
-        if (!isEditable(document.activeElement)) {
-          setKeyboardOpen(false);
-        }
-      }, 100);
-    };
-
-    document.addEventListener('focusin', onFocusIn);
-    document.addEventListener('focusout', onFocusOut);
-
     const vv = window.visualViewport;
-    const checkVV = () => {
-      if (!vv) return;
-      const gap = window.innerHeight - vv.height;
-      if (gap > 150) {
-        setKeyboardOpen(true);
-      } else if (!isEditable(document.activeElement)) {
-        setKeyboardOpen(false);
-      }
+    if (!vv) return;
+
+    const root = document.documentElement;
+    let raf = 0;
+
+    const update = () => {
+      cancelAnimationFrame(raf);
+      raf = requestAnimationFrame(() => {
+        // Android: innerHeight = layout viewport (unchanged by keyboard),
+        //          vv.height shrinks → gap = keyboard height.
+        // iOS:     innerHeight - vv.height - vv.offsetTop gives keyboard height.
+        const gap = Math.max(0, window.innerHeight - vv.height - vv.offsetTop);
+
+        root.style.setProperty('--vv-gap', `${gap}px`);
+        root.style.setProperty('--vv-height', `${vv.height}px`);
+
+        // Hysteresis — prevents flicker around the threshold.
+        if (gap > 150) setKeyboardOpen(true);
+        else if (gap < 40) setKeyboardOpen(false);
+      });
     };
 
-    if (vv) {
-      vv.addEventListener('resize', checkVV);
-      vv.addEventListener('scroll', checkVV);
-    }
-    window.addEventListener('resize', checkVV);
+    vv.addEventListener('resize', update);
+    vv.addEventListener('scroll', update);
+    update();
 
     return () => {
-      document.removeEventListener('focusin', onFocusIn);
-      document.removeEventListener('focusout', onFocusOut);
-      if (vv) {
-        vv.removeEventListener('resize', checkVV);
-        vv.removeEventListener('scroll', checkVV);
-      }
-      window.removeEventListener('resize', checkVV);
+      cancelAnimationFrame(raf);
+      vv.removeEventListener('resize', update);
+      vv.removeEventListener('scroll', update);
+      root.style.removeProperty('--vv-gap');
+      root.style.removeProperty('--vv-height');
     };
   }, []);
 
@@ -714,8 +717,11 @@ function AppShell(): React.JSX.Element {
   return (
     <div
       ref={shellRef}
-      className="app-shell flex h-screen text-[#EDE5D4] overflow-hidden selection:bg-[#D97706]/30 selection:text-[#EDE5D4]"
-      style={{ overscrollBehaviorX: 'none' }}
+      className="app-shell flex text-[#EDE5D4] overflow-hidden selection:bg-[#D97706]/30 selection:text-[#EDE5D4]"
+      style={{
+        height: 'var(--vv-height, 100vh)',
+        overscrollBehaviorX: 'none',
+      }}
     >
       <style>{SHELL_CSS}</style>
 
@@ -940,7 +946,7 @@ function AppShell(): React.JSX.Element {
       </div>
 
       {/* ─── MAIN COLUMN ─── */}
-      <div className="flex-1 flex flex-col h-screen overflow-hidden min-w-0 relative">
+      <div className="flex-1 flex flex-col overflow-hidden min-w-0 relative">
         {/* Mobile header — NO border, NO blur, transparent so it merges with shell */}
         {!hideMobileChrome && (
           <header
@@ -1007,17 +1013,15 @@ function AppShell(): React.JSX.Element {
           ref={mainRef}
           key={location.pathname}
           className={`tab-swipe-surface shell-main flex-1 overflow-y-auto bg-transparent relative custom-scrollbar overscroll-contain ${routeAnim} ${
-            !hideMobileChrome ? (keyboardOpen ? 'pb-0' : 'pb-16') : ''
-          } md:pb-0`}
+            !hideMobileChrome ? 'shell-main-with-nav' : ''
+          }`}
         >
           <Outlet />
         </main>
 
         {!hideMobileChrome && (
           <nav
-            className={`md:hidden fixed bottom-0 left-0 right-0 bg-[#0B0A09] z-40 transition-transform duration-200 ease-out ${
-              keyboardOpen ? 'translate-y-full' : 'translate-y-0'
-            }`}
+            className="md:hidden fixed bottom-0 left-0 right-0 bg-[#0B0A09] z-40"
             style={{
               height: 'calc(4rem + env(safe-area-inset-bottom, 0px))',
               paddingBottom: 'env(safe-area-inset-bottom, 0px)',

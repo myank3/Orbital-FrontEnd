@@ -3,16 +3,32 @@
 
 /* ──────────────────────────────────────────────────────────
    Focus ring strategy
-   - Mouse click: no outline anywhere
-   - Keyboard tab: amber ring for accessibility
+   - Text fields (input / textarea / select / contenteditable):
+       NO global outline — they carry their own focus styling
+       at the component level (e.g. `focus:ring-2 ring-[#D97706]/25`).
+       Browsers fire :focus-visible on these even for mouse/touch
+       clicks, so a global rule double-paints on every click.
+   - Everything else: hairline warm-neutral ring, keyboard-only.
+   - Mouse click on buttons / links: no outline.
    ────────────────────────────────────────────────────────── */
 
 *:focus {
   outline: none;
 }
 
-*:focus-visible {
-  outline: 2px solid rgba(217, 119, 6, 0.6);
+/* Text-entry elements — kill the global outline outright.
+   Their component-level focus ring is the only indicator. */
+input,
+textarea,
+select,
+[contenteditable='true'] {
+  outline: none !important;
+}
+
+/* Minimal warm-neutral ring for keyboard tab.
+   Excludes text fields so clicks never trigger a visible ring. */
+*:focus-visible:not(input):not(textarea):not(select):not([contenteditable='true']) {
+  outline: 1.5px solid rgba(237, 229, 212, 0.28);
   outline-offset: 2px;
   border-radius: 6px;
 }
