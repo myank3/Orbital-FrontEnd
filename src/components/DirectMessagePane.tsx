@@ -171,9 +171,9 @@ function OfflineCallToast({ name, avatarUrl, type, onDismiss }: OfflineCallToast
 const INITIAL_HISTORY = 200;
 const HISTORY_STEP = 200;
 const POLL_LIMIT = 60;
-const POLL_INTERVAL_MS = 5000;
+const POLL_INTERVAL_MS = 20000;
+const SIGNALR_HEALTHY_MS = 25_000;
 const PANEL_HEIGHT = 'h-[300px]';
-
 /* ────────────────────────────────────────────────────────── */
 /* Themes                                                     */
 /* ────────────────────────────────────────────────────────── */
@@ -550,7 +550,10 @@ function pinnedKey(u?: string) { return `orbital.pinned.${u ?? 'anon'}`; }
 function mutedKey(u?: string) { return `orbital.muted.${u ?? 'anon'}`; }
 function reactionsKey(u?: string, p?: string) { return `orbital.reactions.${u ?? 'anon'}.${p ?? 'none'}`; }
 function hiddenDmsKey(u?: string) { return `orbital.hiddenDms.${u ?? 'anon'}`; }
-
+function previewStampKey(u?: string) { return `orbital.previewStamp.${u ?? 'anon'}`; }
+function readPreviewStamps(u?: string) { return lsGet<Record<string, number>>(previewStampKey(u), {}); }
+function writePreviewStamps(u: string | undefined, d: Record<string, number>) { lsSet(previewStampKey(u), d); }
+const PREVIEW_TTL_MS = 2 * 60_000;
 function readThemeFor(u?: string, p?: string): ChatThemeKey {
   const raw = lsGet<string | null>(themeKey(u, p), null);
   if (raw && raw in CHAT_THEMES) return raw as ChatThemeKey;
@@ -1652,12 +1655,25 @@ function ThemeGrid({ current, onSelect }: { current: ChatThemeKey; onSelect: (k:
 const WAVE_BARS = Array.from({ length: 24 }).map((_, i) =>
   Math.max(4, Math.min(24, 18 + Math.sin(i * 0.7) * 10 + (i % 3) * 4)),
 );
-
 function VoiceBubble({ url, isMe, theme }: { url: string; isMe: boolean; theme: ChatTheme }) {
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const [inView, setInView] = useState(false);
   const [playing, setPlaying] = useState(false);
   const [progress, setProgress] = useState(0);
   const [duration, setDuration] = useState(0);
+
+  // Lazy gate: no network until bubble is ~200px from viewport.
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const io = new IntersectionObserver(
+      ([entry]) => { if (entry.isIntersecting) { setInView(true); io.disconnect(); } },
+      { rootMargin: '200px 0px' },
+    );
+    io.observe(el);
+    return () => io.disconnect();
+  }, []);
 
   useEffect(() => {
     const a = audioRef.current;
@@ -1687,6 +1703,7 @@ function VoiceBubble({ url, isMe, theme }: { url: string; isMe: boolean; theme: 
 
   return (
     <div
+      ref={containerRef}
       className={`inline-flex items-center gap-3 px-3.5 py-2.5 rounded-[22px] select-none ${
         isMe ? theme.bubbleSent : theme.bubbleReceived
       } min-w-[220px] max-w-[280px]`}
@@ -1713,11 +1730,7 @@ function VoiceBubble({ url, isMe, theme }: { url: string; isMe: boolean; theme: 
             <span
               key={i}
               className="w-[2.5px] rounded-full"
-              style={{
-                height: `${h}px`,
-                background: 'currentColor',
-                opacity: (i / 24) * 100 <= pct ? 1 : 0.3,
-              }}
+              style={{ height: `${h}px`, background: 'currentColor', opacity: (i / 24) * 100 <= pct ? 1 : 0.3 }}
             />
           ))}
         </div>
@@ -1730,7 +1743,7 @@ function VoiceBubble({ url, isMe, theme }: { url: string; isMe: boolean; theme: 
           </span>
         </div>
       </div>
-      <audio ref={audioRef} src={url} preload="metadata" />
+      <audio ref={audioRef} src={inView ? url : undefined} preload="none" />
     </div>
   );
 }
@@ -1751,16 +1764,27 @@ function StickerBubble({ url }: { url: string }) {
 /* ────────────────────────────────────────────────────────── */
 /* Custom video player — Telegram/iMessage style              */
 /* ────────────────────────────────────────────────────────── */
-
 function VideoBubble({ url }: { url: string }) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const hideTimerRef = useRef<number | null>(null);
+  const [inView, setInView] = useState(false);
   const [playing, setPlaying] = useState(false);
   const [progress, setProgress] = useState(0);
   const [duration, setDuration] = useState(0);
   const [showControls, setShowControls] = useState(true);
   const [isFullscreen, setIsFullscreen] = useState(false);
+
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const io = new IntersectionObserver(
+      ([entry]) => { if (entry.isIntersecting) { setInView(true); io.disconnect(); } },
+      { rootMargin: '200px 0px' },
+    );
+    io.observe(el);
+    return () => io.disconnect();
+  }, []);
 
   useEffect(() => {
     const v = videoRef.current;
@@ -1787,9 +1811,7 @@ function VideoBubble({ url }: { url: string }) {
   }, []);
 
   useEffect(() => {
-    const onFsChange = () => {
-      setIsFullscreen(document.fullscreenElement === videoRef.current);
-    };
+    const onFsChange = () => setIsFullscreen(document.fullscreenElement === videoRef.current);
     document.addEventListener('fullscreenchange', onFsChange);
     document.addEventListener('webkitfullscreenchange', onFsChange);
     return () => {
@@ -1801,8 +1823,7 @@ function VideoBubble({ url }: { url: string }) {
   const togglePlay = useCallback(() => {
     const v = videoRef.current;
     if (!v) return;
-    if (v.paused) { void v.play().catch(() => {}); }
-    else { v.pause(); }
+    if (v.paused) { void v.play().catch(() => {}); } else { v.pause(); }
   }, []);
 
   const revealControls = useCallback(() => {
@@ -1820,9 +1841,7 @@ function VideoBubble({ url }: { url: string }) {
       return;
     }
     revealControls();
-    return () => {
-      if (hideTimerRef.current) window.clearTimeout(hideTimerRef.current);
-    };
+    return () => { if (hideTimerRef.current) window.clearTimeout(hideTimerRef.current); };
   }, [playing, revealControls]);
 
   const onSeek = (e: React.MouseEvent<HTMLDivElement>) => {
@@ -1870,8 +1889,8 @@ function VideoBubble({ url }: { url: string }) {
     >
       <video
         ref={videoRef}
-        src={url}
-        preload="metadata"
+        src={inView ? url : undefined}
+        preload="none"
         playsInline
         className={`block w-auto max-w-full ${
           isFullscreen ? 'max-h-none h-full w-full' : 'max-h-[380px]'
@@ -1892,11 +1911,7 @@ function VideoBubble({ url }: { url: string }) {
         </button>
       )}
 
-          <div
-        className={`absolute top-2 right-2 flex items-center gap-1.5 transition-opacity duration-150 ${
-          showControls ? 'opacity-100' : 'opacity-0 pointer-events-none'
-        }`}
-      >
+      <div className={`absolute top-2 right-2 flex items-center gap-1.5 transition-opacity duration-150 ${showControls ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}>
         <button
           type="button"
           onClick={onFullscreen}
@@ -1907,11 +1922,7 @@ function VideoBubble({ url }: { url: string }) {
         </button>
       </div>
 
-      <div
-        className={`absolute inset-x-0 bottom-0 px-3 py-2 bg-gradient-to-t from-black/85 via-black/40 to-transparent transition-opacity duration-150 ${
-          showControls ? 'opacity-100' : 'opacity-0 pointer-events-none'
-        }`}
-      >
+      <div className={`absolute inset-x-0 bottom-0 px-3 py-2 bg-gradient-to-t from-black/85 via-black/40 to-transparent transition-opacity duration-150 ${showControls ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}>
         <div className="flex items-center gap-2.5">
           <button
             type="button"
@@ -1928,26 +1939,17 @@ function VideoBubble({ url }: { url: string }) {
               <span className="w-0 h-0 border-y-[6px] border-y-transparent border-l-[10px] border-l-white ml-0.5" />
             )}
           </button>
-
           <span className="text-[10.5px] font-medium text-white/90 tabular-nums shrink-0">
             {formatDuration(progress)} / {duration > 0 ? formatDuration(duration) : '--:--'}
           </span>
-
-          <div
-            onClick={onSeek}
-            className="flex-1 h-1 rounded-full bg-white/25 cursor-pointer relative"
-          >
-            <div
-              className="absolute inset-y-0 left-0 rounded-full bg-white"
-              style={{ width: `${pct}%` }}
-            />
+          <div onClick={onSeek} className="flex-1 h-1 rounded-full bg-white/25 cursor-pointer relative">
+            <div className="absolute inset-y-0 left-0 rounded-full bg-white" style={{ width: `${pct}%` }} />
           </div>
         </div>
       </div>
     </div>
   );
 }
-
 /* ────────────────────────────────────────────────────────── */
 /* MessageRow                                                 */
 /* ────────────────────────────────────────────────────────── */
@@ -2062,10 +2064,14 @@ const MessageRow = React.memo(
     const canAct = Number(message.id) > 0;
 
     return (
-      <div
+            <div
         className={`group/row relative flex w-full ${
           grouped ? 'mt-[3px]' : 'mt-3.5'
         } ${isMe ? 'justify-end' : 'justify-start'} ${isTemp ? 'opacity-80' : ''}`}
+        style={{
+          contentVisibility: 'auto',
+          containIntrinsicSize: '0 64px',
+        } as React.CSSProperties}
       >
         <div
           ref={iconRef}
@@ -3366,6 +3372,7 @@ export function DirectMessagePane(): React.JSX.Element {
   const reactionsRef = useRef(reactions);
   const replyToRef = useRef(replyTo);
   const processedIdsRef = useRef<Set<DirectMessageDto['id']>>(new Set());
+  const lastSignalRAtRef = useRef(0);
   const stickRef = useRef(true);
   const anchorRef = useRef<number | null>(null);
 
@@ -3401,36 +3408,47 @@ export function DirectMessagePane(): React.JSX.Element {
     if (el) el.scrollTop = el.scrollHeight;
   }, []);
 
-    const loadFriends = useCallback(async () => {
+      const loadFriends = useCallback(async () => {
     try {
       const friendList = await apiService.getFriends();
-
-      // Show the friend list immediately — don't wait for previews.
       setFriends(friendList);
       setFriendsLoaded(true);
-
       if (!user?.id) return;
 
-      // Fetch previews in the background; rows already show @handle.
-      const previews = await Promise.all(
-        friendList.map(async (f) => {
-          try {
-            const res = await apiService.getDmHistory(f.userId, 1);
-            const history = applyPresignedUrls(res.messages, res.presignedUrls);
-            if (history.length === 0) return null;
+      // Cache gate: only refresh stale previews (> 2 min old).
+      const stamps = readPreviewStamps(user.id);
+      const now = Date.now();
+      const stale = friendList.filter((f) => now - (stamps[f.userId] ?? 0) > PREVIEW_TTL_MS);
+      if (stale.length === 0) return;
+
+      // Concurrency limit: 4 at a time, not all at once.
+      const lastMap: Record<string, DirectMessageDto> = {};
+      const newStamps = { ...stamps };
+      const queue = [...stale];
+
+      const runOne = async (f: FriendDto) => {
+        try {
+          const res = await apiService.getDmHistory(f.userId, 1);
+          const history = applyPresignedUrls(res.messages, res.presignedUrls);
+          if (history.length > 0) {
             const decrypted = await decryptBatch(history, user.id);
-            return { userId: f.userId, msg: decrypted[0] };
-          } catch {
-            return null;
+            if (decrypted[0]) lastMap[f.userId] = decrypted[0];
+          }
+          newStamps[f.userId] = now;
+        } catch { /* silent */ }
+      };
+
+      await Promise.all(
+        Array.from({ length: 4 }).map(async () => {
+          while (queue.length > 0) {
+            const f = queue.shift();
+            if (f) await runOne(f);
           }
         }),
       );
 
-      const lastMap: Record<string, DirectMessageDto> = {};
-      for (const p of previews) {
-        if (p) lastMap[p.userId] = p.msg;
-      }
-      setLastMessages(lastMap);
+      setLastMessages((prev) => ({ ...prev, ...lastMap }));
+      writePreviewStamps(user.id, newStamps);
     } catch (err) {
       console.error('Failed to load friends list:', err);
       setFriendsLoaded(true);
@@ -3673,6 +3691,7 @@ export function DirectMessagePane(): React.JSX.Element {
 
     const poll = async () => {
       if (cancelled || inFlight || document.hidden) return;
+      if (Date.now() - lastSignalRAtRef.current < SIGNALR_HEALTHY_MS) return;
       inFlight = true;
       try {
         const res = await apiService.getDmHistory(userId, POLL_LIMIT);
@@ -3742,6 +3761,7 @@ export function DirectMessagePane(): React.JSX.Element {
   useEffect(() => {
     const unsub = signalRService.onReceiveDirectMessage(
       async (msg: DirectMessageDto) => {
+        lastSignalRAtRef.current = Date.now();
         const decrypted = await decryptOne(msg, user?.id ?? '');
         const text = decrypted.plaintext ?? decrypted.content ?? '';
         const decoded = decodeIncoming(text);
