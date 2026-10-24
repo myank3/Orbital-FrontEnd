@@ -12,7 +12,6 @@ import React, {
   useMemo,
   useDeferredValue,
   startTransition,
-  useSyncExternalStore,
 } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { createPortal } from 'react-dom';
@@ -53,9 +52,6 @@ function Portal({ children }: { children: React.ReactNode }) {
   return createPortal(children, document.body);
 }
 
-/* ────────────────────────────────────────────────────────── */
-/* Module-level: active group call tracker                    */
-/* ────────────────────────────────────────────────────────── */
 /* ────────────────────────────────────────────────────────── */
 /* Module-level: active group call tracker                    */
 /* ────────────────────────────────────────────────────────── */
@@ -154,19 +150,27 @@ const API_ORIGIN: string =
   (import.meta.env.VITE_API_BASE as string | undefined) ??
   'https://orbital.runasp.net';
 
+const RESOLVED_AVATAR_CACHE = new Map<string, string>();
+
 function resolveAvatarUrl(raw: string | null | undefined): string | undefined {
   if (!raw) return undefined;
+  let cached = RESOLVED_AVATAR_CACHE.get(raw);
+  if (cached) return cached;
   if (
     raw.startsWith('http://') ||
     raw.startsWith('https://') ||
     raw.startsWith('data:') ||
     raw.startsWith('blob:')
   ) {
+    RESOLVED_AVATAR_CACHE.set(raw, raw);
     return raw;
   }
   const base = API_ORIGIN.replace(/\/+$/, '');
-  return `${base}${raw.startsWith('/') ? '' : '/'}${raw}`;
+  cached = `${base}${raw.startsWith('/') ? '' : '/'}${raw}`;
+  RESOLVED_AVATAR_CACHE.set(raw, cached);
+  return cached;
 }
+
 const PANEL_HEIGHT = 'h-[300px]';
 const MAX_RECORD_MS = 5 * 60 * 1000;
 const QUICK_REACT_EMOJIS = ['👍', '❤️', '😂'];
@@ -180,8 +184,9 @@ const SPEAKING_HOLD_MS = 350;
 const REACT_RE = /^\[react:(-?\d+):([^:\]]+)(?::(add|remove))?\]$/;
 const REPLY_RE = /^\[reply:(-?\d+)\]/;
 const DEL_RE = /^\[del:(-?\d+)\]$/;
+const CLIENT_ID_RE = /^\[client:([^\]]+)\]/;
 
-interface DecodedMessage { body: string; replyToId: number | null; isReaction: false; isDelete: false; }
+interface DecodedMessage { body: string; replyToId: number | null; clientId: string | null; isReaction: false; isDelete: false; }
 interface DecodedReaction { isReaction: true; messageId: number; emoji: string; action: 'add' | 'remove'; }
 interface DecodedDelete { isReaction: false; isDelete: true; messageId: number; }
 type Decoded = DecodedMessage | DecodedReaction | DecodedDelete;
@@ -198,11 +203,22 @@ function decodeIncoming(text: string): Decoded {
   }
   const del = text.match(DEL_RE);
   if (del) return { isDelete: true, isReaction: false, messageId: parseInt(del[1], 10) };
+
   let body = text;
+  let clientId: string | null = null;
+  const cid = body.match(CLIENT_ID_RE);
+  if (cid) {
+    clientId = cid[1];
+    body = body.slice(cid[0].length);
+  }
+
   let replyToId: number | null = null;
   const reply = body.match(REPLY_RE);
-  if (reply) { replyToId = parseInt(reply[1], 10); body = body.slice(reply[0].length); }
-  return { body, replyToId, isReaction: false, isDelete: false };
+  if (reply) {
+    replyToId = parseInt(reply[1], 10);
+    body = body.slice(reply[0].length);
+  }
+  return { body, replyToId, clientId, isReaction: false, isDelete: false };
 }
 
 function encodeReaction(messageId: number, emoji: string, action: 'add' | 'remove' = 'add') {
@@ -210,15 +226,23 @@ function encodeReaction(messageId: number, emoji: string, action: 'add' | 'remov
 }
 function encodeReply(replyToId: number, text: string) { return `[reply:${replyToId}]${text}`; }
 
-function mergeIncomingGroup(prev: GroupMessageDto[], local: GroupMessageDto): GroupMessageDto[] {
+type ExtendedGroupMessageDto = GroupMessageDto & {
+  replyToId?: number | null;
+  clientId?: string | null;
+};
+
+function mergeIncomingGroup(prev: ExtendedGroupMessageDto[], local: ExtendedGroupMessageDto): ExtendedGroupMessageDto[] {
   if (prev.some((m) => m.id === local.id)) return prev;
   const newKey = local.mediaKey ?? '';
+  const newClientId = local.clientId ?? null;
   const newContent = local.content ?? '';
   const tempIdx = prev.findIndex((m) => {
     if (typeof m.id !== 'number' || m.id >= 0) return false;
     if (m.senderId !== local.senderId) return false;
+    if (newClientId && m.clientId === newClientId) return true;
     if (newKey && m.mediaKey === newKey) return true;
-    return (m.content ?? '') === newContent;
+    if (!newClientId && !newKey && newContent) return (m.content ?? '') === newContent;
+    return false;
   });
   if (tempIdx >= 0) {
     const next = [...prev];
@@ -231,7 +255,7 @@ function mergeIncomingGroup(prev: GroupMessageDto[], local: GroupMessageDto): Gr
 }
 
 /* ────────────────────────────────────────────────────────── */
-/* Speaking detector — shared AudioContext + analyser cache   */
+/* Speaking detector — shared AudioContext + 15fps gate       */
 /* ────────────────────────────────────────────────────────── */
 
 let sharedAudioCtx: AudioContext | null = null;
@@ -257,6 +281,7 @@ function useSpeakingDetector(stream: MediaStream | null | undefined): boolean {
   const [speaking, setSpeaking] = useState(false);
   const rafRef = useRef<number | null>(null);
   const lastSpokeRef = useRef<number>(0);
+  const lastAnalysedRef = useRef<number>(0);
   const speakingRef = useRef(false);
 
   useEffect(() => {
@@ -285,8 +310,14 @@ function useSpeakingDetector(stream: MediaStream | null | undefined): boolean {
     const data = new Uint8Array(analyser.frequencyBinCount);
     let cancelled = false;
 
-    const tick = () => {
+    const tick = (now: number) => {
       if (cancelled) return;
+      // Throttle to ~15fps (66ms) to save 4x CPU on mobile/WebView
+      if (now - lastAnalysedRef.current < 66) {
+        rafRef.current = requestAnimationFrame(tick);
+        return;
+      }
+      lastAnalysedRef.current = now;
       if (document.hidden) { rafRef.current = requestAnimationFrame(tick); return; }
       try {
         analyser!.getByteTimeDomainData(data);
@@ -299,7 +330,6 @@ function useSpeakingDetector(stream: MediaStream | null | undefined): boolean {
         sum += v * v;
       }
       const rms = Math.sqrt(sum / data.length);
-      const now = performance.now();
       if (rms > SPEAKING_THRESHOLD) {
         lastSpokeRef.current = now;
         if (!speakingRef.current) { speakingRef.current = true; setSpeaking(true); }
@@ -607,18 +637,76 @@ const QUICK_REACTIONS = ['❤️', '😂', '👍', '😮', '😢', '🙏'];
 const EMPTY_REACTIONS: ReactionEntry[] = [];
 
 /* ────────────────────────────────────────────────────────── */
-/* Audio bubble                                               */
+/* Lazy Video & Audio bubbles (IntersectionObserver gated)    */
 /* ────────────────────────────────────────────────────────── */
+
+const LazyGroupVideo = React.memo(function LazyGroupVideo({ src }: { src: string | null | undefined }) {
+  const wrapRef = useRef<HTMLDivElement | null>(null);
+  const [inView, setInView] = useState(false);
+
+  useEffect(() => {
+    const el = wrapRef.current;
+    if (!el || inView) return;
+    if (typeof IntersectionObserver === 'undefined') {
+      setInView(true);
+      return;
+    }
+    const io = new IntersectionObserver(
+      (entries) => {
+        if (entries[0]?.isIntersecting) {
+          setInView(true);
+          io.disconnect();
+        }
+      },
+      { rootMargin: '200px' },
+    );
+    io.observe(el);
+    return () => io.disconnect();
+  }, [inView]);
+
+  return (
+    <div ref={wrapRef} className="rounded-xl max-h-72 w-full bg-black overflow-hidden">
+      <video
+        src={inView ? (src ?? undefined) : undefined}
+        controls
+        preload="none"
+        className="rounded-xl max-h-72 w-full bg-black"
+      />
+    </div>
+  );
+});
 
 const WAVE_BARS = Array.from({ length: 24 }).map((_, i) =>
   Math.max(4, Math.min(24, 18 + Math.sin(i * 0.7) * 10 + (i % 3) * 4)),
 );
 
-function VoiceBubble({ url, isMe }: { url: string; isMe: boolean }) {
+const VoiceBubble = React.memo(function VoiceBubble({ url, isMe }: { url: string; isMe: boolean }) {
+  const wrapRef = useRef<HTMLDivElement | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const [inView, setInView] = useState(false);
   const [playing, setPlaying] = useState(false);
   const [progress, setProgress] = useState(0);
   const [duration, setDuration] = useState(0);
+
+  useEffect(() => {
+    const el = wrapRef.current;
+    if (!el || inView) return;
+    if (typeof IntersectionObserver === 'undefined') {
+      setInView(true);
+      return;
+    }
+    const io = new IntersectionObserver(
+      (entries) => {
+        if (entries[0]?.isIntersecting) {
+          setInView(true);
+          io.disconnect();
+        }
+      },
+      { rootMargin: '200px' },
+    );
+    io.observe(el);
+    return () => io.disconnect();
+  }, [inView]);
 
   useEffect(() => {
     const a = audioRef.current;
@@ -641,13 +729,24 @@ function VoiceBubble({ url, isMe }: { url: string; isMe: boolean }) {
   const toggle = () => {
     const a = audioRef.current;
     if (!a) return;
-    try { if (playing) { a.pause(); setPlaying(false); } else { void a.play(); setPlaying(true); } }
-    catch (err) { console.warn('[voice] playback failed', err); }
+    if (!inView) setInView(true);
+    try {
+      if (playing) {
+        a.pause();
+        setPlaying(false);
+      } else {
+        if (!a.src && url) a.src = url;
+        void a.play();
+        setPlaying(true);
+      }
+    } catch (err) {
+      console.warn('[voice] playback failed', err);
+    }
   };
   const pct = duration > 0 ? Math.min(100, (progress / duration) * 100) : 0;
 
   return (
-    <div className="inline-flex items-center gap-3 min-w-[220px] max-w-[280px] select-none">
+    <div ref={wrapRef} className="inline-flex items-center gap-3 min-w-[220px] max-w-[280px] select-none">
       <button type="button" onClick={toggle}
         className={`shrink-0 w-9 h-9 rounded-full flex items-center justify-center ${
           isMe ? 'bg-black/[0.18] text-[#0F0D0A]' : 'bg-white/[0.08] text-[#EDE5D4]'
@@ -673,10 +772,10 @@ function VoiceBubble({ url, isMe }: { url: string; isMe: boolean }) {
           <span className="text-[10.5px] font-medium tabular-nums opacity-80">{duration > 0 ? formatDuration(duration) : '–:––'}</span>
         </div>
       </div>
-      <audio ref={audioRef} src={url} preload="metadata" />
+      <audio ref={audioRef} src={inView ? url : undefined} preload="none" />
     </div>
   );
-}
+});
 
 /* ────────────────────────────────────────────────────────── */
 /* Inline voice recorder                                      */
@@ -758,7 +857,7 @@ function InlineVoiceRecorder({ onCancel, onSend, busy }: {
         tickRef.current = window.setInterval(() => {
           const ms = Date.now() - startRef.current;
           setElapsedMs(ms);
-          if (ms >= MAX_RECORD_MS) stopAndSend();
+          if (ms >= MAX_RECORD_MS) void stopAndSend();
         }, 100);
       } catch (err) {
         const msg =
@@ -886,6 +985,11 @@ interface GroupMessageItemProps {
   onJumpToReply: (id: number) => void;
 }
 
+const ROW_CONTAIN_STYLE: React.CSSProperties = {
+  contentVisibility: 'auto',
+  containIntrinsicSize: '0 80px',
+};
+
 const GroupMessageItem = React.memo(function GroupMessageItem({
   message, isMe, grouped, isLastOfGroup, highlighted, reactions, currentUserId, replyTarget,
   onRequestProfile, onOpenMenu, onStartReply, onReact, onJumpToReply,
@@ -948,8 +1052,16 @@ const GroupMessageItem = React.memo(function GroupMessageItem({
     [reactions, currentUserId],
   );
 
+  const replySnippet = useMemo(
+    () => (replyTarget ? messageSnippet(replyTarget) : ''),
+    [replyTarget],
+  );
+
   return (
-    <div className={`group/row relative flex gap-3 px-1 ${grouped ? 'mt-0.5' : 'mt-5'} ${isMe ? 'flex-row-reverse' : 'flex-row'} ${highlighted ? 'ring-2 ring-[#D97706]/60 rounded-2xl' : ''}`}>
+    <div
+      style={ROW_CONTAIN_STYLE}
+      className={`group/row relative flex gap-3 px-1 ${grouped ? 'mt-0.5' : 'mt-5'} ${isMe ? 'flex-row-reverse' : 'flex-row'} ${highlighted ? 'ring-2 ring-[#D97706]/60 rounded-2xl' : ''}`}
+    >
       <div ref={iconRef} className={`absolute inset-y-0 flex items-center pointer-events-none ${isMe ? 'right-0' : 'left-0'}`} style={{ opacity: 0 }}>
         <div className="w-9 h-9 rounded-full bg-[#D97706]/[0.18] border border-[#D97706]/50 flex items-center justify-center">
           <Reply className="w-4 h-4 text-[#F59E0B]" />
@@ -1009,7 +1121,7 @@ const GroupMessageItem = React.memo(function GroupMessageItem({
                 isMe ? 'bg-black/[0.15] border-black/40 text-[#0F0D0A]/80' : 'bg-white/[0.05] border-[#D97706] text-[#EDE5D4]/80'
               }`}>
               <p className="font-semibold truncate">{replyTarget.senderDisplayName || 'User'}</p>
-              <p className="truncate opacity-85">{messageSnippet(replyTarget)}</p>
+              <p className="truncate opacity-85">{replySnippet}</p>
             </button>
           )}
 
@@ -1018,7 +1130,7 @@ const GroupMessageItem = React.memo(function GroupMessageItem({
           {hasMedia && !isVoice && (
             <div className="mb-2 -mx-1">
               {message.mediaType === MediaType.Image && (<img src={message.mediaUrl ?? undefined} alt="Attachment" className="rounded-xl max-h-72 w-auto object-cover" loading="lazy" decoding="async" />)}
-              {message.mediaType === MediaType.Video && (<video src={message.mediaUrl ?? undefined} controls className="rounded-xl max-h-72 w-full bg-black" preload="metadata" />)}
+              {message.mediaType === MediaType.Video && (<LazyGroupVideo src={message.mediaUrl} />)}
               {message.mediaType === MediaType.File && (
                 <a href={message.mediaUrl ?? undefined} target="_blank" rel="noreferrer" download
                   className={`inline-flex items-center gap-2 px-2.5 py-2 rounded-lg border text-[12px] ${
@@ -1074,7 +1186,8 @@ const GroupMessageItem = React.memo(function GroupMessageItem({
   prev.highlighted === next.highlighted &&
   prev.reactions === next.reactions &&
   prev.replyTarget === next.replyTarget &&
-  prev.isMe === next.isMe
+  prev.isMe === next.isMe &&
+  prev.onReact === next.onReact
 );
 
 /* ────────────────────────────────────────────────────────── */
@@ -1161,30 +1274,30 @@ function GroupContextMenu({
     { key: 'leave', label: 'Leave group', icon: <LogOut className="w-4 h-4" />, onClick: onLeave, danger: true },
     { key: 'delete', label: 'Delete group', icon: <Trash2 className="w-4 h-4" />, onClick: onDelete, danger: true },
   ];
-   return (
+  return (
     <Portal>
-    <div className="fixed inset-0 z-[180] flex items-end sm:items-center justify-center p-0 sm:p-4 bg-black/60" onClick={onClose}>
- <div onClick={(e) => e.stopPropagation()} className="w-full sm:max-w-xs rounded-t-[22px] sm:rounded-[22px] bg-[#1C1A17] border-t sm:border border-white/[0.08] shadow-2xl overflow-hidden">
-        <div className="px-5 py-4 border-b border-white/[0.06] flex items-center gap-3">
-          <GroupAvatar name={group.name} groupId={group.id} />
-          <div className="min-w-0 flex-1">
-            <p className="text-[14px] font-semibold text-[#EDE5D4] truncate tracking-tight">{group.name}</p>
-            <p className="text-[11.5px] text-[#7A6F65] truncate mt-0.5">{group.memberCount} member{group.memberCount === 1 ? '' : 's'}</p>
+      <div className="fixed inset-0 z-[180] flex items-end sm:items-center justify-center p-0 sm:p-4 bg-black/60" onClick={onClose}>
+        <div onClick={(e) => e.stopPropagation()} className="w-full sm:max-w-xs rounded-t-[22px] sm:rounded-[22px] bg-[#1C1A17] border-t sm:border border-white/[0.08] shadow-2xl overflow-hidden">
+          <div className="px-5 py-4 border-b border-white/[0.06] flex items-center gap-3">
+            <GroupAvatar name={group.name} groupId={group.id} />
+            <div className="min-w-0 flex-1">
+              <p className="text-[14px] font-semibold text-[#EDE5D4] truncate tracking-tight">{group.name}</p>
+              <p className="text-[11.5px] text-[#7A6F65] truncate mt-0.5">{group.memberCount} member{group.memberCount === 1 ? '' : 's'}</p>
+            </div>
+            <button onClick={onClose} className="shrink-0 w-8 h-8 rounded-lg flex items-center justify-center text-[#7A6F65] hover:bg-white/[0.05]"><X className="w-4 h-4" /></button>
           </div>
-          <button onClick={onClose} className="shrink-0 w-8 h-8 rounded-lg flex items-center justify-center text-[#7A6F65] hover:bg-white/[0.05]"><X className="w-4 h-4" /></button>
-        </div>
-        <div className="py-1.5 max-h-[60vh] overflow-y-auto">
-          {actions.map((a) => (
-            <button key={a.key} onClick={() => { a.onClick(); onClose(); }}
-              className={`w-full flex items-center gap-3 px-5 py-3 text-[13px] font-medium text-left transition-colors ${
-                a.danger ? 'text-[#F87171] hover:bg-[#B91C1C]/[0.10]' : 'text-[#EDE5D4] hover:bg-white/[0.04]'
-              }`}>
-              <span className="shrink-0 opacity-80">{a.icon}</span><span>{a.label}</span>
-            </button>
-          ))}
+          <div className="py-1.5 max-h-[60vh] overflow-y-auto">
+            {actions.map((a) => (
+              <button key={a.key} onClick={() => { a.onClick(); onClose(); }}
+                className={`w-full flex items-center gap-3 px-5 py-3 text-[13px] font-medium text-left transition-colors ${
+                  a.danger ? 'text-[#F87171] hover:bg-[#B91C1C]/[0.10]' : 'text-[#EDE5D4] hover:bg-white/[0.04]'
+                }`}>
+                <span className="shrink-0 opacity-80">{a.icon}</span><span>{a.label}</span>
+              </button>
+            ))}
+          </div>
         </div>
       </div>
-    </div>
     </Portal>
   );
 }
@@ -1793,7 +1906,7 @@ interface VoiceStageProps {
   onSendMessage: (text: string, replyId: number | null) => Promise<void>;
 }
 
-function StageTileAvatar({ name, src, size = 96, accent = false }: {
+const StageTileAvatar = React.memo(function StageTileAvatar({ name, src, size = 96, accent = false }: {
   name: string; src?: string | null; size?: number; accent?: boolean;
 }) {
   const resolvedSrc = resolveAvatarUrl(src);
@@ -1828,7 +1941,8 @@ function StageTileAvatar({ name, src, size = 96, accent = false }: {
       {initialsOf(name)}
     </div>
   );
-}
+});
+
 interface StageTileProps {
   tile: {
     key: string;
@@ -2334,7 +2448,6 @@ const OnlineCount = React.memo(function OnlineCount({ memberIds }: { memberIds: 
       const maybe = presenceStore.subscribe(() => force((n) => n + 1));
       if (typeof maybe === 'function') unsub = maybe;
     } catch {
-      // Fallback poll if subscribe isn't compatible
       const id = window.setInterval(() => force((n) => n + 1), 2000);
       return () => window.clearInterval(id);
     }
@@ -2349,7 +2462,7 @@ const OnlineCount = React.memo(function OnlineCount({ memberIds }: { memberIds: 
       <span className="w-1.5 h-1.5 rounded-full bg-[#22C55E]" />
       {count} online
     </span>
-  );   
+  );
 });
 
 /* ────────────────────────────────────────────────────────── */
@@ -2401,8 +2514,6 @@ const SidebarRow = React.memo(function SidebarRow({
   const timer = useRef<number | null>(null);
   const longPressedRef = useRef(false);
 
-  // Long-press opens the context menu; the click that follows
-  // on release must NOT navigate into the chat.
   const start = () => {
     longPressedRef.current = false;
     if (timer.current != null) window.clearTimeout(timer.current);
@@ -2429,10 +2540,7 @@ const SidebarRow = React.memo(function SidebarRow({
   return (
     <button
       onClick={handleClick}
-      onContextMenu={(e) => {
-        e.preventDefault();
-        onMenu(group);
-      }}
+      onContextMenu={(e) => { e.preventDefault(); onMenu(group); }}
       onTouchStart={start}
       onTouchEnd={end}
       onTouchMove={end}
@@ -2443,7 +2551,6 @@ const SidebarRow = React.memo(function SidebarRow({
           : 'hover:bg-white/[0.04] active:bg-white/[0.06]'
       }`}
     >
-      {/* Selected accent bar */}
       {isSelected && (
         <span
           aria-hidden
@@ -2456,17 +2563,11 @@ const SidebarRow = React.memo(function SidebarRow({
       <div className="min-w-0 flex-1">
         <div className="flex items-center justify-between gap-2">
           <div className="flex items-center gap-1.5 min-w-0">
-            {pinned && (
-              <Pin className="w-3 h-3 shrink-0 text-[#D97706]" />
-            )}
-            <p
-              className={`text-[14px] font-semibold truncate tracking-[-0.01em] text-[#EDE5D4]`}
-            >
+            {pinned && <Pin className="w-3 h-3 shrink-0 text-[#D97706]" />}
+            <p className="text-[14px] font-semibold truncate tracking-[-0.01em] text-[#EDE5D4]">
               {group.name}
             </p>
-            {muted && (
-              <BellOff className="w-3 h-3 shrink-0 text-[#6B6259] opacity-70" />
-            )}
+            {muted && <BellOff className="w-3 h-3 shrink-0 text-[#6B6259] opacity-70" />}
           </div>
         </div>
         <p className="text-[12.5px] text-[#6B6259] truncate leading-tight mt-1">
@@ -2477,6 +2578,7 @@ const SidebarRow = React.memo(function SidebarRow({
     </button>
   );
 });
+
 /* ────────────────────────────────────────────────────────── */
 /* Main GroupPane                                             */
 /* ────────────────────────────────────────────────────────── */
@@ -2489,11 +2591,11 @@ export default function GroupPane(): React.JSX.Element {
 
   const [activeGroup, setActiveGroup] = useState<GroupDetailDto | null>(null);
 
-  const call = useGroupCall(
-    activeGroupId,
-    user ? { id: user.id, displayName: user.displayName ?? '' } : undefined,
-    activeGroup?.name,
+  const callUser = useMemo(
+    () => user ? { id: user.id, displayName: user.displayName ?? '' } : undefined,
+    [user?.id, user?.displayName],
   );
+  const call = useGroupCall(activeGroupId, callUser, activeGroup?.name);
 
   const call1on1 = useCall() as unknown as {
     callState: string;
@@ -2561,6 +2663,7 @@ export default function GroupPane(): React.JSX.Element {
       }
     }
   }, [call.inCall, activeGroupId, call.leave]);
+
   const [groups, setGroups] = useState<GroupDto[]>(() => {
     if (typeof window === 'undefined' || !user?.id) return [];
     try {
@@ -2664,6 +2767,7 @@ export default function GroupPane(): React.JSX.Element {
       if (!seen.has(id)) { try { el.srcObject = null; el.remove(); } catch { /* noop */ } audioElsRef.current.delete(id); }
     }
   }, [call.inCall, call.participants, user?.id, deafened, locallyMuted]);
+
   useEffect(() => {
     return () => {
       for (const el of audioElsRef.current.values()) {
@@ -2691,6 +2795,8 @@ export default function GroupPane(): React.JSX.Element {
   const processedIdsRef = useRef<Set<GroupMessageDto['id']>>(new Set());
   const stickRef = useRef(true);
   const anchorRef = useRef<number | null>(null);
+  const activeGroupIdRef = useRef<number | undefined>(activeGroupId);
+  activeGroupIdRef.current = activeGroupId;
 
   const typingUsers = useGroupTypingReceiver(activeGroupId, user?.id);
 
@@ -2720,7 +2826,10 @@ export default function GroupPane(): React.JSX.Element {
   const fetchGroups = useCallback(async () => {
     try {
       const data = await apiService.getMyGroups();
-      startTransition(() => setGroups(data));
+      startTransition(() => {
+        setGroups(data);
+        setGroupsLoaded(true);
+      });
     } catch (err) { console.error('Failed to load groups:', err); }
   }, []);
   useEffect(() => { void fetchGroups(); }, [fetchGroups]);
@@ -2739,23 +2848,25 @@ export default function GroupPane(): React.JSX.Element {
     const loadGroup = async () => {
       setLoadingHistory(true); setHistoryError(null);
       try {
-        const detail = await apiService.getGroupDetail(activeGroupId);
-        if (active) startTransition(() => setActiveGroup(detail));
         await signalRService.joinGroupChannel(activeGroupId);
-        const res = await apiService.getGroupMessages(activeGroupId, PAGE_SIZE);
+        const [detail, res] = await Promise.all([
+          apiService.getGroupDetail(activeGroupId),
+          apiService.getGroupMessages(activeGroupId, PAGE_SIZE),
+        ]);
+        if (active) startTransition(() => setActiveGroup(detail));
         const msgs = applyPresignedUrls(res.messages, res.presignedUrls);
         if (!active) return;
         const sorted = [...msgs].sort((a, b) => getMessageTime(a) - getMessageTime(b));
 
         const reactionEvents: Array<{ messageId: number; emoji: string; action: 'add' | 'remove'; userId: string }> = [];
         const deleteEvents: number[] = [];
-        const visible: GroupMessageDto[] = [];
+        const visible: ExtendedGroupMessageDto[] = [];
         for (const m of sorted) {
           if (isCallSignal(m.content)) continue;
           const d = decodeIncoming(m.content ?? '');
           if (d.isReaction) { reactionEvents.push({ messageId: d.messageId, emoji: d.emoji, action: d.action, userId: m.senderId }); continue; }
           if (d.isDelete) { deleteEvents.push(d.messageId); continue; }
-          visible.push({ ...m, content: d.body, replyToId: d.replyToId } as GroupMessageDto & { replyToId?: number | null });
+          visible.push({ ...m, content: d.body, replyToId: d.replyToId, clientId: d.clientId });
         }
         const deletedSet = new Set(deleteEvents);
         const filtered = visible.filter((m) => !deletedSet.has(Number(m.id)));
@@ -2790,13 +2901,13 @@ export default function GroupPane(): React.JSX.Element {
         const sortedEarlier = [...earlier].sort((a, b) => getMessageTime(a) - getMessageTime(b));
         const reactionEvents: Array<{ messageId: number; emoji: string; action: 'add' | 'remove'; userId: string }> = [];
         const deleteEvents: number[] = [];
-        const visible: GroupMessageDto[] = [];
+        const visible: ExtendedGroupMessageDto[] = [];
         for (const m of sortedEarlier) {
           if (isCallSignal(m.content)) continue;
           const d = decodeIncoming(m.content ?? '');
           if (d.isReaction) { reactionEvents.push({ messageId: d.messageId, emoji: d.emoji, action: d.action, userId: m.senderId }); continue; }
           if (d.isDelete) { deleteEvents.push(d.messageId); continue; }
-          visible.push({ ...m, content: d.body, replyToId: d.replyToId } as GroupMessageDto & { replyToId?: number | null });
+          visible.push({ ...m, content: d.body, replyToId: d.replyToId, clientId: d.clientId });
         }
         const deletedSet = new Set(deleteEvents);
         const filtered = visible.filter((m) => !deletedSet.has(Number(m.id)));
@@ -2816,9 +2927,11 @@ export default function GroupPane(): React.JSX.Element {
     }
   };
 
+  /* ── SignalR subscription — mount ONCE, filter via ref ── */
   useEffect(() => {
     const unsub = signalRService.onReceiveGroupMessage(async (msg: GroupMessageDto) => {
       if (isCallSignal(msg.content)) return;
+      if (msg.groupId !== activeGroupIdRef.current) return;
       const d = decodeIncoming(msg.content ?? '');
 
       if (d.isReaction) {
@@ -2832,36 +2945,39 @@ export default function GroupPane(): React.JSX.Element {
         return;
       }
 
-      if (activeGroupId && msg.groupId === activeGroupId) {
-        if (processedIdsRef.current.has(msg.id)) return;
-        processedIdsRef.current.add(msg.id);
+      if (processedIdsRef.current.has(msg.id)) return;
+      processedIdsRef.current.add(msg.id);
 
-        const isOwnEcho = msg.senderId === user?.id;
-        const decorated = { ...msg, content: d.body, replyToId: d.replyToId } as GroupMessageDto & { replyToId?: number | null };
+      const isOwnEcho = msg.senderId === user?.id;
+      const decorated: ExtendedGroupMessageDto = {
+        ...msg,
+        content: d.body,
+        replyToId: d.replyToId,
+        clientId: d.clientId,
+      };
 
-        // Optimistic insert — resolve media URL in background without blocking render.
-        startTransition(() => setMessages((prev) => mergeIncomingGroup(prev, decorated)));
-        if (msg.senderId !== user?.id) {
-          safePlayReceive();
-          if (!stickRef.current) setUnreadWhileScrolled((c) => c + 1);
-        }
+      startTransition(() => setMessages((prev) => mergeIncomingGroup(prev as ExtendedGroupMessageDto[], decorated) as GroupMessageDto[]));
+      if (msg.senderId !== user?.id) {
+        safePlayReceive();
+        if (!stickRef.current) setUnreadWhileScrolled((c) => c + 1);
+      }
 
-        if (msg.mediaKey && !msg.mediaUrl && !isOwnEcho) {
-          apiService.presignDownload([msg.mediaKey])
-            .then((urls) => {
-              const url = urls[msg.mediaKey!];
-              if (!url) return;
-              startTransition(() => {
-                setMessages((prev) => prev.map((m) => m.id === msg.id ? { ...m, mediaUrl: url } : m));
-              });
-            })
-            .catch(() => { /* silent */ });
-        }
+      if (msg.mediaKey && !msg.mediaUrl && !isOwnEcho) {
+        apiService.presignDownload([msg.mediaKey])
+          .then((urls) => {
+            const url = urls[msg.mediaKey!];
+            if (!url) return;
+            startTransition(() => {
+              setMessages((prev) => prev.map((m) => m.id === msg.id ? { ...m, mediaUrl: url } : m));
+            });
+          })
+          .catch(() => { /* silent */ });
       }
     });
     return () => { unsub(); };
-  }, [activeGroupId, user?.id]);
+  }, [user?.id]);
 
+  /* ── GroupMessageDeleted subscription — mount ONCE, filter via ref ── */
   useEffect(() => {
     let cancelled = false;
     let unsub: (() => void) | null = null;
@@ -2870,7 +2986,7 @@ export default function GroupPane(): React.JSX.Element {
         const conn = await signalRService.start();
         if (cancelled) return;
         const handler = (groupId: number, messageId: number) => {
-          if (groupId !== activeGroupId) return;
+          if (groupId !== activeGroupIdRef.current) return;
           const targetStr = String(messageId);
           setMessages((prev) => prev.filter((m) => String(m.id) !== targetStr));
           setReactions((prev) => { const next = { ...prev }; delete next[targetStr]; return next; });
@@ -2880,7 +2996,7 @@ export default function GroupPane(): React.JSX.Element {
       } catch { /* silent */ }
     })();
     return () => { cancelled = true; unsub?.(); };
-  }, [activeGroupId]);
+  }, []);
 
   useLayoutEffect(() => {
     const el = messagesContainerRef.current;
@@ -2924,7 +3040,9 @@ export default function GroupPane(): React.JSX.Element {
   const handleSendText = useCallback(async (text: string, replyId: number | null) => {
     if (!activeGroupId) return;
     stickRef.current = true;
-    const payload = replyId != null ? encodeReply(replyId, text) : text;
+    const clientId = `tmp-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    let payload = replyId != null ? encodeReply(replyId, text) : text;
+    payload = `[client:${clientId}]${payload}`;
     await signalRService.sendGroupMessage({ groupId: activeGroupId, content: payload, mediaUrl: undefined, mediaType: undefined });
     safePlaySend();
   }, [activeGroupId]);
@@ -2938,14 +3056,19 @@ export default function GroupPane(): React.JSX.Element {
     await apiService.uploadToR2(presign.uploadUrl, file, contentType);
     const blobUrl = URL.createObjectURL(file);
     const tempId = -Date.now();
+    const clientId = `tmp-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     startTransition(() => setMessages((prev) => [...prev, {
       id: tempId as unknown as number, groupId: activeGroupId, senderId: user.id,
       senderDisplayName: user.displayName ?? '', senderAvatarUrl: user.avatarUrl ?? undefined,
       content: '', mediaUrl: blobUrl, mediaKey: presign.mediaKey, mediaType: validation.mediaType,
       sentAt: new Date().toISOString(),
-    }]));
+      clientId,
+    } as ExtendedGroupMessageDto as GroupMessageDto]));
     try {
-      await signalRService.sendGroupMessage({ groupId: activeGroupId, content: '', mediaUrl: undefined, mediaKey: presign.mediaKey, mediaType: validation.mediaType });
+      await signalRService.sendGroupMessage({
+        groupId: activeGroupId, content: `[client:${clientId}]`,
+        mediaUrl: undefined, mediaKey: presign.mediaKey, mediaType: validation.mediaType,
+      });
       safePlaySend();
     } catch (err) {
       setMessages((prev) => prev.filter((m) => m.id !== (tempId as unknown as number)));
@@ -2966,14 +3089,19 @@ export default function GroupPane(): React.JSX.Element {
     await apiService.uploadToR2(presign.uploadUrl, file, contentType);
     const blobUrl = URL.createObjectURL(file);
     const tempId = -Date.now();
+    const clientId = `tmp-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     startTransition(() => setMessages((prev) => [...prev, {
       id: tempId as unknown as number, groupId: activeGroupId, senderId: user.id,
       senderDisplayName: user.displayName ?? '', senderAvatarUrl: user.avatarUrl ?? undefined,
       content: '', mediaUrl: blobUrl, mediaKey: presign.mediaKey, mediaType: MediaType.Audio,
       sentAt: new Date().toISOString(),
-    }]));
+      clientId,
+    } as ExtendedGroupMessageDto as GroupMessageDto]));
     try {
-      await signalRService.sendGroupMessage({ groupId: activeGroupId, content: '', mediaUrl: undefined, mediaKey: presign.mediaKey, mediaType: MediaType.Audio });
+      await signalRService.sendGroupMessage({
+        groupId: activeGroupId, content: `[client:${clientId}]`,
+        mediaUrl: undefined, mediaKey: presign.mediaKey, mediaType: MediaType.Audio,
+      });
       safePlaySend();
     } catch (err) {
       setMessages((prev) => prev.filter((m) => m.id !== (tempId as unknown as number)));
@@ -3099,16 +3227,19 @@ export default function GroupPane(): React.JSX.Element {
     }
   }, [call, is1on1Busy, activeGroupId, active1on1PeerName]);
 
+  const reactionsRef = useRef(reactions);
+  reactionsRef.current = reactions;
+
   const handleReact = useCallback((messageId: number, emoji: string) => {
     if (!user?.id) return;
-    const mine = (reactions[String(messageId)] ?? []).some((r) => r.userId === user.id && r.emoji === emoji);
+    const mine = (reactionsRef.current[String(messageId)] ?? []).some((r) => r.userId === user.id && r.emoji === emoji);
     const action: 'add' | 'remove' = mine ? 'remove' : 'add';
     setReactions((prev) => applyReactionEvents(prev, [{ messageId, emoji, action, userId: user.id }]));
     if (!activeGroupId) return;
     void signalRService.sendGroupMessage({
       groupId: activeGroupId, content: encodeReaction(messageId, emoji, action), mediaUrl: undefined, mediaType: undefined,
     }).catch((err) => console.warn('Reaction send failed:', err));
-  }, [activeGroupId, reactions, user?.id]);
+  }, [activeGroupId, user?.id]);
 
   const handleStartReply = useCallback((m: GroupMessageDto) => {
     if (typeof m.id === 'number' && m.id < 0) return;
@@ -3201,15 +3332,18 @@ export default function GroupPane(): React.JSX.Element {
 
   const hasActiveGroup = Boolean(activeGroupId && activeGroup);
 
-  const enrichedParticipants = useMemo(() => {
-    // Iterate messages backwards — grab only the latest avatar per sender.
-    const fromMessages = new Map<string, string>();
+  const latestAvatarsBySender = useMemo(() => {
+    const map = new Map<string, string>();
     for (let i = messages.length - 1; i >= 0; i--) {
       const msg = messages[i];
-      if (msg.senderId && msg.senderAvatarUrl && !fromMessages.has(msg.senderId)) {
-        fromMessages.set(msg.senderId, msg.senderAvatarUrl);
+      if (msg.senderId && msg.senderAvatarUrl && !map.has(msg.senderId)) {
+        map.set(msg.senderId, msg.senderAvatarUrl);
       }
     }
+    return map;
+  }, [messages]);
+
+  const enrichedParticipants = useMemo(() => {
     const fromMembers = new Map<string, string>();
     for (const m of activeGroup?.members ?? []) {
       if (m.avatarUrl) fromMembers.set(m.id, m.avatarUrl);
@@ -3221,7 +3355,7 @@ export default function GroupPane(): React.JSX.Element {
         ? (myFreshProfile?.avatarUrl ?? user?.avatarUrl ?? null)
         : null;
       const otherAvatar =
-        fromMessages.get(p.userId) ??
+        latestAvatarsBySender.get(p.userId) ??
         fromMembers.get(p.userId) ??
         null;
       return {
@@ -3232,7 +3366,7 @@ export default function GroupPane(): React.JSX.Element {
         stream: p.stream,
       };
     });
-  }, [call.participants, messages, activeGroup, user?.id, user?.avatarUrl, myFreshProfile?.avatarUrl]);
+  }, [call.participants, latestAvatarsBySender, activeGroup, user?.id, user?.avatarUrl, myFreshProfile?.avatarUrl]);
 
   const togglePin = useCallback((id: string) => {
     setPinnedIds((prev) => {
@@ -3265,166 +3399,161 @@ export default function GroupPane(): React.JSX.Element {
 
   return (
     <div className="flex h-full w-full bg-[#0B0A08] text-[#EDE5D4] overflow-hidden">
-     {/* ─── LEFT: Groups list ────────────────────────────── */}
-<div
-  className={`${hasActiveGroup ? 'hidden md:flex' : 'flex'} groups-sidebar w-full md:w-[340px] md:shrink-0 border-r border-white/[0.05] bg-[#0F0D0A] flex-col h-full relative overflow-hidden`}
->
-  {/* Scoped scrollbar + input refinements */}
-  <style>{`
-    .groups-sidebar-scroll {
-      scrollbar-width: thin;
-      scrollbar-color: rgba(255,255,255,0.08) transparent;
-      -webkit-overflow-scrolling: touch;
-    }
-    .groups-sidebar-scroll::-webkit-scrollbar { width: 4px; }
-    .groups-sidebar-scroll::-webkit-scrollbar-track { background: transparent; }
-    .groups-sidebar-scroll::-webkit-scrollbar-thumb {
-      background: rgba(255,255,255,0.08);
-      border-radius: 999px;
-    }
-    .groups-sidebar-scroll::-webkit-scrollbar-thumb:hover {
-      background: rgba(255,255,255,0.16);
-    }
-    .groups-sidebar-scroll::-webkit-scrollbar-thumb:active {
-      background: rgba(255,255,255,0.24);
-    }
-    .groups-sidebar input::placeholder { opacity: 0.55; }
-    .groups-sidebar input:focus { outline: none; }
-  `}</style>
-
-  {/* Ambient glow (static, zero runtime cost) */}
-  <div
-    aria-hidden
-    className="pointer-events-none absolute inset-0"
-    style={{
-      background:
-        'radial-gradient(600px 380px at 0% 0%, rgba(217,119,6,0.07), transparent 65%)',
-    }}
-  />
-
-  {/* Header */}
-  <div className="relative z-10 h-[72px] px-5 flex items-center justify-between shrink-0">
-    <div className="flex items-baseline gap-2.5 min-w-0">
-      <h2
-        className="text-[26px] font-bold tracking-[-0.02em] leading-none text-[#EDE5D4]"
-        style={{ fontFamily: '"Instrument Serif", Georgia, serif' }}
+      {/* ─── LEFT: Groups list ────────────────────────────── */}
+      <div
+        className={`${hasActiveGroup ? 'hidden md:flex' : 'flex'} groups-sidebar w-full md:w-[340px] md:shrink-0 border-r border-white/[0.05] bg-[#0F0D0A] flex-col h-full relative overflow-hidden`}
       >
-        Groups
-      </h2>
-      <span className="text-[11px] tabular-nums font-bold px-2 py-0.5 rounded-full bg-white/[0.04] border border-white/[0.06] text-[#6B6259]">
-        {groups.length}
-      </span>
-    </div>
-    <button
-      onClick={() => setCreateModalOpen(true)}
-      className="shrink-0 w-9 h-9 rounded-xl bg-white/[0.04] hover:bg-white/[0.08] border border-white/[0.06] flex items-center justify-center text-[#A8A29E] hover:text-[#EDE5D4] transition-colors touch-manipulation"
-      title="Create group"
-      aria-label="Create group"
-    >
-      <Plus className="w-4 h-4" />
-    </button>
-  </div>
+        <style>{`
+          .groups-sidebar-scroll {
+            scrollbar-width: thin;
+            scrollbar-color: rgba(255,255,255,0.08) transparent;
+            -webkit-overflow-scrolling: touch;
+          }
+          .groups-sidebar-scroll::-webkit-scrollbar { width: 4px; }
+          .groups-sidebar-scroll::-webkit-scrollbar-track { background: transparent; }
+          .groups-sidebar-scroll::-webkit-scrollbar-thumb {
+            background: rgba(255,255,255,0.08);
+            border-radius: 999px;
+          }
+          .groups-sidebar-scroll::-webkit-scrollbar-thumb:hover {
+            background: rgba(255,255,255,0.16);
+          }
+          .groups-sidebar-scroll::-webkit-scrollbar-thumb:active {
+            background: rgba(255,255,255,0.24);
+          }
+          .groups-sidebar input::placeholder { opacity: 0.55; }
+          .groups-sidebar input:focus { outline: none; }
+        `}</style>
 
-  {/* Search */}
-  <div className="relative z-10 px-4 pb-3">
-    <div className="relative">
-      <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 pointer-events-none text-[#6B6259]" />
-      <input
-        type="text"
-        value={searchQuery}
-        onChange={(e) => setSearchQuery(e.target.value)}
-        placeholder="Search groups"
-        className="w-full h-11 pl-11 pr-10 rounded-2xl bg-white/[0.03] border border-white/[0.06] text-[13.5px] text-[#EDE5D4] focus:outline-none focus:ring-2 focus:ring-inset focus:ring-[#D97706]/25 focus:border-[#D97706]/40 placeholder:text-[#6B6259] transition-colors touch-manipulation"
-      />
-      {searchQuery && (
-        <button
-          type="button"
-          onClick={() => setSearchQuery('')}
-          className="absolute right-2.5 top-1/2 -translate-y-1/2 w-6 h-6 rounded-full flex items-center justify-center text-[#6B6259] hover:bg-white/[0.06] transition-colors touch-manipulation"
-          aria-label="Clear search"
-        >
-          <X className="w-3.5 h-3.5" />
-        </button>
-      )}
-    </div>
-  </div>
+        <div
+          aria-hidden
+          className="pointer-events-none absolute inset-0"
+          style={{
+            background:
+              'radial-gradient(600px 380px at 0% 0%, rgba(217,119,6,0.07), transparent 65%)',
+          }}
+        />
 
-  {/* Divider */}
-  <div aria-hidden className="relative z-10 h-px mx-4 bg-white/[0.06]" />
-
-  {/* List */}
-  <div
-    className="groups-sidebar-scroll relative z-10 flex-1 overflow-y-auto px-2 py-2 space-y-0.5"
-    style={{ overscrollBehavior: 'contain' }}
-  >
-        {!groupsLoaded && groups.length === 0 ? (
-      <div className="px-2 py-3 space-y-2">
-        {[0, 1, 2, 3, 4, 5].map((i) => (
-          <div key={i} className="flex items-center gap-3 px-3.5 py-2.5 rounded-2xl animate-pulse">
-            <div className="w-9 h-9 rounded-lg bg-white/[0.04] shrink-0" />
-            <div className="flex-1 space-y-1.5">
-              <div className="h-3 w-24 rounded bg-white/[0.04]" />
-              <div className="h-2.5 w-16 rounded bg-white/[0.03]" />
-            </div>
+        <div className="relative z-10 h-[72px] px-5 flex items-center justify-between shrink-0">
+          <div className="flex items-baseline gap-2.5 min-w-0">
+            <h2
+              className="text-[26px] font-bold tracking-[-0.02em] leading-none text-[#EDE5D4]"
+              style={{ fontFamily: '"Instrument Serif", Georgia, serif' }}
+            >
+              Groups
+            </h2>
+            <span className="text-[11px] tabular-nums font-bold px-2 py-0.5 rounded-full bg-white/[0.04] border border-white/[0.06] text-[#6B6259]">
+              {groups.length}
+            </span>
           </div>
-        ))}
-      </div>
-    ) : filteredGroups.length === 0 ? (
-      <div className="flex flex-col items-center justify-center text-center px-4 py-12 gap-2.5">
-        <div className="w-12 h-12 rounded-full bg-white/[0.03] border border-white/[0.06] flex items-center justify-center">
-    {groups.length === 0 ? (
-            <Hash className="w-5 h-5 text-[#6B6259] opacity-60" />
+          <button
+            onClick={() => setCreateModalOpen(true)}
+            className="shrink-0 w-9 h-9 rounded-xl bg-white/[0.04] hover:bg-white/[0.08] border border-white/[0.06] flex items-center justify-center text-[#A8A29E] hover:text-[#EDE5D4] transition-colors touch-manipulation"
+            title="Create group"
+            aria-label="Create group"
+          >
+            <Plus className="w-4 h-4" />
+          </button>
+        </div>
+
+        <div className="relative z-10 px-4 pb-3">
+          <div className="relative">
+            <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 pointer-events-none text-[#6B6259]" />
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="Search groups"
+              className="w-full h-11 pl-11 pr-10 rounded-2xl bg-white/[0.03] border border-white/[0.06] text-[13.5px] text-[#EDE5D4] focus:outline-none focus:ring-2 focus:ring-inset focus:ring-[#D97706]/25 focus:border-[#D97706]/40 placeholder:text-[#6B6259] transition-colors touch-manipulation"
+            />
+            {searchQuery && (
+              <button
+                type="button"
+                onClick={() => setSearchQuery('')}
+                className="absolute right-2.5 top-1/2 -translate-y-1/2 w-6 h-6 rounded-full flex items-center justify-center text-[#6B6259] hover:bg-white/[0.06] transition-colors touch-manipulation"
+                aria-label="Clear search"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            )}
+          </div>
+        </div>
+
+        <div aria-hidden className="relative z-10 h-px mx-4 bg-white/[0.06]" />
+
+        <div
+          className="groups-sidebar-scroll relative z-10 flex-1 overflow-y-auto px-2 py-2 space-y-0.5"
+          style={{ overscrollBehavior: 'contain' }}
+        >
+          {!groupsLoaded && groups.length === 0 ? (
+            <div className="px-2 py-3 space-y-2">
+              {[0, 1, 2, 3, 4, 5].map((i) => (
+                <div key={i} className="flex items-center gap-3 px-3.5 py-2.5 rounded-2xl animate-pulse">
+                  <div className="w-9 h-9 rounded-lg bg-white/[0.04] shrink-0" />
+                  <div className="flex-1 space-y-1.5">
+                    <div className="h-3 w-24 rounded bg-white/[0.04]" />
+                    <div className="h-2.5 w-16 rounded bg-white/[0.03]" />
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : filteredGroups.length === 0 ? (
+            <div className="flex flex-col items-center justify-center text-center px-4 py-12 gap-2.5">
+              <div className="w-12 h-12 rounded-full bg-white/[0.03] border border-white/[0.06] flex items-center justify-center">
+                {groups.length === 0 ? (
+                  <Hash className="w-5 h-5 text-[#6B6259] opacity-60" />
+                ) : (
+                  <Search className="w-5 h-5 text-[#6B6259] opacity-60" />
+                )}
+              </div>
+              <p className="text-[13px] font-medium text-[#EDE5D4] opacity-90">
+                {groups.length === 0
+                  ? 'No groups yet'
+                  : searchQuery
+                  ? 'No matches found'
+                  : 'Nothing here yet'}
+              </p>
+              <p className="text-[11.5px] text-[#6B6259] max-w-[220px] leading-snug">
+                {groups.length === 0
+                  ? 'Create your first group to get started.'
+                  : searchQuery
+                  ? `Nothing matched "${searchQuery}".`
+                  : 'Use + above to create one.'}
+              </p>
+              {searchQuery ? (
+                <button
+                  type="button"
+                  onClick={() => setSearchQuery('')}
+                  className="mt-1 h-8 px-3.5 rounded-full text-[12px] font-semibold bg-[#D97706] hover:bg-[#B45309] text-[#0F0D0A] transition-colors touch-manipulation"
+                >
+                  Clear search
+                </button>
+              ) : groups.length === 0 ? (
+                <button
+                  type="button"
+                  onClick={() => setCreateModalOpen(true)}
+                  className="mt-1 h-8 px-3.5 rounded-full text-[12px] font-semibold bg-[#D97706] hover:bg-[#B45309] text-[#0F0D0A] transition-colors touch-manipulation inline-flex items-center gap-1.5"
+                >
+                  <Plus className="w-3.5 h-3.5" /> Create group
+                </button>
+              ) : null}
+            </div>
           ) : (
-            <Search className="w-5 h-5 text-[#6B6259] opacity-60" />
+            filteredGroups.map((group) => (
+              <SidebarRow
+                key={group.id}
+                group={group}
+                isSelected={group.id === activeGroupId}
+                pinned={pinnedIds.has(String(group.id))}
+                muted={mutedIds.has(String(group.id))}
+                onOpen={openGroup}
+                onMenu={openMenu}
+              />
+            ))
           )}
         </div>
-        <p className="text-[13px] font-medium text-[#EDE5D4] opacity-90">
-          {groups.length === 0
-            ? 'No groups yet'
-            : searchQuery
-            ? 'No matches found'
-            : 'Nothing here yet'}
-        </p>
-        <p className="text-[11.5px] text-[#6B6259] max-w-[220px] leading-snug">
-          {groups.length === 0
-            ? 'Create your first group to get started.'
-            : searchQuery
-            ? `Nothing matched "${searchQuery}".`
-            : 'Use + above to create one.'}
-        </p>
-        {searchQuery ? (
-          <button
-            type="button"
-            onClick={() => setSearchQuery('')}
-            className="mt-1 h-8 px-3.5 rounded-full text-[12px] font-semibold bg-[#D97706] hover:bg-[#B45309] text-[#0F0D0A] transition-colors touch-manipulation"
-          >
-            Clear search
-          </button>
-        ) : groups.length === 0 ? (
-          <button
-            type="button"
-            onClick={() => setCreateModalOpen(true)}
-            className="mt-1 h-8 px-3.5 rounded-full text-[12px] font-semibold bg-[#D97706] hover:bg-[#B45309] text-[#0F0D0A] transition-colors touch-manipulation inline-flex items-center gap-1.5"
-          >
-            <Plus className="w-3.5 h-3.5" /> Create group
-          </button>
-        ) : null}
       </div>
-    ) : (
-      filteredGroups.map((group) => (
-        <SidebarRow
-          key={group.id}
-          group={group}
-          isSelected={group.id === activeGroupId}
-          pinned={pinnedIds.has(String(group.id))}
-          muted={mutedIds.has(String(group.id))}
-          onOpen={openGroup}
-          onMenu={openMenu}
-        />
-      ))
-    )}
-  </div>
-</div>
+
       {/* RIGHT: Channel view */}
       <div className={`${hasActiveGroup ? 'flex' : 'hidden md:flex'} flex-1 flex-col h-full min-w-0 bg-[#0B0A08] relative`}>
         {activeGroupId && activeGroup ? (
@@ -3533,7 +3662,7 @@ export default function GroupPane(): React.JSX.Element {
                         );
                       }
                       const m = item.message;
-                      const replyId = (m as GroupMessageDto & { replyToId?: number | null }).replyToId ?? null;
+                      const replyId = (m as ExtendedGroupMessageDto).replyToId ?? null;
                       const replyTarget = replyId != null ? messagesById.get(replyId) ?? null : null;
                       return (
                         <GroupMessageItem key={item.key} message={m}
