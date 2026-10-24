@@ -2,6 +2,78 @@
 @import "tailwindcss";
 
 /* ──────────────────────────────────────────────────────────
+   Android-first root setup — kills the white flash on
+   keyboard open and removes the extra repaint that causes
+   the "1 second lag" feel.
+
+   Three things were causing the flash/lag, all fixed below:
+
+   1. No `color-scheme: dark` → Android Chrome paints form
+      controls, scrollbars, and the keyboard-transition gap
+      in LIGHT (white) mode until CSS paints. This is the
+      primary cause of the millisecond white flash.
+   2. Background on `body` only → the very first frame (the
+      pre-paint frame of `html`) is white.
+   3. No `overscroll-behavior: none` → Android's rubber-band
+      overscroll reveals white behind the page when the
+      visual viewport shrinks for the keyboard.
+   ────────────────────────────────────────────────────────── */
+
+:root {
+  color-scheme: dark;
+  --vv-gap: 0px;
+  --vv-height: 100vh;
+}
+
+html {
+  height: 100%;
+  background-color: #0C0B09;
+  color-scheme: dark;
+  overscroll-behavior: none;
+  overscroll-behavior-y: none;
+  -webkit-text-size-adjust: 100%;
+  -moz-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+  -webkit-tap-highlight-color: transparent;
+}
+
+body {
+  margin: 0;
+  height: 100%;
+  background-color: #0C0B09;
+  color: #D4CCBC;
+  overscroll-behavior: none;
+  overscroll-behavior-y: none;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto',
+    'Helvetica Neue', Arial, sans-serif;
+
+  /*
+   * `auto` lets the OS pick subpixel-AA on displays that support it.
+   * Forcing `antialiased` on dark backgrounds produces grainy text.
+   */
+  -webkit-font-smoothing: auto;
+  -moz-osx-font-smoothing: auto;
+
+  /*
+   * geometricPrecision, NOT optimizeLegibility.
+   * optimizeLegibility triggers subpixel glyph positioning on Android
+   * WebView, producing visible color fringing on every character.
+   */
+  text-rendering: geometricPrecision;
+
+  /* kern + liga only. No calt — contextual alternates add noise. */
+  font-feature-settings: "kern" 1, "liga" 1;
+
+  /* Tint checkboxes, radio buttons, range inputs to match the theme */
+  accent-color: #D97706;
+}
+
+#root {
+  height: 100%;
+  background-color: #0C0B09;
+}
+
+/* ──────────────────────────────────────────────────────────
    Focus ring strategy
    - Text fields (input / textarea / select / contenteditable):
        NO global outline — they carry their own focus styling
@@ -16,8 +88,6 @@
   outline: none;
 }
 
-/* Text-entry elements — kill the global outline outright.
-   Their component-level focus ring is the only indicator. */
 input,
 textarea,
 select,
@@ -25,8 +95,6 @@ select,
   outline: none !important;
 }
 
-/* Minimal warm-neutral ring for keyboard tab.
-   Excludes text fields so clicks never trigger a visible ring. */
 *:focus-visible:not(input):not(textarea):not(select):not([contenteditable='true']) {
   outline: 1.5px solid rgba(237, 229, 212, 0.28);
   outline-offset: 2px;
@@ -38,76 +106,16 @@ select,
 }
 
 /* ──────────────────────────────────────────────────────────
-   Base styles — grain-free dark
-   ────────────────────────────────────────────────────────── */
-
-html,
-body,
-#root {
-  height: 100%;
-  background-color: #0C0B09;
-  color: #D4CCBC;
-}
-
-body {
-  margin: 0;
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto',
-    'Helvetica Neue', Arial, sans-serif;
-
-  /*
-   * `auto` lets the OS pick subpixel-AA on displays that support it.
-   * Forcing `antialiased` on dark backgrounds produces grainy text.
-   */
-  -webkit-font-smoothing: auto;
-  -moz-osx-font-smoothing: auto;
-
-  /*
-   * CRITICAL: geometricPrecision, NOT optimizeLegibility.
-   * optimizeLegibility triggers subpixel glyph positioning on Android
-   * WebView, which produces visible color fringing on every character —
-   * the #1 cause of "grainy text". geometricPrecision uses smooth
-   * grayscale AA with proper glyph metrics.
-   */
-  text-rendering: geometricPrecision;
-
-  /*
-   * kern + liga only. No calt — contextual alternates substitute glyphs
-   * at small sizes which adds visible noise to UI text.
-   */
-  font-feature-settings: "kern" 1, "liga" 1;
-}
-
-/* ──────────────────────────────────────────────────────────
    TEXT GRAIN KILLER — dim every palette color globally
    Contrast drops from 15.9:1 → 11.2:1 (the sweet spot for dark UI)
    ────────────────────────────────────────────────────────── */
 
-/* Primary text: #EDE5D4 → #D4CCBC */
-.text-\[\#EDE5D4\] {
-  color: #D4CCBC !important;
-}
+.text-\[\#EDE5D4\] { color: #D4CCBC !important; }
+.text-\[\#A8A29E\] { color: #8E8780 !important; }
+.text-\[\#6B6259\] { color: #5A5450 !important; }
+.text-\[\#7A6F65\] { color: #6A615A !important; }
+.text-\[\#5A524A\] { color: #4A443E !important; }
 
-/* Secondary text: #A8A29E → #8E8780 */
-.text-\[\#A8A29E\] {
-  color: #8E8780 !important;
-}
-
-/* Tertiary text: #6B6259 → #5A5450 */
-.text-\[\#6B6259\] {
-  color: #5A5450 !important;
-}
-
-/* Quaternary text: #7A6F65 → #6A615A */
-.text-\[\#7A6F65\] {
-  color: #6A615A !important;
-}
-
-/* Deep muted: #5A524A → #4A443E */
-.text-\[\#5A524A\] {
-  color: #4A443E !important;
-}
-
-/* Selection color — subtle amber, not bright */
 ::selection {
   background-color: rgba(217, 119, 6, 0.22);
   color: #F5EFE2;
@@ -169,12 +177,6 @@ body {
   img,
   button {
     -webkit-touch-callout: none;
-  }
-
-  html,
-  body {
-    overscroll-behavior: none;
-    -webkit-overflow-scrolling: touch;
   }
 
   button,
