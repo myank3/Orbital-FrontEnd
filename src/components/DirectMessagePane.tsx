@@ -98,7 +98,7 @@ import {
 } from './dm/ComposerToolkit';
 
 /* ────────────────────────────────────────────────────────── */
-/* WhatsApp-style call timer pill                             */
+/* WhatsApp-style call timer pill                            */
 /* ────────────────────────────────────────────────────────── */
 function Portal({ children }: { children: React.ReactNode }) {
   const [mounted, setMounted] = useState(false);
@@ -119,7 +119,7 @@ function CallTimerPill({ callState, duration }: { callState: CallState; duration
 }
 
 /* ────────────────────────────────────────────────────────── */
-/* Custom toast: offline call warning                         */
+/* Custom toast: offline call warning                        */
 /* ────────────────────────────────────────────────────────── */
 
 interface OfflineCallToastProps {
@@ -772,7 +772,7 @@ function LinkifiedText({ text, isMe }: { text: string; isMe: boolean }) {
   }, [text]);
 
   return (
-    <p className="whitespace-pre-wrap break-words leading-relaxed select-text">
+    <p className="whitespace-pre-wrap break-words leading-relaxed select-none sm:select-text">
       {parts.map((p, i) =>
         p.type === 'text' ? (
           <React.Fragment key={i}>{p.value}</React.Fragment>
@@ -1280,9 +1280,11 @@ function MessageMenu({
   onDeleteForEveryone: () => void;
 }) {
   const menuRef = useRef<HTMLDivElement>(null);
+  const openedAtRef = useRef(performance.now());
   const [pos, setPos] = useState<{ left: number; top: number; origin: 'top' | 'bottom' } | null>(null);
 
   useEffect(() => {
+    openedAtRef.current = performance.now();
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
@@ -1293,7 +1295,7 @@ function MessageMenu({
     if (!el) return;
     const rect = el.getBoundingClientRect();
     const w = rect.width || 260;
-    const h = rect.height || 300;
+    const h = rect.height || 280;
     const pad = 12;
     const gap = 8;
 
@@ -1316,7 +1318,15 @@ function MessageMenu({
     setPos({ left, top, origin });
   }, [anchor]);
 
-  const canAct = typeof message.id === 'number' && message.id > 0;
+  // Ignore synthetic click/contextmenu fired by Android when lifting finger after long-press
+  const handleBackdropDismiss = (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (performance.now() - openedAtRef.current < 350) return;
+    onClose();
+  };
+
+  const canAct = Number(message.id) > 0;
   const text = message.plaintext ?? message.content ?? '';
   const mine = new Set(reactions.filter((r) => r.userId === currentUserId).map((r) => r.emoji));
   const run = (fn: () => void) => () => { fn(); onClose(); };
@@ -1335,21 +1345,22 @@ function MessageMenu({
       {/* Transparent click-catcher */}
       <div
         className="fixed inset-0 z-[290]"
-        onClick={onClose}
-        onContextMenu={(e) => { e.preventDefault(); onClose(); }}
+        onClick={handleBackdropDismiss}
+        onContextMenu={handleBackdropDismiss}
         aria-hidden
       />
 
       <div
         ref={menuRef}
         style={{
-          left: pos?.left ?? -10000,
-          top: pos?.top ?? -10000,
+          left: pos?.left ?? Math.max(12, Math.min(window.innerWidth - 272, anchor.x - 130)),
+          top: pos?.top ?? Math.max(12, Math.min(window.innerHeight - 300, anchor.y + 8)),
           transformOrigin: pos?.origin === 'bottom' ? 'bottom center' : 'top center',
-          animation: pos ? 'menu-pop 140ms cubic-bezier(0.16,1,0.3,1) both' : undefined,
+          animation: 'menu-pop 140ms cubic-bezier(0.16,1,0.3,1) both',
         }}
         onClick={(e) => e.stopPropagation()}
-        className="fixed z-[291] w-[260px] max-w-[calc(100vw-24px)] flex flex-col gap-1.5"
+        onContextMenu={(e) => e.preventDefault()}
+        className="fixed z-[291] w-[260px] max-w-[calc(100vw-24px)] flex flex-col gap-1.5 select-none"
         role="menu"
       >
         {canAct && (
@@ -1357,6 +1368,7 @@ function MessageMenu({
             {QUICK_REACTIONS.map((e) => (
               <button
                 key={e}
+                type="button"
                 onClick={run(() => onReact(e))}
                 className={`flex-1 h-9 rounded-full flex items-center justify-center text-[20px] hover:bg-white/[0.10] active:bg-white/[0.16] transition-colors ${
                   mine.has(e) ? 'bg-white/[0.14]' : ''
@@ -1371,27 +1383,28 @@ function MessageMenu({
 
         <div className="rounded-2xl bg-[#1C1A17] border border-white/[0.10] shadow-2xl overflow-hidden">
           {canAct && (
-            <button onClick={run(onReply)} className={itemCls} role="menuitem">
+            <button type="button" onClick={run(onReply)} className={itemCls} role="menuitem">
               <Reply className="w-4 h-4 text-[#A8A29E]" /><span>Reply</span>
             </button>
           )}
           {text && (
-            <button onClick={run(onCopy)} className={itemCls} role="menuitem">
+            <button type="button" onClick={run(onCopy)} className={itemCls} role="menuitem">
               <Copy className="w-4 h-4 text-[#A8A29E]" /><span>Copy text</span>
             </button>
           )}
           {canAct && (
-            <button onClick={run(onInfo)} className={itemCls} role="menuitem">
+            <button type="button" onClick={run(onInfo)} className={itemCls} role="menuitem">
               <Info className="w-4 h-4 text-[#A8A29E]" /><span>Info</span>
             </button>
           )}
           {canAct && (
-            <button onClick={run(onDeleteForMe)} className={`${itemCls} border-t border-white/[0.05]`} role="menuitem">
+            <button type="button" onClick={run(onDeleteForMe)} className={`${itemCls} border-t border-white/[0.05]`} role="menuitem">
               <EyeOff className="w-4 h-4 text-[#A8A29E]" /><span>Delete for me</span>
             </button>
           )}
           {canAct && isMe && (
             <button
+              type="button"
               onClick={run(onDeleteForEveryone)}
               className="w-full flex items-center gap-2.5 px-3 py-2.5 text-[13px] font-medium text-left text-[#F87171] hover:bg-[#B91C1C]/[0.12] active:bg-[#B91C1C]/[0.20]"
               role="menuitem"
@@ -2046,7 +2059,7 @@ const MessageRow = React.memo(
 
     const isVoice = message.mediaType === MediaType.Audio;
     const tailClass = isLastOfGroup ? (isMe ? 'rounded-br-[4px]' : 'rounded-bl-[4px]') : '';
-    const canAct = typeof message.id === 'number' && message.id > 0;
+    const canAct = Number(message.id) > 0;
 
     return (
       <div
@@ -2109,7 +2122,7 @@ const MessageRow = React.memo(
                 >
                   <Reply className="w-4 h-4" />
                 </button>
-                                <button
+                            <button
                   type="button"
                   onClick={(e) => {
                     const r = e.currentTarget.getBoundingClientRect();
@@ -3238,7 +3251,7 @@ export function DirectMessagePane(): React.JSX.Element {
 
   const isPeerTyping = useDmTypingReceiver(userId);
 
-     const [friends, setFriends] = useState<FriendDto[]>(() => {
+      const [friends, setFriends] = useState<FriendDto[]>(() => {
     if (typeof window === 'undefined' || !user?.id) return [];
     try {
       const v2 = localStorage.getItem(`orbital.cachedFriends.v2.${user.id}`);
@@ -3423,7 +3436,7 @@ export function DirectMessagePane(): React.JSX.Element {
       setFriendsLoaded(true);
     }
   }, [user?.id]);
-   useEffect(() => { void loadFriends(); }, [loadFriends]);
+    useEffect(() => { void loadFriends(); }, [loadFriends]);
 
     useEffect(() => {
     if (typeof window === 'undefined' || !user?.id) return;
@@ -3483,7 +3496,7 @@ export function DirectMessagePane(): React.JSX.Element {
           url: m.mediaUrl as string,
           senderName: m.senderId === user?.id ? 'You' : targetUser?.displayName ?? 'Them',
           sentAt: m.sentAt,
-        })),
+ } )),
     [messages, user?.id, targetUser?.displayName],
   );
 
@@ -4388,7 +4401,7 @@ export function DirectMessagePane(): React.JSX.Element {
     className={`dm-sidebar-scroll relative z-10 flex-1 overflow-y-auto px-2 py-2 space-y-0.5`}
     style={{ overscrollBehavior: 'contain' }}
   >
-       {!friendsLoaded && friends.length === 0 ? (
+        {!friendsLoaded && friends.length === 0 ? (
       <div className="px-2 py-3 space-y-2">
         {[0, 1, 2, 3, 4, 5].map((i) => (
           <div key={i} className="flex items-center gap-3 px-3.5 py-2.5 rounded-2xl animate-pulse">
@@ -4489,7 +4502,7 @@ export function DirectMessagePane(): React.JSX.Element {
                 </div>
               </div>
               <div className="flex items-center gap-0.5 sm:gap-1 shrink-0">
-                                <button
+                        <button
                   onClick={() => void handleAudioCall()}
                   title={inCallWithThisPeer ? 'Already in call' : 'Audio call'}
                   disabled={inCallWithThisPeer}

@@ -1845,19 +1845,17 @@ function PhoneMockup({
     <div
       className="relative mx-auto select-none"
       style={{
-        width: "clamp(258px, 24vw, 356px)",
-        aspectRatio: "0.4779",
+        width: "clamp(264px, 24vw, 356px)",
+        aspectRatio: "9 / 19",
         transform: "translate3d(0,0,0)",
         backfaceVisibility: "hidden",
-        contain: "layout paint style",
         overflowAnchor: "none",
       }}
     >
-      {/* ── SHELL ── */}
+      {/* ── OUTER TITANIUM SHELL (44px radius) ── */}
       <div
-        className="absolute inset-0"
+        className="absolute inset-0 rounded-[44px] sm:rounded-[52px]"
         style={{
-          borderRadius: "clamp(40px, 4.1vw, 58px)",
           background: `linear-gradient(155deg,
             #4A4A52 0%,
             #31313A 22%,
@@ -1866,8 +1864,8 @@ function PhoneMockup({
             #2A2A32 82%,
             #46464E 100%)`,
           boxShadow: mobile
-            ? `inset 0 0 0 1.5px rgba(255,255,255,0.14),
-               0 30px 80px -22px rgba(0,0,0,0.92)`
+            ? `inset 0 0 0 1.5px rgba(255,255,255,0.16),
+               0 24px 60px -18px rgba(0,0,0,0.92)`
             : `inset 0 0 0 1.5px rgba(255,255,255,0.14),
                inset 0 0 0 3px rgba(0,0,0,0.55),
                0 0 0 1px rgba(0,0,0,0.75),
@@ -1876,58 +1874,44 @@ function PhoneMockup({
                0 90px 190px -55px rgba(0,0,0,0.80)`,
         }}
       />
+
+      {/* ── INNER BEZEL (4px inset -> 40px/48px radius) ── */}
       <div
-        className="absolute"
+        className="absolute inset-[4px] rounded-[40px] sm:inset-[6px] sm:rounded-[46px]"
         style={{
-          inset: "clamp(4px, 0.5vw, 7px)",
-          borderRadius: "clamp(36px, 3.8vw, 52px)",
           background: "#08080A",
           boxShadow: "inset 0 0 0 1px rgba(255,255,255,0.06)",
         }}
       />
 
-      {/* ── SCREEN ── */}
+      {/* ── SCREEN VIEWPORT (8px inset -> 36px/42px concentric radius) ── */}
       <div
-        className="absolute overflow-hidden"
+        className="absolute inset-[8px] overflow-hidden rounded-[36px] sm:inset-[10px] sm:rounded-[42px]"
         style={{
-          inset: "clamp(6px, 0.9vw, 12px)",
-          borderRadius: "clamp(34px, 3.4vw, 48px)",
           background: "#08080B",
           transform: "translate3d(0,0,0)",
           backfaceVisibility: "hidden",
-          contain: "strict",
+          // Forces Android Chrome GPU to respect border-radius on 3D children
+          WebkitMaskImage: "-webkit-radial-gradient(white, black)",
+          isolation: "isolate",
           overflowAnchor: "none",
         }}
       >
         {children}
       </div>
 
-      {/* ── ISLAND ── */}
+      {/* ── DYNAMIC ISLAND ── */}
       <div
         aria-hidden
-        className="pointer-events-none absolute left-1/2 z-40"
+        className="pointer-events-none absolute left-1/2 top-[16px] z-40 h-[24px] w-[88px] -translate-x-1/2 rounded-full bg-black sm:top-[20px] sm:h-[28px] sm:w-[104px]"
         style={{
-          top: "clamp(15px, 1.8vw, 26px)",
-          width: "clamp(84px, 8.2vw, 114px)",
-          height: "clamp(23px, 2.4vw, 35px)",
-          borderRadius: "999px",
-          background: "#000",
-          transform: "translate3d(-50%,0,0)",
-          backfaceVisibility: "hidden",
-          isolation: "isolate",
-          contain: "layout paint",
           boxShadow:
             "inset 0 1px 1px rgba(255,255,255,0.06), 0 1px 2px rgba(0,0,0,0.5)",
         }}
       >
         <span
-          className="absolute rounded-full bg-[#0e0e0e]"
+          className="absolute right-[10px] top-1/2 h-[6px] w-[6px] -translate-y-1/2 rounded-full bg-[#0e0e0e]"
           style={{
-            right: "10px",
-            top: "50%",
-            width: "clamp(4px, 0.5vw, 7px)",
-            height: "clamp(4px, 0.5vw, 7px)",
-            transform: "translateY(-50%)",
             boxShadow: "inset 0 0 0 0.5px rgba(255,255,255,0.06)",
             backgroundImage:
               "linear-gradient(135deg, #1a1a1a 0%, #050505 100%)",
@@ -1935,59 +1919,36 @@ function PhoneMockup({
         />
       </div>
 
-      {/* ── BUTTONS ── */}
+      {/* ── HARDWARE BUTTONS ── */}
       <div
-        className="absolute -right-[3px]"
-        style={{
-          top: "28%",
-          width: 3,
-          height: "11%",
-          borderRadius: "0 2px 2px 0",
-          background: "linear-gradient(180deg, #45454D, #26262C)",
-        }}
+        className="absolute -right-[2.5px] top-[28%] h-[11%] w-[2.5px] rounded-r-[2px]"
+        style={{ background: "linear-gradient(180deg, #45454D, #26262C)" }}
       />
       <div
-        className="absolute -left-[3px]"
-        style={{
-          top: "22%",
-          width: 3,
-          height: "6%",
-          borderRadius: "2px 0 0 2px",
-          background: "linear-gradient(180deg, #45454D, #26262C)",
-        }}
+        className="absolute -left-[2.5px] top-[22%] h-[6%] w-[2.5px] rounded-l-[2px]"
+        style={{ background: "linear-gradient(180deg, #45454D, #26262C)" }}
       />
       <div
-        className="absolute -left-[3px]"
-        style={{
-          top: "32%",
-          width: 3,
-          height: "10%",
-          borderRadius: "2px 0 0 2px",
-          background: "linear-gradient(180deg, #45454D, #26262C)",
-        }}
+        className="absolute -left-[2.5px] top-[32%] h-[10%] w-[2.5px] rounded-l-[2px]"
+        style={{ background: "linear-gradient(180deg, #45454D, #26262C)" }}
       />
 
       {/* ── GLASS HIGHLIGHT ── */}
       <div
-        className="pointer-events-none absolute z-20"
+        className="pointer-events-none absolute inset-[8px] z-20 rounded-[36px] sm:inset-[10px] sm:rounded-[42px]"
         style={{
-          inset: "clamp(6px, 0.9vw, 12px)",
-          borderRadius: "clamp(34px, 3.4vw, 48px)",
           background: `linear-gradient(140deg,
-            rgba(255,255,255,0.08) 0%,
-            rgba(255,255,255,0.02) 18%,
+            rgba(255,255,255,0.07) 0%,
+            rgba(255,255,255,0.015) 18%,
             transparent 34%,
             transparent 66%,
-            rgba(255,255,255,0.02) 84%,
-            rgba(255,255,255,0.05) 100%)`,
-          transform: "translate3d(0,0,0)",
-          backfaceVisibility: "hidden",
+            rgba(255,255,255,0.015) 84%,
+            rgba(255,255,255,0.04) 100%)`,
         }}
       />
     </div>
   );
 }
-
 /* ═══════════════════════════════════════════════════════════
    STATUS BAR — isolated layer, no collapse flicker.
    ═══════════════════════════════════════════════════════════ */
@@ -2431,37 +2392,39 @@ function PhoneChat() {
       </div>
 
       {/* ── composer ── */}
+   
+      {/* ── composer (rounded bottom so it never pokes out of the bezel on Android) ── */}
       <div
-        className="relative z-20 shrink-0 border-t border-white/[0.07] bg-[#08080B] px-3 pb-6 pt-2.5"
-        style={{ transform: "translate3d(0,0,0)", backfaceVisibility: "hidden" }}
+        className="relative z-20 shrink-0 rounded-b-[36px] border-t border-white/[0.07] bg-[#08080B] px-3 pb-5 pt-2 sm:rounded-b-[42px] sm:pb-6 sm:pt-2.5"
       >
         <div className="flex items-center gap-1.5">
           <button
             aria-label="Add"
-            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-white/[0.08]"
+            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-white/[0.08] sm:h-9 sm:w-9"
           >
-            <Plus size={15} className="text-[#F0E4CC]/80" />
+            <Plus size={14} className="text-[#F0E4CC]/80" />
           </button>
-          <div className="flex flex-1 items-center gap-2 rounded-full border border-white/[0.08] bg-white/[0.06] px-3.5 py-2.5">
-            <span className="text-[11.5px] text-[#F0E4CC]/45">Message…</span>
-            <div className="ml-auto flex items-center gap-2">
-              <Smile size={13} className="text-[#F0E4CC]/50" />
-              <Paperclip size={13} className="text-[#F0E4CC]/50" />
-              <Camera size={13} className="text-[#F0E4CC]/50" />
+          <div className="flex min-w-0 flex-1 items-center gap-1.5 rounded-full border border-white/[0.08] bg-white/[0.06] px-3 py-2 sm:gap-2 sm:px-3.5 sm:py-2.5">
+            <span className="truncate text-[11px] text-[#F0E4CC]/45 sm:text-[11.5px]">
+              Message…
+            </span>
+            <div className="ml-auto flex shrink-0 items-center gap-1.5 sm:gap-2">
+              <Smile size={12} className="text-[#F0E4CC]/50" />
+              <Paperclip size={12} className="text-[#F0E4CC]/50" />
+              <Camera size={12} className="text-[#F0E4CC]/50" />
             </div>
           </div>
           <button
             aria-label="Send"
-            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-[#D69340] to-[#A46E2C] shadow-[0_4px_14px_-6px_rgba(200,136,58,0.9)]"
+            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-white/15 bg-gradient-to-b from-[#1E1E26] to-[#0D0D12] shadow-[0_4px_14px_-4px_rgba(0,0,0,0.9),inset_0_1px_0_rgba(255,255,255,0.1)] sm:h-9 sm:w-9"
           >
-            <Send size={12} className="text-[#1A1105]" />
+            <Send size={11} className="text-[#F0E4CC]" />
           </button>
         </div>
       </div>
 
       {/* home indicator */}
-      <div className="pointer-events-none absolute bottom-1.5 left-1/2 z-30 h-[3px] w-20 -translate-x-1/2 rounded-full bg-[#F0E4CC]/55" />
-    </div>
+      <div className="pointer-events-none absolute bottom-1.5 left-1/2 z-30 h-[3px] w-24 -translate-x-1/2 rounded-full bg-[#F0E4CC]/45" /></div>
   );
 }
 
