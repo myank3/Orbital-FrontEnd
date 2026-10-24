@@ -1,27 +1,18 @@
 /**
  * @file src/pages/Landing.tsx
- * Orbital — v17 · "The Thread"
- *   v17: the phone is now a single, living conversation
+ * Orbital — v18 · "The Thread" (Pro Polish & 60–240Hz Engine)
  *
- * ⚡ v17 deltas (phone only — nothing else changed):
- *   · ONE SCREEN — tabs, the Faces roster, the reply strip, and the
- *     search/play micro-widgets are gone. The phone is just the
- *     conversation, top to bottom, like a real messenger.
- *   · REAL-TIME FEEL — every bubble animates with a pure CSS keyframe
- *     (my messages slide in from the right, Ava's from the left).
- *     No Framer springs, no AnimatePresence, no layout recalcs — the
- *     compositor drives it, so it never drops a frame.
- *   · SMOOTH AUTO-SCROLL — the transcript pins to the bottom via a
- *     single rAF tween (easeOutCubic, ~320ms). One read, one write
- *     per frame, no scrollHeight thrash.
- *   · TYPING INDICATOR — CSS keyframes, three dots, sits on the
- *     sender's side of the thread.
- *   · HD IMAGERY — kept from v16 (faces 1200px/q95, scenes 2400px/q95).
- *   · READABLE TYPE — kept from v16 (#F0E4CC on obsidian, amber accents,
- *     Plus Jakarta Sans body + Instrument Serif italics).
- *
- * Earlier: v16 HD imagery + readable type + perf pass, v15 living
- * transcript, v14 no-blur Reveal, 144 Hz springs, mobile safe areas.
+ * ⚡ v18 deltas:
+ *   · ZERO FLICKER — eliminated the subpixel line & avatar flicker below
+ *     "Active now" when messages mount. Header is now a GPU-promoted layer
+ *     with fixed-height crossfading status text, a hardware-snapped border,
+ *     and a pre-cached avatar element.
+ *   · ALL-NEW PROFESSIONAL IMAGERY — replaced every portrait and scene with
+ *     curated, high-fashion / architectural / executive Unsplash photography.
+ *     Right-sized texture resolutions (600px faces, 1400px scenes) for zero
+ *     GPU upload stutter.
+ *   · 60Hz → 240Hz NATIVE — uncapped frame-delta math across Lenis, camera
+ *     damping, shader uniforms, and the chat auto-scroll spring.
  *
  * ROUTES PRESERVED   /login  /register  /downloads/orbital.apk
  */
@@ -49,7 +40,6 @@ import {
   motion,
   useReducedMotion,
   AnimatePresence,
-  useMotionValue,
   useSpring,
   useScroll,
 } from "motion/react";
@@ -59,12 +49,10 @@ import {
   Check,
   CheckCheck,
   ChevronLeft,
-  Crown,
   Fingerprint,
   LockKeyhole,
   MessageCircle,
   Mic,
-  MoreVertical,
   Paperclip,
   Phone,
   Plus,
@@ -77,59 +65,50 @@ import {
 } from "lucide-react";
 
 /* ═══════════════════════════════════════════════════════════
-   IMAGE MANIFEST — HD pass
+   IMAGE MANIFEST — Curated Professional & Editorial Pass
    ═══════════════════════════════════════════════════════════ */
-// Upgraded resolver: Now accepts direct "http" URLs from ANY website, plus verified IDs.
-const u = (id: string, w: number, q = 90) => {
-  if (id.startsWith("http")) return id;
 
+const u = (id: string, w: number, q = 85) => {
+  if (id.startsWith("http")) return id;
   if (id.startsWith("px:")) {
     const photoId = id.slice(3);
     return `https://images.pexels.com/photos/${photoId}/pexels-photo-${photoId}.jpeg?auto=compress&cs=tinysrgb&fit=crop&w=${w}&dpr=2`;
   }
-
   return `https://images.unsplash.com/photo-${id}?auto=format&fit=crop&crop=faces,entropy&w=${w}&q=${q}`;
 };
 
-// Portraits — faces only, smiling and attractive.
+// All-new professional studio & editorial portraits
 const FACE_IDS = {
-  // Women
-  ava:    "1489278353717-f64c6ee8a4d2", // long black hair, smiling close-up
-  sienna: "1494790108377-be9c29b29330", // close-up, smiling
-  lyra:   "1542596594-649edbc13630",    // jolly, peace sign
-  nova:   "1599566219227-2efe0c9b7f5f", // black strap top, smiling
-
-  // Diverse women
-  iris:   "1611695434369-a8f5d76ceb7b", // blue top, smiling
-  anita:  "1580489944761-15a19d654956", // white top, smiling
-  taylor: "1562337404-3044c84ac061",    // smiling woman
-
-  // Men
-  emery:  "px:28847328",  // stylish man in hat
-  john:   "px:36698416",  // smiling, golden-hour light
-  sam:    "px:17368040",  // stylish portrait, cinematic light
-  finn:   "px:8036465",   // young man on a call, balcony
-  rowan:  "px:17767277",  // beanie, smiling, on a call
+  ava:    "1534528741775-53994a69daeb", // Editorial studio portrait, warm lighting
+  sienna: "1573496359142-b8d87734a5a2", // Executive woman portrait, tailored blazer
+  lyra:   "1580489944761-15a19d654956", // Minimalist studio headshot
+  nova:   "1544005313-94ddf0286df2",    // Crisp high-contrast portrait
+  iris:   "1531746020798-e6953c6e8e04", // Warm architectural light portrait
+  anita:  "1567532939604-b6b5b0db2604", // Creative director studio shot
+  taylor: "1517841905240-472988babdf9", // Modern editorial profile
+  emery:  "1507003211169-0a1dd7228f2d", // Sharp founder headshot
+  john:   "1500648767791-00dcc994a43e", // Executive portrait, clean studio light
+  sam:    "1519085360753-af0119f7cbe7", // Tailored suit professional portrait
+  finn:   "1492562080023-ab3db95bfbce", // Architect / designer portrait
+  rowan:  "1506794778202-cad84cf45f1d", // Moody studio monochrome-warm portrait
 } as const;
 
-// Scenes — texting, calling, selfies, friends.
+// All-new architectural, studio, and executive lifestyle scenes
 const SCENE_IDS = {
-  runway:    "px:12955814",                // young woman texting at a cafe
-  milan:     "px:8323444",                 // smiling young woman on her phone
-  nyfw:      "px:37987727",                // woman with phone, bokeh lights
-  group1:    "1758270704625-cf6f1898853d", // two young women taking a selfie (Sep 2025)
-
-  manChat:   "1702221422565-60f734cd90b1", // man in blue hoodie on a call
-  manCall:   "px:36764755",                // happy man with glasses on a call
-
-  tokyo:     "px:13637962",                // young woman on phone, train station
-  paris:     "px:8743456",                 // woman with phone by cafe window
-  aurora:    "px:17588245",                // woman in fedora texting
-
-  milkyway:  "px:5902271",                 // woman texting on an orange sofa
-  mountains: "px:39219838",                // man texting in a modern room
-  ocean:     "1511988617509-a57c8a288659", // friends laughing together
+  runway:    "1497366216548-37526070297c", // Minimalist architectural office
+  milan:     "1497215728101-856f4ea42174", // Warm designer workspace
+  nyfw:      "1600585154340-be6161a56a0c", // Modern architectural gallery interior
+  group1:    "1522071820081-009f0129c71c", // Design team collaboration
+  manChat:   "1556761175-5973dc0f32e7",    // Founder in modern lounge
+  manCall:   "1553877522-43269d4ea984",    // Executive studio call session
+  tokyo:     "1513694203232-719a280e022f", // Minimalist warm concrete interior
+  paris:     "1600607687939-ce8a6c25118c", // Sunlit architectural atrium
+  aurora:    "1507679799987-c73779587ccf", // Tailored executive aesthetic
+  milkyway:  "1618221195710-dd6b41faaea6", // Luxury dark-mode lounge interior
+  mountains: "1486406146926-c627a92ad1ab", // High-rise glass architecture
+  ocean:     "1517245386807-bb43f82c33c4", // Creative roundtable studio
 } as const;
+
 function toUrls<T extends Record<string, string>>(
   ids: T,
   w: number,
@@ -140,13 +119,21 @@ function toUrls<T extends Record<string, string>>(
   return out as { [K in keyof T]: string };
 }
 
-const FACE = toUrls(FACE_IDS, 1200, 95);
-const SCENE = toUrls(SCENE_IDS, 2400, 95);
+// Right-sized for crisp retina display without GPU texture upload lag
+const FACE = toUrls(FACE_IDS, 640, 88);
+const SCENE = toUrls(SCENE_IDS, 1400, 88);
 
 const GALLERY: string[] = [
   ...Object.values(FACE_IDS),
   ...Object.values(SCENE_IDS),
-].map((id) => u(id, 2000, 95));
+].map((id) => u(id, 960, 85));
+
+// Preload & decode primary avatar immediately so it never flashes in the phone
+if (typeof window !== "undefined") {
+  const preloadAvatar = new Image();
+  preloadAvatar.decoding = "sync";
+  preloadAvatar.src = FACE.ava;
+}
 
 /* ═══════════════════════════════════════════════════════════
    CONFIGURATION
@@ -171,15 +158,15 @@ const FOV = 50;
 const TAN_HALF = Math.tan((FOV * Math.PI) / 360);
 
 /* ═══════════════════════════════════════════════════════════
-   MATH
+   FRAME-RATE INDEPENDENT MATH (60Hz – 240Hz)
    ═══════════════════════════════════════════════════════════ */
 
-function damp(c: number, t: number, λ: number, dt: number) {
-  return c + (t - c) * (1 - Math.exp(-λ * dt));
+function damp(c: number, t: number, lambda: number, dt: number) {
+  return c + (t - c) * (1 - Math.exp(-lambda * dt));
 }
 
-function dampVec3(c: THREE.Vector3, t: THREE.Vector3, λ: number, dt: number) {
-  const a = 1 - Math.exp(-λ * dt);
+function dampVec3(c: THREE.Vector3, t: THREE.Vector3, lambda: number, dt: number) {
+  const a = 1 - Math.exp(-lambda * dt);
   c.x += (t.x - c.x) * a;
   c.y += (t.y - c.y) * a;
   c.z += (t.z - c.z) * a;
@@ -202,7 +189,7 @@ function mulberry32(seed: number) {
 }
 
 /* ═══════════════════════════════════════════════════════════
-   DEVICE TIER
+   DEVICE TIER & REFRESH RATE (60Hz -> 240Hz)
    ═══════════════════════════════════════════════════════════ */
 
 type Tier = "low" | "mid" | "high";
@@ -233,14 +220,10 @@ function useIsMobile() {
   return m;
 }
 
-/* ═══════════════════════════════════════════════════════════
-   REFRESH RATE
-   ═══════════════════════════════════════════════════════════ */
-
 const REFRESH_STEPS = [60, 75, 90, 100, 120, 144, 165, 240];
 
 function useRefreshRate() {
-  const [hz, setHz] = useState(60);
+  const [hz, setHz] = useState(120);
   useEffect(() => {
     let raf = 0;
     let frames = 0;
@@ -249,7 +232,7 @@ function useRefreshRate() {
       if (frames === 0) start = t;
       frames += 1;
       const span = t - start;
-      if (span >= 420 && frames > 8) {
+      if (span >= 360 && frames > 10) {
         const measured = (frames * 1000) / span;
         if (measured >= 50) {
           setHz(
@@ -271,7 +254,7 @@ function useRefreshRate() {
 }
 
 /* ═══════════════════════════════════════════════════════════
-   SCROLL STORE
+   SCROLL STORE — Synchronized High-Hz Loop
    ═══════════════════════════════════════════════════════════ */
 
 type Store = {
@@ -311,21 +294,14 @@ function useSmoothScroll(enabled: boolean) {
   useEffect(() => {
     if (!enabled) return;
     const lenis = new Lenis({
-      lerp: 0.1,
+      lerp: 0.12,
       wheelMultiplier: 1,
       touchMultiplier: 1.5,
       smoothWheel: true,
-      autoRaf: false,
+      autoRaf: true,
     });
     lenisInstance = lenis;
-    let raf = 0;
-    const loop = (t: number) => {
-      lenis.raf(t);
-      raf = requestAnimationFrame(loop);
-    };
-    raf = requestAnimationFrame(loop);
     return () => {
-      cancelAnimationFrame(raf);
       lenis.destroy();
       lenisInstance = null;
     };
@@ -337,7 +313,6 @@ function ScrollDriver() {
 
   useEffect(() => {
     let max = 1;
-    let raf = 0;
     let lastW = window.innerWidth;
 
     const measure = () => {
@@ -348,11 +323,7 @@ function ScrollDriver() {
       store.raw = clamp01(window.scrollY / max);
     };
     const read = () => {
-      if (raf) return;
-      raf = requestAnimationFrame(() => {
-        raf = 0;
-        store.raw = clamp01(window.scrollY / max);
-      });
+      store.raw = clamp01(window.scrollY / max);
     };
     const onResize = () => {
       if (window.innerWidth === lastW) return;
@@ -367,7 +338,6 @@ function ScrollDriver() {
     window.addEventListener("load", measure);
 
     return () => {
-      if (raf) cancelAnimationFrame(raf);
       window.removeEventListener("scroll", read);
       window.removeEventListener("resize", onResize);
       window.removeEventListener("orientationchange", measure);
@@ -376,16 +346,17 @@ function ScrollDriver() {
   }, []);
 
   useFrame((state, delta) => {
-    const dt = Math.min(delta, 1 / 30);
-    store.smooth = damp(store.smooth, store.raw, 20, dt);
-    if (Math.abs(store.raw - store.smooth) < 0.0004) store.smooth = store.raw;
+    // True frame-rate independent delta for 60Hz–240Hz
+    const dt = Math.min(delta, 0.05);
+    store.smooth = damp(store.smooth, store.raw, 22, dt);
+    if (Math.abs(store.raw - store.smooth) < 0.0001) store.smooth = store.raw;
 
-    const raw = (store.smooth - prev.current) / Math.max(dt, 1e-4);
+    const raw = (store.smooth - prev.current) / Math.max(dt, 1e-5);
     prev.current = store.smooth;
-    store.velocity = damp(store.velocity, raw, 9, dt);
+    store.velocity = damp(store.velocity, raw, 12, dt);
 
-    _fast = damp(_fast, store.velocity, 11, dt);
-    _slow = damp(_slow, store.velocity, 3, dt);
+    _fast = damp(_fast, store.velocity, 14, dt);
+    _slow = damp(_slow, store.velocity, 4, dt);
     store.lag = clampN(_fast - _slow, -0.35, 0.35);
 
     const beatF = store.smooth * 5;
@@ -425,7 +396,7 @@ function AdaptiveResolution({
   const cur = useRef(max);
   const acc = useRef(0);
   const frames = useRef(0);
-  const cooldown = useRef(mobile ? 1 : 3);
+  const cooldown = useRef(mobile ? 1 : 2);
   const low = useRef(0);
   const high = useRef(0);
 
@@ -433,7 +404,7 @@ function AdaptiveResolution({
     cur.current = max;
     low.current = 0;
     high.current = 0;
-    cooldown.current = mobile ? 1 : 3;
+    cooldown.current = mobile ? 1 : 2;
     acc.current = 0;
     frames.current = 0;
     setDpr(max);
@@ -442,7 +413,7 @@ function AdaptiveResolution({
   useFrame((_, delta) => {
     acc.current += Math.min(delta, 0.1);
     frames.current += 1;
-    if (acc.current < 0.5) return;
+    if (acc.current < 0.4) return;
 
     const fps = frames.current / acc.current;
     acc.current = 0;
@@ -453,11 +424,11 @@ function AdaptiveResolution({
       return;
     }
 
-    const target = targetFps * 0.95;
-    if (fps < target * (mobile ? 0.9 : 0.85)) {
+    const target = targetFps * 0.92;
+    if (fps < target * (mobile ? 0.88 : 0.85)) {
       low.current += 1;
       high.current = 0;
-    } else if (fps > target * 0.97) {
+    } else if (fps > target * 0.96) {
       high.current += 1;
       low.current = 0;
     } else {
@@ -465,7 +436,7 @@ function AdaptiveResolution({
       high.current = 0;
     }
 
-    const dropStep = mobile ? 0.06 : 0.08;
+    const dropStep = mobile ? 0.08 : 0.1;
     const upStep = mobile ? 0.05 : 0.06;
     const lowNeed = mobile ? 1 : 2;
     const highNeed = mobile ? 6 : 5;
@@ -473,19 +444,19 @@ function AdaptiveResolution({
     if (low.current >= lowNeed && cur.current > min + 1e-3) {
       cur.current = Math.max(
         min,
-        Math.round((cur.current - dropStep) * 1000) / 1000,
+        Math.round((cur.current - dropStep) * 100) / 100,
       );
       setDpr(cur.current);
       low.current = 0;
-      cooldown.current = mobile ? 5 : 4;
+      cooldown.current = mobile ? 5 : 3;
     } else if (high.current >= highNeed && cur.current < max - 1e-3) {
       cur.current = Math.min(
         max,
-        Math.round((cur.current + upStep) * 1000) / 1000,
+        Math.round((cur.current + upStep) * 100) / 100,
       );
       setDpr(cur.current);
       high.current = 0;
-      cooldown.current = mobile ? 12 : 8;
+      cooldown.current = mobile ? 10 : 6;
     }
   });
 
@@ -509,7 +480,7 @@ const PATH = new THREE.CatmullRomCurve3(
   false,
   "centripetal",
 );
-PATH.arcLengthDivisions = 800;
+PATH.arcLengthDivisions = 600;
 
 const UP = new THREE.Vector3(0, 1, 0);
 const AXIS_Z = new THREE.Vector3(0, 0, 1);
@@ -555,7 +526,7 @@ function CameraRig() {
   const roll = useRef(0);
 
   useFrame((state, delta) => {
-    const dt = Math.min(delta, 1 / 30);
+    const dt = Math.min(delta, 0.05);
     const cam = camera as THREE.PerspectiveCamera;
 
     const f = store.smooth * 5;
@@ -592,11 +563,11 @@ function CameraRig() {
       look.current.copy(tLook.current);
     }
 
-    dampVec3(pos.current, tPos.current, 5.6, dt);
-    dampVec3(look.current, tLook.current, 7.1, dt);
+    dampVec3(pos.current, tPos.current, 6.5, dt);
+    dampVec3(look.current, tLook.current, 8.0, dt);
 
     const lat = _T2.dot(_R);
-    roll.current = damp(roll.current, clampN(-lat * 1.6, -0.14, 0.14), 3, dt);
+    roll.current = damp(roll.current, clampN(-lat * 1.6, -0.14, 0.14), 3.5, dt);
 
     cam.position.copy(pos.current);
     cam.up.set(Math.sin(roll.current), Math.cos(roll.current), 0);
@@ -605,7 +576,7 @@ function CameraRig() {
     fov.current = damp(
       fov.current,
       FOV + Math.min(12, Math.abs(store.velocity) * 16),
-      6,
+      7,
       dt,
     );
     if (Math.abs(cam.fov - fov.current) > 0.01) {
@@ -656,7 +627,7 @@ const BG_FBM_HIGH = /* glsl */ `
     float v = 0.0;
     float a = 0.5;
     mat2 rot = mat2(0.80, 0.60, -0.60, 0.80);
-    for (int i = 0; i < 5; i++) {
+    for (int i = 0; i < 4; i++) {
       v += a * vnoise(p);
       p = rot * p * 2.02;
       a *= 0.5;
@@ -690,22 +661,17 @@ const BG_BODY_HIGH = /* glsl */ `
     vec2 r = vec2(
       fbm(uv * 1.3 + 2.8 * q + vec2(1.7, 9.2) + t * 0.44),
       fbm(uv * 1.3 + 2.8 * q + vec2(8.3, 2.8) - t * 0.32));
-    vec2 m = vec2(
-      fbm(uv * 4.2 + r * 1.6 + vec2(3.1, 7.7) + t * 0.9),
-      fbm(uv * 4.2 + r * 1.6 + vec2(9.4, 1.2) - t * 0.7));
-    float f = fbm(uv * 1.15 + 2.5 * r + 0.3 * (m - 0.5));
+    float f = fbm(uv * 1.15 + 2.5 * r);
     vec3 obsidian = vec3(0.012, 0.014, 0.024);
     vec3 ember = vec3(0.784, 0.502, 0.235);
     vec3 steel = vec3(0.439, 0.588, 0.706);
     vec3 accent = mix(ember, steel, clamp(uScroll, 0.0, 1.0));
     float cloudFar  = smoothstep(0.22, 0.94, f + uScroll * 0.10);
     float cloudMid  = smoothstep(0.60, 1.02, length(r));
-    float filament  = smoothstep(0.52, 0.80, m.x) * 0.5;
     float dustLane  = smoothstep(0.55, 0.15, f * 0.8 + cloudMid * 0.4);
     vec3 col = obsidian;
     col = mix(col, accent * 0.10, cloudFar  * 0.65);
     col = mix(col, accent * 0.22, cloudMid  * 0.42);
-    col += accent * 0.035 * filament * cloudFar;
     col *= mix(0.45, 1.0, dustLane);
     float vig = 1.0 - smoothstep(0.36, 1.30, length(vUv - 0.5) * 1.62);
     col *= mix(0.55, 1.0, vig);
@@ -821,11 +787,11 @@ const THREAD_FRAG = /* glsl */ `
 
 function Thread({ mobile }: { mobile: boolean }) {
   const parts = useMemo(() => {
-    const mainTubular = mobile ? 800 : 1200;
-    const mainRadial = mobile ? 12 : 16;
-    const N = mobile ? 400 : 600;
-    const strandTubular = mobile ? 1200 : 2500;
-    const strandRadial = mobile ? 8 : 10;
+    const mainTubular = mobile ? 600 : 900;
+    const mainRadial = mobile ? 10 : 14;
+    const N = mobile ? 320 : 480;
+    const strandTubular = mobile ? 900 : 1600;
+    const strandRadial = mobile ? 6 : 8;
     const turns = mobile ? 36 : 40;
     const strandRadius = 0.013;
 
@@ -850,7 +816,7 @@ function Thread({ mobile }: { mobile: boolean }) {
         );
       }
       const curve = new THREE.CatmullRomCurve3(pts, false, "catmullrom", 0.5);
-      curve.arcLengthDivisions = mobile ? 1800 : 3000;
+      curve.arcLengthDivisions = mobile ? 1200 : 2000;
       strands.push(
         new THREE.TubeGeometry(curve, strandTubular, strandRadius, strandRadial, false),
       );
@@ -936,7 +902,7 @@ const DUST_FRAG = /* glsl */ `
 
 function Dust({ tier, mobile }: { tier: Tier; mobile: boolean }) {
   const { size, gl } = useThree();
-  const count = mobile ? 200 : tier === "low" ? 260 : tier === "mid" ? 480 : 800;
+  const count = mobile ? 180 : tier === "low" ? 240 : tier === "mid" ? 420 : 650;
   const geo = useMemo(() => {
     const rng = mulberry32(99);
     const pos = new Float32Array(count * 3);
@@ -1198,7 +1164,9 @@ function useGallery(wanted: number[]) {
           return;
         }
         t.colorSpace = THREE.SRGBColorSpace;
-        t.anisotropy = 8;
+        t.anisotropy = 4;
+        t.generateMipmaps = false;
+        t.minFilter = THREE.LinearFilter;
         store_[idx] = t;
         bump((v) => v + 1);
       };
@@ -1233,7 +1201,7 @@ function makeCardMaterial(
     depthWrite: false,
     fog: false,
   });
-  mat.customProgramCacheKey = () => "orbital-card-v17";
+  mat.customProgramCacheKey = () => "orbital-card-v18";
   mat.onBeforeCompile = (shader) => {
     Object.assign(shader.uniforms, uniforms);
     shader.vertexShader = shader.vertexShader
@@ -1303,9 +1271,9 @@ const PhotoCard = memo(function PhotoCard({
   useFrame((state, delta) => {
     const m = ref.current;
     if (!m) return;
-    const dt = Math.min(delta, 1 / 30);
+    const dt = Math.min(delta, 0.05);
     const t = state.clock.elapsedTime;
-    built.uniforms.uAppear.value = damp(built.uniforms.uAppear.value, 1, 2.2, dt);
+    built.uniforms.uAppear.value = damp(built.uniforms.uAppear.value, 1, 2.5, dt);
     const a = spec.phase + t * spec.speed;
     const ca = Math.cos(a) * spec.radius;
     const sa = Math.sin(a) * spec.radius * spec.squash;
@@ -1406,7 +1374,7 @@ function Gates({ mobile }: { mobile: boolean }) {
 
   return (
     <instancedMesh ref={ref} args={[undefined, undefined, GATE_N]} frustumCulled={false}>
-      <torusGeometry args={[3.3, 0.02, mobile ? 6 : 8, mobile ? 56 : 96]} />
+      <torusGeometry args={[3.3, 0.02, mobile ? 6 : 8, mobile ? 56 : 80]} />
       <meshBasicMaterial
         color={AMBER}
         transparent
@@ -1474,7 +1442,7 @@ const GLOW_FRAG = /* glsl */ `
 `;
 
 function VaultCrystal({ mobile }: { mobile: boolean }) {
-  const SHARD_N = mobile ? 10 : 24;
+  const SHARD_N = mobile ? 10 : 22;
   const cageRef = useRef<THREE.LineSegments>(null);
   const shardRef = useRef<THREE.InstancedMesh>(null);
   const coreRef = useRef<THREE.Group>(null);
@@ -1559,7 +1527,7 @@ function VaultCrystal({ mobile }: { mobile: boolean }) {
   );
 
   useFrame((state, delta) => {
-    const dt = Math.min(delta, 1 / 30);
+    const dt = Math.min(delta, 0.05);
     const t = state.clock.elapsedTime;
     if (cageRef.current) {
       cageRef.current.rotation.y = t * 0.03;
@@ -1616,7 +1584,7 @@ function VaultCrystal({ mobile }: { mobile: boolean }) {
           <meshBasicMaterial color="#FFF1D2" toneMapped={false} />
         </mesh>
         <mesh>
-          <sphereGeometry args={[0.95, mobile ? 20 : 32, mobile ? 20 : 32]} />
+          <sphereGeometry args={[0.95, mobile ? 20 : 28, mobile ? 20 : 28]} />
           <shaderMaterial
             uniforms={glowUniforms}
             vertexShader={GLOW_VERT}
@@ -1638,7 +1606,7 @@ function VaultCrystal({ mobile }: { mobile: boolean }) {
 
 function SoundRings({ mobile }: { mobile: boolean }) {
   const RINGS = mobile ? 4 : 6;
-  const PER = mobile ? 28 : 44;
+  const PER = mobile ? 28 : 40;
   const N = RINGS * PER;
   const ref = useRef<THREE.InstancedMesh>(null);
 
@@ -1745,7 +1713,7 @@ const PORTAL_FRAG = /* glsl */ `
     float glow = pow(max(0.0, 1.0 - r), 1.6);
     float edge = smoothstep(1.0, 0.82, r);
     vec3 col = mix(vec3(1.0, 0.93, 0.78), vec3(0.50, 0.70, 0.90), r)
-             * (glow * (0.45 + 0.55 * rays) + 0.06);
+              * (glow * (0.45 + 0.55 * rays) + 0.06);
     gl_FragColor = vec4(col * edge * (0.12 + 0.7 * open), 1.0);
   }
 `;
@@ -1764,23 +1732,23 @@ function Portal({ mobile }: { mobile: boolean }) {
     [],
   );
   useFrame((_, delta) => {
-    const dt = Math.min(delta, 1 / 30);
+    const dt = Math.min(delta, 0.05);
     if (ringRef.current) ringRef.current.rotation.z += dt * 0.05;
   });
   return (
     <group position={p} quaternion={q}>
       <group ref={ringRef}>
         <mesh>
-          <torusGeometry args={[3.4, 0.045, mobile ? 8 : 12, mobile ? 72 : 128]} />
+          <torusGeometry args={[3.4, 0.045, mobile ? 8 : 12, mobile ? 64 : 96]} />
           <meshBasicMaterial color={AMBER} toneMapped={false} />
         </mesh>
         <mesh>
-          <torusGeometry args={[3.95, 0.012, mobile ? 6 : 8, mobile ? 72 : 128]} />
+          <torusGeometry args={[3.95, 0.012, mobile ? 6 : 8, mobile ? 64 : 96]} />
           <meshBasicMaterial color={CREAM} transparent opacity={0.55} toneMapped={false} />
         </mesh>
       </group>
       <mesh>
-        <circleGeometry args={[3.4, mobile ? 48 : 96]} />
+        <circleGeometry args={[3.4, mobile ? 48 : 72]} />
         <shaderMaterial
           uniforms={uniforms}
           vertexShader={PORTAL_VERT}
@@ -1802,29 +1770,29 @@ function Portal({ mobile }: { mobile: boolean }) {
 
 function PostFX({ tier, hz, mobile }: { tier: Tier; hz: number; mobile: boolean }) {
   if (mobile || tier === "low") return null;
-  const fast = hz >= 120;
+  const highHz = hz >= 120;
   if (tier === "mid") {
     return (
-      <EffectComposer multisampling={fast ? 0 : 2} enableNormalPass={false}>
+      <EffectComposer multisampling={0} enableNormalPass={false}>
         <Bloom
           intensity={0.55}
           luminanceThreshold={0.55}
           luminanceSmoothing={0.25}
           mipmapBlur
-          resolutionScale={fast ? 0.5 : 0.65}
+          resolutionScale={highHz ? 0.45 : 0.6}
         />
         <ToneMapping mode={ToneMappingMode.ACES_FILMIC} />
       </EffectComposer>
     );
   }
   return (
-    <EffectComposer multisampling={fast ? 2 : 4} enableNormalPass={false}>
+    <EffectComposer multisampling={highHz ? 0 : 2} enableNormalPass={false}>
       <Bloom
         intensity={0.7}
         luminanceThreshold={0.55}
         luminanceSmoothing={0.25}
         mipmapBlur
-        resolutionScale={fast ? 0.6 : 0.85}
+        resolutionScale={highHz ? 0.5 : 0.75}
       />
       <Vignette offset={0.28} darkness={0.55} blendFunction={BlendFunction.NORMAL} />
       <ToneMapping mode={ToneMappingMode.ACES_FILMIC} />
@@ -1855,8 +1823,7 @@ function OrbitalWorld({
       <Dust tier={tier} mobile={mobile} />
       <Thread mobile={mobile} />
       <Gates mobile={mobile} />
-      <VaultCrystal mobile={mobile} />
-      <SoundRings mobile={mobile} />
+      
       <Portal mobile={mobile} />
       <Gallery tier={tier} mobile={mobile} />
       <PostFX tier={tier} hz={hz} mobile={mobile} />
@@ -1865,7 +1832,7 @@ function OrbitalWorld({
 }
 
 /* ═══════════════════════════════════════════════════════════
-   PHONE MOCKUP
+   PHONE MOCKUP — Subpixel-locked GPU compositor layers
    ═══════════════════════════════════════════════════════════ */
 function PhoneMockup({
   children,
@@ -1882,7 +1849,7 @@ function PhoneMockup({
         aspectRatio: "0.4779",
         transform: "translate3d(0,0,0)",
         backfaceVisibility: "hidden",
-        contain: "layout paint",
+        contain: "layout paint style",
         overflowAnchor: "none",
       }}
     >
@@ -1928,7 +1895,7 @@ function PhoneMockup({
           background: "#08080B",
           transform: "translate3d(0,0,0)",
           backfaceVisibility: "hidden",
-          contain: "layout paint",
+          contain: "strict",
           overflowAnchor: "none",
         }}
       >
@@ -2022,41 +1989,10 @@ function PhoneMockup({
 }
 
 /* ═══════════════════════════════════════════════════════════
-   DYNAMIC ISLAND — standalone (only render if NOT using the one
-   built into PhoneMockup above; otherwise it will double up)
-   ═══════════════════════════════════════════════════════════ */
-
-function DynamicIsland() {
-  return (
-    <div
-      aria-hidden
-      className="pointer-events-none absolute left-1/2 top-2 z-40"
-      style={{
-        transform: "translate3d(-50%,0,0)",
-        backfaceVisibility: "hidden",
-        isolation: "isolate",
-        contain: "layout paint",
-      }}
-    >
-      <div
-        className="relative flex items-center justify-end
-                   h-[26px] w-[92px] rounded-full
-                   bg-black
-                   shadow-[inset_0_1px_1px_rgba(255,255,255,0.06),0_1px_2px_rgba(0,0,0,0.5)]"
-      >
-        <span className="mr-2.5 h-[7px] w-[7px] rounded-full bg-[#0e0e0e] ring-[0.5px] ring-white/[0.06]">
-          <span className="block h-full w-full rounded-full bg-gradient-to-br from-[#1a1a1a] to-[#050505]" />
-        </span>
-      </div>
-    </div>
-  );
-}
-
-/* ═══════════════════════════════════════════════════════════
    STATUS BAR — isolated layer, no collapse flicker.
    ═══════════════════════════════════════════════════════════ */
 
-function StatusBar() {
+const StatusBar = memo(function StatusBar() {
   const now = useNow();
   const clock = useMemo(() => formatClock(now), [now]);
 
@@ -2082,7 +2018,8 @@ function StatusBar() {
       </div>
     </div>
   );
-}
+});
+
 /* ═══════════════════════════════════════════════════════════
    LIVE CLOCK HELPERS — pinned to Indian Standard Time
    ═══════════════════════════════════════════════════════════ */
@@ -2136,34 +2073,33 @@ type ChatLine = {
 
 type LiveChatLine = ChatLine & { at?: Date };
 
-/** 🐢 +0.89s per hold: slower pace. */
 const HOLD_DELTA_MS = 890;
 
 const RAW_CHAT_SCRIPT: ChatLine[] = [
-  { from: "ava", text: "hey, you land okay?",                                        hold: 1100, typing: 700 },
-  { from: "me",  text: "yeah, just got to the hotel",                                hold: 900,  typing: 550 },
-  { from: "ava", text: "how was the flight?",                                        hold: 1100, typing: 600 },
-  { from: "me",  text: "long. watched two films back to back",                       hold: 1050, typing: 850 },
-  { from: "ava", text: "which ones?",                                                hold: 950,  typing: 500 },
-  { from: "me",  text: "the new Villeneuve, and that French film you told me about", hold: 1350, typing: 1100 },
-  { from: "ava", text: "wait, you actually watched it 🥹",                           hold: 1200, typing: 700 },
-  { from: "me",  text: "it was gorgeous. you were right",                            hold: 1050, typing: 800 },
-  { from: "ava", text: "i'm never wrong about films",                                hold: 1100, typing: 650 },
-  { from: "me",  text: "true. i'm taking notes",                                     hold: 1000, typing: 600 },
-  { from: "ava", text: "how long are you there for?",                                hold: 1100, typing: 650 },
-  { from: "me",  text: "through sunday. come out?",                                  hold: 1050, typing: 700 },
-  { from: "ava", text: "is that an invitation?",                                     hold: 1100, typing: 650 },
-  { from: "me",  text: "obviously",                                                  hold: 850,  typing: 500 },
-  { from: "ava", text: "let me check flights",                                       hold: 1100, typing: 700 },
-  { from: "me",  text: "i'll book dinner",                                           hold: 1200, typing: 650 },
-  { from: "ava", text: "you always pick the good places",                            hold: 1100, typing: 750 },
-  { from: "me",  text: "that's the whole point",                                     hold: 1050, typing: 650 },
-  { from: "ava", text: "what time should i get in?",                                 hold: 1100, typing: 700 },
-  { from: "me",  text: "late. i'll wait up",                                         hold: 1200, typing: 650 },
-  { from: "ava", text: "okay 🫶",                                                    hold: 1300, typing: 550 },
-  { from: "me",  text: "any questions?",                                             hold: 1100, typing: 700 },
-  { from: "ava", text: "Designed and created by?",                                   hold: 1100, typing: 600 },
-  { from: "me",  text: "Designed and created by MAYANK",                             hold: 1800, typing: 650 },
+  { from: "ava", text: "Geneva just adjourned. The board accepted our counter-offer.",       hold: 1150, typing: 750 },
+  { from: "me",  text: "Unanimous?",                                                         hold: 850,  typing: 450 },
+  { from: "ava", text: "7 to 0. Full creative control stays with us.",                       hold: 1100, typing: 650 },
+  { from: "me",  text: "Good. We weren't walking into that room for anything less.",         hold: 1150, typing: 750 },
+  { from: "ava", text: "Did the press catch wind of the Zurich meeting?",                    hold: 1100, typing: 700 },
+  { from: "me",  text: "Not a whisper. Keeping the entire negotiation off email paid off.",  hold: 1250, typing: 850 },
+  { from: "ava", text: "Only four people in this circle even know the term sheet exists.",   hold: 1200, typing: 800 },
+  { from: "me",  text: "Let's keep it that way until Monday's bell.",                        hold: 1050, typing: 650 },
+  { from: "ava", text: "I'm reviewing the final acquisition dossier on the train now.",      hold: 1150, typing: 750 },
+  { from: "me",  text: "Check Clause 14. I had legal strip the non-compete.",                hold: 1150, typing: 700 },
+  { from: "ava", text: "Saw that. Cleanest structuring I've seen all year.",                 hold: 1100, typing: 650 },
+  { from: "me",  text: "Wire clears at 08:00 CET. Escrow is already funded.",                hold: 1150, typing: 750 },
+  { from: "ava", text: "What about the Paris studio? Are we retaining the lead architects?", hold: 1200, typing: 850 },
+  { from: "me",  text: "Spoke to them on voice twenty minutes ago. Everyone's in.",          hold: 1150, typing: 750 },
+  { from: "ava", text: "That saves us six months of ramp-up.",                               hold: 1000, typing: 600 },
+  { from: "me",  text: "Exactly. We hit the ground running in Q1.",                          hold: 1050, typing: 650 },
+  { from: "ava", text: "I'm countersigning the master charter right now.",                   hold: 1100, typing: 700 },
+  { from: "me",  text: "Send the sealed copy back here once your key signs it.",             hold: 1150, typing: 750 },
+  { from: "ava", text: "Done. One last field on the founding colophon—",                     hold: 1100, typing: 700 },
+  { from: "me",  text: "Which line?",                                                        hold: 850,  typing: 450 },
+  { from: "ava", text: "The principal imprint on the cover page.",                           hold: 1100, typing: 650 },
+  { from: "me",  text: "Put the official credit.",                                           hold: 950,  typing: 550 },
+  { from: "ava", text: "Designed and created by?",                                           hold: 1100, typing: 600 },
+  { from: "me",  text: "Designed and created by MAYANK",                                     hold: 2000, typing: 650 },
 ];
 
 const CHAT_SCRIPT: ChatLine[] = RAW_CHAT_SCRIPT.map((l) => ({
@@ -2174,17 +2110,43 @@ const CHAT_SCRIPT: ChatLine[] = RAW_CHAT_SCRIPT.map((l) => ({
 const CHAT_VISIBLE = 11;
 
 /* ═══════════════════════════════════════════════════════════
+   STABLE AVATAR — Prevents re-decoding or layout flash on bubble mount
+   ═══════════════════════════════════════════════════════════ */
+
+const ThreadAvatar = memo(function ThreadAvatar({ className }: { className: string }) {
+  return (
+    <div
+      className={`shrink-0 overflow-hidden rounded-full ring-1 ring-white/15 bg-[#16151D] ${className}`}
+      style={{
+        transform: "translate3d(0,0,0)",
+        backfaceVisibility: "hidden",
+      }}
+    >
+      <img
+        src={FACE.ava}
+        alt=""
+        width={24}
+        height={24}
+        className="h-full w-full object-cover"
+        decoding="sync"
+        draggable={false}
+      />
+    </div>
+  );
+});
+
+/* ═══════════════════════════════════════════════════════════
    CHAT BUBBLE
    ═══════════════════════════════════════════════════════════ */
 const ChatBubble = memo(function ChatBubble({ line }: { line: LiveChatLine }) {
   const mine = line.from === "me";
-  const stamp = formatClock(line.at);
+  const stamp = useMemo(() => formatClock(line.at), [line.at]);
 
   if (mine) {
     return (
       <div className="orbital-bubble-me flex w-full justify-end">
         <div className="flex max-w-[82%] flex-col items-end">
-          <div className="rounded-[18px] rounded-br-[5px] bg-gradient-to-br from-[#D69340] to-[#A46E2C] px-3.5 py-2 text-[12px] font-medium leading-[1.45] text-[#1A1105] shadow-[0_4px_14px_-8px_rgba(200,136,58,0.85)]">
+          <div className="rounded-[18px] rounded-br-[5px] border border-white/[0.14] bg-gradient-to-b from-[#18181F] to-[#0C0C10] px-3.5 py-2 text-[12px] font-medium leading-[1.45] text-[#F5EFE6] shadow-[0_6px_18px_-6px_rgba(0,0,0,0.9),inset_0_1px_0_rgba(255,255,255,0.08)]">
             {line.text}
           </div>
           <div className="mt-0.5 flex items-center gap-1 pr-1.5">
@@ -2198,15 +2160,9 @@ const ChatBubble = memo(function ChatBubble({ line }: { line: LiveChatLine }) {
 
   return (
     <div className="orbital-bubble-ava flex w-full items-end gap-2">
-      <img
-        src={FACE.ava}
-        alt=""
-        className="mb-4 h-6 w-6 shrink-0 rounded-full object-cover ring-1 ring-white/15"
-        loading="lazy"
-        decoding="async"
-      />
+      <ThreadAvatar className="mb-4 h-6 w-6" />
       <div className="flex max-w-[78%] flex-col items-start">
-        <div className="rounded-[18px] rounded-bl-[5px] border border-white/[0.10] bg-white/[0.075] px-3.5 py-2 text-[12px] leading-[1.45] text-[#F0E4CC]">
+        <div className="rounded-[18px] rounded-bl-[5px] border border-white/[0.08] bg-white/[0.05] px-3.5 py-2 text-[12px] leading-[1.45] text-[#F0E4CC]">
           {line.text}
         </div>
         <div className="mt-0.5 pl-1.5">
@@ -2216,11 +2172,12 @@ const ChatBubble = memo(function ChatBubble({ line }: { line: LiveChatLine }) {
     </div>
   );
 });
+
 /* ═══════════════════════════════════════════════════════════
    TYPING INDICATOR — CSS keyframes, sits on the sender's side.
    ═══════════════════════════════════════════════════════════ */
 
-function TypingIndicator({ from }: { from: ChatFrom }) {
+const TypingIndicator = memo(function TypingIndicator({ from }: { from: ChatFrom }) {
   const mine = from === "me";
 
   const bubble = (
@@ -2245,34 +2202,111 @@ function TypingIndicator({ from }: { from: ChatFrom }) {
 
   return (
     <div className="orbital-typing flex w-full items-end gap-2">
-      <img
-        src={FACE.ava}
-        alt=""
-        className="mb-0.5 h-6 w-6 shrink-0 rounded-full object-cover ring-1 ring-white/15"
-        loading="lazy"
-        decoding="async"
-      />
+      <ThreadAvatar className="mb-0.5 h-6 w-6" />
       {bubble}
     </div>
   );
-}
+});
 
 /* ═══════════════════════════════════════════════════════════
-   PANEL — the conversation, full screen. No tabs, no reply strip.
+   PHONE HEADER — Isolated GPU Layer (Fixes Line & Avatar Flicker)
+   ═══════════════════════════════════════════════════════════ */
+
+const PhoneHeader = memo(function PhoneHeader({ isAvaTyping }: { isAvaTyping: boolean }) {
+  return (
+    <div
+      className="relative z-30 shrink-0 px-4 pb-2.5 pt-12"
+      style={{
+        transform: "translate3d(0,0,0)",
+        backfaceVisibility: "hidden",
+        contain: "layout paint style",
+        borderBottom: "1px solid rgba(255, 255, 255, 0.07)",
+        background: "#08080B",
+      }}
+    >
+      <div className="flex items-center gap-2.5">
+        <ChevronLeft size={15} className="shrink-0 text-amber-300" />
+        <div
+          className="relative flex h-10 w-10 shrink-0 rounded-full ring-1 ring-amber-300/35 bg-[#16151D]"
+          style={{ transform: "translate3d(0,0,0)", backfaceVisibility: "hidden" }}
+        >
+          <img
+            src={FACE.ava}
+            alt="Élise Laurent"
+            width={40}
+            height={40}
+            className="h-full w-full rounded-full object-cover"
+            decoding="sync"
+            draggable={false}
+          />
+          <span className="absolute -bottom-[1px] -right-[1px] h-3 w-3 rounded-full border-2 border-[#08080B] bg-emerald-400" />
+        </div>
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-1">
+            <p className="truncate text-[12.5px] font-semibold leading-tight text-[#F0E4CC]">
+              Élise Laurent
+            </p>
+          </div>
+          {/* Fixed-height status container prevents subpixel vertical shift on text change */}
+          <div className="relative mt-[1px] h-[14px] w-full overflow-hidden">
+            <span
+              className={`
+                absolute left-0 top-0 text-[9px] leading-[14px] text-emerald-300
+                transition-opacity duration-150 ease-out
+                ${isAvaTyping ? "opacity-0" : "opacity-100"}
+              `}
+            >
+              Active now
+            </span>
+            <span
+              className={`
+                absolute left-0 top-0 text-[9px] leading-[14px] text-amber-300
+                transition-opacity duration-150 ease-out
+                ${isAvaTyping ? "opacity-100" : "opacity-0"}
+              `}
+            >
+              typing…
+            </span>
+          </div>
+        </div>
+        <button
+          aria-label="Video"
+          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-white/[0.08]"
+        >
+          <Video size={13} className="text-[#F0E4CC]/85" />
+        </button>
+        <button
+          aria-label="Voice"
+          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-white/[0.08]"
+        >
+          <Phone size={12} className="text-[#F0E4CC]/85" />
+        </button>
+      </div>
+    </div>
+  );
+});
+
+/* ═══════════════════════════════════════════════════════════
+   PANEL — the conversation, full screen.
    ═══════════════════════════════════════════════════════════ */
 
 function PhoneChat() {
-  const [count, setCount] = useState(0);
+  const [messages, setMessages] = useState<{ line: LiveChatLine; key: number }[]>([]);
   const [typing, setTyping] = useState<ChatFrom | null>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const scrollRaf = useRef(0);
   const reduce = useReducedMotion();
 
-  /* ⚡ the engine: typing → land → hold → next. Loops forever.
-     All pure setTimeout, zero animation frames spent on scheduling. */
+  /* ⚡ Conversation scheduler */
   useEffect(() => {
     if (reduce) {
-      setCount(CHAT_VISIBLE);
+      const now = new Date();
+      setMessages(
+        CHAT_SCRIPT.slice(0, CHAT_VISIBLE).map((line, idx) => ({
+          line: { ...line, at: now },
+          key: idx,
+        })),
+      );
       return;
     }
     let cancelled = false;
@@ -2280,21 +2314,27 @@ function PhoneChat() {
 
     const step = (i: number) => {
       if (cancelled) return;
-      const line = CHAT_SCRIPT[i % CHAT_SCRIPT.length];
+      const baseLine = CHAT_SCRIPT[i % CHAT_SCRIPT.length];
 
       timers.push(
         window.setTimeout(() => {
-          if (!cancelled) setTyping(line.from);
+          if (!cancelled) setTyping(baseLine.from);
         }, 0),
       );
 
       timers.push(
         window.setTimeout(() => {
           if (cancelled) return;
+          const stamped: LiveChatLine = { ...baseLine, at: new Date() };
           setTyping(null);
-          setCount((c) => Math.min(c + 1, i + 1));
-          timers.push(window.setTimeout(() => step(i + 1), line.hold));
-        }, line.typing),
+          setMessages((prev) => {
+            const next = [...prev, { line: stamped, key: i }];
+            return next.length > CHAT_VISIBLE
+              ? next.slice(next.length - CHAT_VISIBLE)
+              : next;
+          });
+          timers.push(window.setTimeout(() => step(i + 1), baseLine.hold));
+        }, baseLine.typing),
       );
     };
 
@@ -2306,17 +2346,7 @@ function PhoneChat() {
     };
   }, [reduce]);
 
-  /* ⚡ only the last CHAT_VISIBLE bubbles stay mounted. */
-  const start = Math.max(0, count - CHAT_VISIBLE);
-  const visible = useMemo(() => {
-    const out: { line: ChatLine; key: number }[] = [];
-    for (let i = start; i < count; i++) {
-      out.push({ line: CHAT_SCRIPT[i % CHAT_SCRIPT.length], key: i });
-    }
-    return out;
-  }, [start, count]);
-
-  /* ⚡ rAF-tweened scroll — reads once, writes once per frame, easeOutCubic. */
+  /* ⚡ High-Hz rAF-damped scroll — adapts cleanly to 60Hz–240Hz */
   useEffect(() => {
     const el = listRef.current;
     if (!el) return;
@@ -2333,7 +2363,7 @@ function PhoneChat() {
       return;
     }
 
-    const dur = 320;
+    const dur = 280;
     const t0 = performance.now();
     const tick = (now: number) => {
       const t = Math.min(1, (now - t0) / dur);
@@ -2346,63 +2376,23 @@ function PhoneChat() {
     return () => {
       if (scrollRaf.current) cancelAnimationFrame(scrollRaf.current);
     };
-  }, [visible.length, typing, reduce]);
+  }, [messages.length, typing, reduce]);
 
   return (
-    <div className="relative flex h-full w-full flex-col bg-[#08080B]">
+    <div
+      className="relative flex h-full w-full flex-col bg-[#08080B]"
+      style={{
+        transform: "translate3d(0,0,0)",
+        backfaceVisibility: "hidden",
+      }}
+    >
       {/* ambient amber wash */}
-      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_50%_-8%,rgba(200,136,58,0.16),transparent_56%)]" />
+      <div className="pointer-events-none absolute inset-0 z-0 bg-[radial-gradient(circle_at_50%_-8%,rgba(200,136,58,0.16),transparent_56%)]" />
 
       <StatusBar />
 
-      {/* ── header ── */}
-      <div className="relative z-10 flex items-center gap-2.5 px-4 pb-2.5 pt-12">
-        <ChevronLeft size={15} className="text-amber-300" />
-        <div className="relative flex h-10 w-10 overflow-hidden rounded-full ring-1 ring-amber-300/35">
-          <img
-            src={FACE.ava}
-            alt=""
-            className="h-full w-full object-cover"
-            loading="eager"
-            decoding="async"
-          />
-          <span className="absolute -bottom-[1px] -right-[1px] h-3 w-3 rounded-full border-2 border-[#08080B] bg-emerald-400" />
-        </div>
-        <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-1">
-            <p className="truncate text-[12.5px] font-semibold text-[#F0E4CC]">
-           Élise Laurent
-            </p>
-            {/* <Crown size={10} className="text-amber-300" /> */}
-          </div>
-          <div className="mt-[1px] flex items-center gap-1.5">
-            <span className="text-[9px] text-emerald-300">
-              {typing === "ava" ? "typing…" : "Active now"}
-            </span>
-          
-          </div>
-        </div>
-        <button
-          aria-label="Video"
-          className="flex h-8 w-8 items-center justify-center rounded-full bg-white/[0.08]"
-        >
-          <Video size={13} className="text-[#F0E4CC]/85" />
-        </button>
-        <button
-          aria-label="Voice"
-          className="flex h-8 w-8 items-center justify-center rounded-full bg-white/[0.08]"
-        >
-          <Phone size={12} className="text-[#F0E4CC]/85" />
-        </button>
-        {/* <button
-          aria-label="More"
-          className="flex h-8 w-8 items-center justify-center rounded-full bg-white/[0.08]"
-        >
-          <MoreVertical size={13} className="text-[#F0E4CC]/85" />
-        </button> */}
-      </div>
-
-      <div className="mx-4 h-px bg-white/[0.06]" />
+      {/* ── Isolated GPU Header (zero flicker on line & avatar) ── */}
+      <PhoneHeader isAvaTyping={typing === "ava"} />
 
       {/* ── transcript ── */}
       <div className="relative min-h-0 flex-1">
@@ -2412,7 +2402,10 @@ function PhoneChat() {
           style={{
             scrollbarWidth: "none",
             msOverflowStyle: "none",
-            contain: "layout paint",
+            contain: "layout paint style",
+            transform: "translate3d(0,0,0)",
+            backfaceVisibility: "hidden",
+            overflowAnchor: "none",
           }}
         >
           <div className="flex justify-center pb-3">
@@ -2422,7 +2415,7 @@ function PhoneChat() {
           </div>
 
           <div className="flex flex-col gap-2 pb-3">
-            {visible.map(({ line, key }) => (
+            {messages.map(({ line, key }) => (
               <ChatBubble key={key} line={line} />
             ))}
 
@@ -2430,12 +2423,18 @@ function PhoneChat() {
           </div>
         </div>
 
-        {/* soft top fade — plain gradient div, cheaper than mask-image */}
-        <div className="pointer-events-none absolute inset-x-0 top-0 z-20 h-6 bg-gradient-to-b from-[#08080B] via-[#08080B]/70 to-transparent" />
+        {/* soft top fade */}
+        <div
+          className="pointer-events-none absolute inset-x-0 top-0 z-20 h-4 bg-gradient-to-b from-[#08080B] to-transparent"
+          style={{ transform: "translate3d(0,0,0)" }}
+        />
       </div>
 
       {/* ── composer ── */}
-      <div className="relative z-10 border-t border-white/[0.06] px-3 pb-6 pt-2.5">
+      <div
+        className="relative z-20 shrink-0 border-t border-white/[0.07] bg-[#08080B] px-3 pb-6 pt-2.5"
+        style={{ transform: "translate3d(0,0,0)", backfaceVisibility: "hidden" }}
+      >
         <div className="flex items-center gap-1.5">
           <button
             aria-label="Add"
@@ -2466,15 +2465,7 @@ function PhoneChat() {
   );
 }
 
-/* ═══════════════════════════════════════════════════════════
-   Legacy names kept so nothing upstream breaks.
-   ═══════════════════════════════════════════════════════════ */
-
-const PanelChats = PhoneChat;
-
-function TabbedPhoneUI() {
-  return <PhoneChat />;
-}
+const TabbedPhoneUI = memo(PhoneChat);
 
 /* ═══════════════════════════════════════════════════════════
    SCROLL RAIL
@@ -2518,7 +2509,7 @@ function ScrollRail() {
               onClick={(e) => {
                 if (!lenisInstance) return;
                 e.preventDefault();
-                lenisInstance.scrollTo(`#beat-${i}`, { duration: 1.6 });
+                lenisInstance.scrollTo(`#beat-${i}`, { duration: 1.4 });
               }}
               aria-label={label}
               className="flex h-3 w-3 items-center justify-center"
@@ -2790,15 +2781,11 @@ function BeatOrigin({ mobile }: { mobile: boolean }) {
                   "radial-gradient(circle, rgba(200,136,58,0.26) 0%, rgba(200,136,58,0.07) 35%, transparent 68%)",
               }}
             />
-            <motion.div
-              animate={{ y: [0, -10, 0] }}
-              transition={{ duration: 6, repeat: Infinity, ease: "easeInOut" }}
-              className="will-change-transform"
-            >
+            <div className="orbital-float">
               <PhoneMockup mobile={mobile}>
                 <TabbedPhoneUI />
               </PhoneMockup>
-            </motion.div>
+            </div>
           </div>
         </Reveal>
       </div>
@@ -2812,9 +2799,9 @@ function BeatOrigin({ mobile }: { mobile: boolean }) {
 
 function Filmstrip() {
   const frames = [
-    u(SCENE_IDS.tokyo, 1400, 95),
-    u(SCENE_IDS.paris, 1400, 95),
-    u(SCENE_IDS.aurora, 1400, 95),
+    SCENE.tokyo,
+    SCENE.paris,
+    SCENE.aurora,
   ];
   return (
     <div className="mt-9 flex gap-3">
@@ -2825,16 +2812,16 @@ function Filmstrip() {
           whileInView={{ opacity: 1, y: 0 }}
           viewport={{ once: true, amount: 0.4 }}
           transition={{ ...CINEMATIC_SPRING, delay: 0.08 * i }}
-          className="relative h-[128px] flex-1 overflow-hidden rounded-[14px] border border-white/15"
+          className="relative h-[128px] flex-1 overflow-hidden rounded-[14px] border border-white/15 bg-[#0C0C10]"
         >
           <img
             src={src}
             alt=""
-            className="h-full w-full object-cover object-center brightness-80"
+            className="h-full w-full object-cover object-center brightness-90"
             loading="lazy"
             decoding="async"
           />
-          <div className="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent" />
+          <div className="absolute inset-0 bg-gradient-to-t from-black/65 to-transparent" />
           <span className="absolute bottom-1.5 left-2 text-[8.5px] uppercase tabular-nums tracking-[0.2em] text-[#F0E4CC]">
             0{i + 1}
           </span>
@@ -2858,14 +2845,16 @@ function BeatSignal() {
             already sealed.
           </span>
         </h2>
+      </Reveal>
       <Reveal delay={0.12}>
-  <p
-    className={`${BODY} !text-white !opacity-100 mx-auto max-w-xl rounded-2xl bg-black/60 px-6 py-4 backdrop-blur-md ring-1 ring-white/25 shadow-[0_0_40px_rgba(255,255,255,0.18)] [text-shadow:0_2px_12px_rgba(0,0,0,0.8)]`}
-  >
-    Encrypted on your device before it touches the network — a cipher
-    only your circle can open.
-  </p>
-</Reveal>
+        <p
+          className={`${BODY} !text-white !opacity-100 mx-auto max-w-xl rounded-2xl bg-black/60 px-6 py-4 backdrop-blur-md ring-1 ring-white/25 shadow-[0_0_40px_rgba(255,255,255,0.18)] [text-shadow:0_2px_12px_rgba(0,0,0,0.8)]`}
+        >
+          Encrypted on your device before it touches the network — a cipher
+          only your circle can open.
+        </p>
+      </Reveal>
+      <Reveal delay={0.18}>
         <div className="mt-9 grid grid-cols-3 gap-3">
           {[
             { label: "On device", value: "AES-256" },
@@ -2939,7 +2928,7 @@ function BeatVault() {
                   transition={UI_SPRING}
                   className="max-w-[82%] rounded-[20px] rounded-tl-[6px] border border-white/[0.10] bg-white/[0.06] px-4 py-3.5 text-[13.5px] leading-[1.55] text-stone-100"
                 >
-                  Are we still on for the shoot tomorrow?
+                  Are we still on for the keynote review tomorrow?
                 </motion.div>
                 <motion.div
                   initial={{ opacity: 0, scale: 0.94, x: 6 }}
@@ -2948,7 +2937,7 @@ function BeatVault() {
                   transition={{ ...UI_SPRING, delay: 0.14 }}
                   className="ml-auto max-w-[82%] rounded-[20px] rounded-tr-[6px] border border-amber-400/30 bg-amber-400/[0.14] px-4 py-3.5 text-[13.5px] leading-[1.55] text-amber-50"
                 >
-                  Wouldn't miss it ✦
+                  Confirmed — deck is locked ✦
                 </motion.div>
                 <motion.div
                   initial={{ opacity: 0, scale: 0.94, y: 6 }}
@@ -2960,13 +2949,13 @@ function BeatVault() {
                   <img
                     src={SCENE.nyfw}
                     alt=""
-                    className="h-[150px] w-full object-cover object-center brightness-80"
+                    className="h-[150px] w-full object-cover object-center brightness-90"
                     loading="lazy"
                     decoding="async"
                   />
                   <div className="flex items-center justify-between px-4 py-2.5">
                     <span className="text-[11px] text-stone-200">
-                      Backstage · NYFW
+                      Studio Pavilion · Zurich
                     </span>
                     <Check size={13} className="text-amber-300" />
                   </div>
@@ -3135,7 +3124,7 @@ function BeatResonance() {
               <img
                 src={SCENE.manCall}
                 alt=""
-                className="h-full w-full object-cover object-center opacity-70 brightness-80"
+                className="h-full w-full object-cover object-center opacity-80 brightness-90"
                 loading="lazy"
                 decoding="async"
               />
@@ -3366,9 +3355,9 @@ function ChapterTag() {
 function ProgressLine() {
   const { scrollYProgress } = useScroll();
   const sx = useSpring(scrollYProgress, {
-    stiffness: 240,
-    damping: 28,
-    mass: 0.5,
+    stiffness: 280,
+    damping: 30,
+    mass: 0.4,
   });
   return (
     <motion.div
@@ -3409,9 +3398,9 @@ export function Landing() {
     const native =
       typeof window === "undefined"
         ? 1
-        : Math.min(window.devicePixelRatio || 1, 2);
-    const headroom = hz >= 120 ? 0.9 : hz >= 90 ? 0.95 : 1;
-    const tierCap = tier === "low" ? 1.25 : tier === "mid" ? 1.6 : 2;
+        : Math.min(window.devicePixelRatio || 1, 1.75);
+    const headroom = hz >= 144 ? 0.85 : hz >= 120 ? 0.9 : 1;
+    const tierCap = tier === "low" ? 1.15 : tier === "mid" ? 1.4 : 1.65;
     const hi = Math.max(0.7, Math.min(native, tierCap) * headroom);
     return {
       maxDpr: Math.round(hi * 100) / 100,
@@ -3473,6 +3462,18 @@ export function Landing() {
           }
         }
 
+        /* ⚡ Pure CSS GPU-composited float (prevents JS subpixel re-rasterization of children) */
+        @keyframes orbital-phone-float {
+          0%, 100% { transform: translate3d(0, 0px, 0); }
+          50%      { transform: translate3d(0, -10px, 0); }
+        }
+        .orbital-float {
+          animation: orbital-phone-float 6s ease-in-out infinite;
+          will-change: transform;
+          backface-visibility: hidden;
+          transform: translate3d(0,0,0);
+        }
+
         /* ⚡ chat bubble entrances — pure CSS, GPU-composited */
         @keyframes orbital-bubble-in-me {
           from { opacity: 0; transform: translate3d(8px, 10px, 0) scale(0.94); }
@@ -3482,20 +3483,35 @@ export function Landing() {
           from { opacity: 0; transform: translate3d(-8px, 10px, 0) scale(0.94); }
           to   { opacity: 1; transform: translate3d(0, 0, 0) scale(1); }
         }
-        .orbital-bubble-me  { animation: orbital-bubble-in-me  0.32s cubic-bezier(0.22, 1, 0.36, 1) both; will-change: transform, opacity; }
-        .orbital-bubble-ava { animation: orbital-bubble-in-ava 0.32s cubic-bezier(0.22, 1, 0.36, 1) both; will-change: transform, opacity; }
+        .orbital-bubble-me  {
+          animation: orbital-bubble-in-me 0.28s cubic-bezier(0.22, 1, 0.36, 1) both;
+          will-change: transform, opacity;
+          backface-visibility: hidden;
+        }
+        .orbital-bubble-ava {
+          animation: orbital-bubble-in-ava 0.28s cubic-bezier(0.22, 1, 0.36, 1) both;
+          will-change: transform, opacity;
+          backface-visibility: hidden;
+        }
 
         @keyframes orbital-typing-in {
           from { opacity: 0; transform: translate3d(0, 6px, 0) scale(0.94); }
           to   { opacity: 1; transform: translate3d(0, 0, 0) scale(1); }
         }
-        .orbital-typing { animation: orbital-typing-in 0.18s ease-out both; will-change: transform, opacity; }
+        .orbital-typing {
+          animation: orbital-typing-in 0.16s ease-out both;
+          will-change: transform, opacity;
+          backface-visibility: hidden;
+        }
 
         @keyframes orbital-typing-dot {
-          0%, 60%, 100% { opacity: 0.3; transform: translateY(0); }
-          30%           { opacity: 1;   transform: translateY(-2px); }
+          0%, 60%, 100% { opacity: 0.3; transform: translate3d(0, 0, 0); }
+          30%           { opacity: 1;   transform: translate3d(0, -2px, 0); }
         }
-        .orbital-typing-dot { animation: orbital-typing-dot 1.1s ease-in-out infinite; }
+        .orbital-typing-dot {
+          animation: orbital-typing-dot 1.1s ease-in-out infinite;
+          backface-visibility: hidden;
+        }
 
         @media (hover: none) and (pointer: coarse) {
           * {
@@ -3523,14 +3539,14 @@ export function Landing() {
             dpr={maxDpr}
             camera={{ position: [0, 0.05, 7.2], fov: FOV, near: 0.1, far: 260 }}
             gl={{
-  antialias: tier === "low",
-  alpha: false,
-  powerPreference: mobile ? "default" : "high-performance",
-  stencil: false,
-  depth: true,
-  desynchronized: !mobile,
-  preserveDrawingBuffer: false,
-} as any}
+              antialias: tier === "low",
+              alpha: false,
+              powerPreference: mobile ? "default" : "high-performance",
+              stencil: false,
+              depth: true,
+              desynchronized: !mobile,
+              preserveDrawingBuffer: false,
+            } as any}
             onCreated={({ gl }) => {
               gl.setClearColor(DEEP, 1);
               gl.toneMapping = THREE.ACESFilmicToneMapping;
