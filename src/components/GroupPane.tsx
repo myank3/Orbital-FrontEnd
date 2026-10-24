@@ -1746,11 +1746,12 @@ interface CallPillProps {
   onLeave: () => void;
   onJoin: () => void;
   onOpenStage: () => void;
+  joining?: boolean;
 }
 
 const CallPill = React.memo(function CallPill({
   inCall, activeCallers, participants, muted, deafened, myName, myAvatarUrl, maxParticipants, bannerText,
-  onToggleMute, onToggleDeafen, onLeave, onJoin, onOpenStage,
+    onToggleMute, onToggleDeafen, onLeave, onJoin, onOpenStage, joining = false,
 }: CallPillProps) {
   if (!inCall && activeCallers.length === 0) return null;
 
@@ -1863,10 +1864,11 @@ const CallPill = React.memo(function CallPill({
             </span>
           </div>
 
-          <button type="button"
+                    <button type="button"
             onClick={(e) => { e.stopPropagation(); onJoin(); }}
-            className="h-9 px-4 rounded-full bg-[#22C55E] hover:bg-[#16A34A] text-white text-[12px] font-semibold shrink-0 inline-flex items-center gap-1.5">
-            <Phone className="w-3.5 h-3.5" /> Join
+            disabled={joining}
+            className="h-9 px-4 rounded-full bg-[#22C55E] hover:bg-[#16A34A] disabled:opacity-70 disabled:cursor-wait text-white text-[12px] font-semibold shrink-0 inline-flex items-center gap-1.5">
+            {joining ? (<><Loader2 className="w-3.5 h-3.5 animate-spin" /> Joining…</>) : (<><Phone className="w-3.5 h-3.5" /> Join</>)}
           </button>
         </>
       )}
@@ -2243,12 +2245,13 @@ function VoiceStage({
   return (
     <AnimatePresence>
       {open && inCall && (
-        <motion.div
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          exit={{ opacity: 0 }}
-          transition={{ duration: 0.2 }}
-          className="fixed inset-0 z-[200] bg-[#0B0A08] flex flex-col"
+               <motion.div
+          initial={{ opacity: 0, y: 40 }}
+          animate={{ opacity: 1, y: 0 }}
+          exit={{ opacity: 0, y: 40 }}
+          transition={{ duration: 0.22, ease: [0.16, 1, 0.3, 1] }}
+          className="fixed inset-x-0 bottom-0 z-[200] bg-[#0B0A08] flex flex-col rounded-t-2xl overflow-hidden ring-1 ring-white/[0.06] shadow-[0_-20px_60px_-12px_rgba(0,0,0,0.8)]"
+          style={{ top: 'max(env(safe-area-inset-top, 0px), 12px)' }}
         >
           <div className="pointer-events-none absolute inset-0 overflow-hidden">
             <div className="absolute -top-40 left-1/4 w-[600px] h-[600px] rounded-full bg-[#D97706]/[0.06] blur-3xl" />
@@ -2609,7 +2612,7 @@ export default function GroupPane(): React.JSX.Element {
   const is1on1Busy = Boolean(call1on1.callState && call1on1.callState !== 'idle');
 
   const [callBlock, setCallBlock] = useState<{ kind: '1on1' | 'group'; name: string } | null>(null);
-
+  const [joiningCall, setJoiningCall] = useState(false);
   const [myFreshProfile, setMyFreshProfile] = useState<{ avatarUrl?: string | null } | null>(null);
   useEffect(() => {
     if (!user?.id) { setMyFreshProfile(null); return; }
@@ -2624,7 +2627,15 @@ export default function GroupPane(): React.JSX.Element {
   useEffect(() => {
     if (!call.inCall) setCallExpanded(false);
   }, [call.inCall]);
+  useEffect(() => {
+    if (call.inCall) setJoiningCall(false);
+  }, [call.inCall]);
 
+  useEffect(() => {
+    if (!joiningCall) return;
+    const t = window.setTimeout(() => setJoiningCall(false), 15_000);
+    return () => window.clearTimeout(t);
+  }, [joiningCall]);
   const [deafened, setDeafened] = useState(false);
   useEffect(() => {
     if (!call.inCall) setDeafened(false);
@@ -3198,8 +3209,9 @@ export default function GroupPane(): React.JSX.Element {
     catch (err) { console.warn('[group] leave other call failed', err); return false; }
   }, []);
 
-  const handleGroupCallClick = useCallback(async () => {
+    const handleGroupCallClick = useCallback(async () => {
     if (!activeGroupId) return;
+    if (joiningCall) return;
 
     if (call.inCall && call.callGroupId === activeGroupId) {
       setCallExpanded(true);
@@ -3219,13 +3231,14 @@ export default function GroupPane(): React.JSX.Element {
       return;
     }
 
+    setJoiningCall(true);
     try {
       await call.join();
       setCallExpanded(true);
     } catch {
-      /* useGroupCall surfaces the error via call.error */
+      setJoiningCall(false);
     }
-  }, [call, is1on1Busy, activeGroupId, active1on1PeerName]);
+  }, [call, is1on1Busy, activeGroupId, active1on1PeerName, joiningCall]);
 
   const reactionsRef = useRef(reactions);
   reactionsRef.current = reactions;
@@ -3578,8 +3591,15 @@ export default function GroupPane(): React.JSX.Element {
                   </p>
                 </div>
               </div>
+              
               <div className="flex items-center gap-0.5 shrink-0">
-                {call.inCall ? (
+                                {joiningCall ? (
+                  <button disabled
+                    className="relative w-9 h-9 rounded-xl flex items-center justify-center bg-[#22C55E]/15 text-[#22C55E] ring-1 ring-inset ring-[#22C55E]/40 shrink-0"
+                    title="Joining call…" aria-label="Joining call">
+                    <Loader2 className="w-[17px] h-[17px] animate-spin" />
+                  </button>
+                ) : call.inCall ? (
                   <button onClick={() => setCallExpanded(true)}
                     className="relative w-9 h-9 rounded-xl flex items-center justify-center bg-[#22C55E]/15 text-[#22C55E] ring-1 ring-inset ring-[#22C55E]/40 hover:bg-[#22C55E]/25 transition-colors shrink-0"
                     title="Open voice room" aria-label="Open voice room">
@@ -3699,6 +3719,7 @@ export default function GroupPane(): React.JSX.Element {
                 myAvatarUrl={myFreshProfile?.avatarUrl ?? user?.avatarUrl ?? null}
                 maxParticipants={MAX_PARTICIPANTS}
                 bannerText={activeCallBanner}
+                joining={joiningCall}
                 onToggleMute={call.toggleMute}
                 onToggleDeafen={toggleDeafen}
                 onLeave={call.leave}
@@ -3869,7 +3890,37 @@ export default function GroupPane(): React.JSX.Element {
           </motion.div>
         )}
       </AnimatePresence>
-
+      <AnimatePresence>
+        {joiningCall && !call.inCall && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.15 }}
+            className="fixed inset-0 z-[195] bg-black/50 backdrop-blur-sm flex items-center justify-center p-4"
+          >
+            <div className="rounded-2xl bg-[#1C1A17] border border-white/[0.08] shadow-[0_24px_60px_-12px_rgba(0,0,0,0.9)] px-7 py-6 flex flex-col items-center gap-3 min-w-[220px]">
+              <div className="relative w-12 h-12">
+                <span className="absolute inset-0 rounded-full bg-[#22C55E]/20 animate-ping" />
+                <span className="relative inline-flex w-12 h-12 rounded-full bg-[#22C55E]/20 border border-[#22C55E]/40 items-center justify-center">
+                  <Loader2 className="w-5 h-5 animate-spin text-[#22C55E]" />
+                </span>
+              </div>
+              <div className="text-center">
+                <p className="text-[13px] font-semibold text-[#EDE5D4]">Connecting to voice…</p>
+                <p className="text-[11px] text-[#6B6259] mt-0.5">Setting up your mic</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setJoiningCall(false)}
+                className="mt-1 text-[11px] font-medium text-[#A8A29E] hover:text-[#EDE5D4] underline underline-offset-2"
+              >
+                Cancel
+              </button>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
       {/* Call guard toast */}
       <AnimatePresence>
         {callBlock && (
