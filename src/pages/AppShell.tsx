@@ -10,6 +10,7 @@ import React, {
   useRef,
   useState,
 } from 'react';
+import { createPortal } from 'react-dom';
 import { NavLink, Outlet, useNavigate, Link, useLocation } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { useCall } from '../context/CallContext';
@@ -169,6 +170,17 @@ const SHELL_CSS = `
     backface-visibility: hidden;
   }
 
+  /* Downward-opening popover — used by the mobile header avatar menu. */
+  @keyframes menu-pop-down {
+    from { opacity: 0; transform: translate3d(0, -6px, 0) scale(0.98); }
+    to   { opacity: 1; transform: translate3d(0, 0, 0) scale(1); }
+  }
+  .menu-pop-down-right {
+    animation: menu-pop-down 180ms cubic-bezier(0.16, 1, 0.3, 1) both;
+    transform-origin: top right;
+    backface-visibility: hidden;
+  }
+
   @keyframes tab-in-right {
     from { opacity: 0; transform: translate3d(60px, 0, 0); }
     to   { opacity: 1; transform: none; }
@@ -240,15 +252,14 @@ const SHELL_CSS = `
 
     /* ── Chat detail top gap — DM detail and Group detail only.
           Adds breathing room from the punch-hole / status bar while
-          keeping the pane near-fullscreen. The shell bg shows through
-          the gap, so the pane reads as a floating card. */
+          keeping the pane near-fullscreen. */
     .shell-main-chat-gap {
       padding-top: calc(env(safe-area-inset-top, 0px) + 10px);
     }
   }
 
   @media (prefers-reduced-motion: reduce) {
-    .signal-shine, .call-pulse, .menu-pop, .menu-pop-right,
+    .signal-shine, .call-pulse, .menu-pop, .menu-pop-right, .menu-pop-down-right,
     .tab-next, .tab-prev, .route-forward, .route-back, .route-fade {
       animation: none !important;
     }
@@ -328,9 +339,7 @@ function AppShell(): React.JSX.Element {
   closeDrawerRef.current = closeDrawer;
 
   /* ── Keyboard tracking — visualViewport is the single source of truth.
-        Drives two CSS vars on :root every frame (~60fps). The shell height
-        and .shell-main-with-nav padding both consume them, so panes shrink
-        in lockstep with the OS keyboard animation. No focusin, no timers. ── */
+        Drives two CSS vars on :root every frame (~60fps). ── */
   useEffect(() => {
     const vv = window.visualViewport;
     if (!vv) return;
@@ -341,15 +350,9 @@ function AppShell(): React.JSX.Element {
     const update = () => {
       cancelAnimationFrame(raf);
       raf = requestAnimationFrame(() => {
-        // Android: innerHeight = layout viewport (unchanged by keyboard),
-        //          vv.height shrinks → gap = keyboard height.
-        // iOS:     innerHeight - vv.height - vv.offsetTop gives keyboard height.
         const gap = Math.max(0, window.innerHeight - vv.height - vv.offsetTop);
-
         root.style.setProperty('--vv-gap', `${gap}px`);
         root.style.setProperty('--vv-height', `${vv.height}px`);
-
-        // Hysteresis — prevents flicker around the threshold.
         if (gap > 150) setKeyboardOpen(true);
         else if (gap < 40) setKeyboardOpen(false);
       });
@@ -669,7 +672,14 @@ function AppShell(): React.JSX.Element {
     [],
   );
 
-  const allNav = useMemo(() => [...primaryNav], [primaryNav]);
+  /* Bottom nav — 4 tabs matching TAB_ROUTES so swipes and taps stay in sync. */
+  const allNav = useMemo(
+    () => [
+      ...primaryNav,
+      { to: '/app/calls', label: 'Calls', icon: IconCalls },
+    ],
+    [primaryNav],
+  );
 
   const railWidth = railHovered ? 224 : 68;
   const incomingDisplayName = callerName ?? 'Someone';
@@ -968,13 +978,14 @@ function AppShell(): React.JSX.Element {
 
       {/* ─── MAIN COLUMN ─── */}
       <div className="flex-1 flex flex-col overflow-hidden min-w-0 relative">
-        {/* Mobile header — NO border, NO blur, transparent so it merges with shell */}
+        {/* Mobile header — no branding, no redundant title. Slim functional
+            chrome: hamburger (left) + user avatar (right). Native-app pattern. */}
         {!hideMobileChrome && (
           <header
-            className="md:hidden bg-transparent px-4 flex items-center justify-between shrink-0"
+            className="md:hidden bg-transparent px-3 flex items-center justify-between shrink-0"
             style={{
               paddingTop: 'env(safe-area-inset-top, 0px)',
-              height: 'calc(3.5rem + env(safe-area-inset-top, 0px))',
+              height: 'calc(3rem + env(safe-area-inset-top, 0px))',
             }}
           >
             <button
@@ -984,15 +995,98 @@ function AppShell(): React.JSX.Element {
             >
               <Menu className="w-5 h-5" strokeWidth={1.8} />
             </button>
-            <span
-              className="text-[18px] tracking-tight text-[#EDE5D4]"
-              style={{ fontFamily: '"Instrument Serif", Georgia, serif' }}
+
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                setMobileUserMenuOpen((v) => !v);
+              }}
+              className={`flex items-center justify-center w-10 h-10 -mr-1 rounded-full transition-colors touch-manipulation ${
+                mobileUserMenuOpen ? 'bg-white/[0.08]' : ''
+              }`}
+              aria-haspopup="menu"
+              aria-expanded={mobileUserMenuOpen}
+              aria-label="Open profile menu"
             >
-              Orbital
-            </span>
-            <div className="w-8" />
+              <Avatar
+                name={user?.displayName || 'User'}
+                src={user?.avatarUrl}
+                size="sm"
+                isOnline
+              />
+            </button>
           </header>
         )}
+
+        {/* Mobile user menu — portaled so it can escape the main column's
+            overflow-hidden when it drops down from the header avatar. */}
+        {!hideMobileChrome && mobileUserMenuOpen &&
+          createPortal(
+            <>
+              <div
+                className="fixed inset-0 z-[45] md:hidden"
+                onClick={() => setMobileUserMenuOpen(false)}
+                aria-hidden
+              />
+              <div
+                className="menu-pop-down-right fixed right-3 w-[220px] rounded-2xl bg-[#131110] border border-white/[0.1] shadow-[0_20px_60px_-12px_rgba(0,0,0,0.95),inset_0_1px_0_rgba(255,255,255,0.05)] overflow-hidden z-50"
+                style={{
+                  top: 'calc(env(safe-area-inset-top, 0px) + 3rem + 8px)',
+                }}
+                onClick={() => setMobileUserMenuOpen(false)}
+                role="menu"
+              >
+                <div className="px-4 py-4 border-b border-white/[0.06] bg-gradient-to-b from-white/[0.02] to-transparent">
+                  <div className="flex items-center gap-3">
+                    <Avatar
+                      name={user?.displayName || 'User'}
+                      src={user?.avatarUrl}
+                      size="sm"
+                    />
+                    <div className="min-w-0">
+                      <p className="text-[13px] font-medium text-[#EDE5D4] truncate">
+                        {user?.displayName || 'Active User'}
+                      </p>
+                      <p className="text-[11px] text-[#6B6259] truncate mt-0.5">
+                        @{user?.userHandle || 'guest'}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="p-1.5">
+                  <Link
+                    to="/app/orbit"
+                    className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-[13px] font-medium text-[#A8A29E] hover:text-[#EDE5D4] hover:bg-white/[0.06] transition-colors touch-manipulation"
+                    role="menuitem"
+                  >
+                    <IconOrbit size={16} />
+                    <span>Your Orbit</span>
+                  </Link>
+                  <Link
+                    to="/app/settings"
+                    className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-[13px] font-medium text-[#A8A29E] hover:text-[#EDE5D4] hover:bg-white/[0.06] transition-colors touch-manipulation"
+                    role="menuitem"
+                  >
+                    <IconSettings size={16} />
+                    <span>Settings</span>
+                  </Link>
+                </div>
+
+                <div className="p-1.5 border-t border-white/[0.06]">
+                  <button
+                    onClick={() => void handleSignOut()}
+                    className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-[13px] font-medium text-[#A8A29E] hover:text-[#F87171] hover:bg-[#B91C1C]/[0.1] transition-colors touch-manipulation"
+                    role="menuitem"
+                  >
+                    <LogOut className="w-4 h-4" strokeWidth={1.8} />
+                    <span>Sign out</span>
+                  </button>
+                </div>
+              </div>
+            </>,
+            document.body,
+          )}
 
         {incomingCall && (
           <div className="shrink-0 z-30 px-4 sm:px-6 py-3 bg-[#0B0A09] border-b border-[#22C55E]/30 shadow-[0_10px_30px_-10px_rgba(34,197,94,0.15)]">
@@ -1048,124 +1142,40 @@ function AppShell(): React.JSX.Element {
               paddingBottom: 'env(safe-area-inset-bottom, 0px)',
             }}
           >
-            <div className="flex items-center h-16 w-full">
-              <div
-                ref={bottomNavRef}
-                className="relative flex items-center justify-around flex-1 h-full"
-              >
-                <span
-                  ref={indicatorRef}
-                  aria-hidden
-                  className="pointer-events-none absolute top-2 left-0 h-12 rounded-2xl bg-[#D97706]/12 ring-1 ring-inset ring-[#D97706]/22 opacity-0"
-                  style={{
-                    transition:
-                      'transform 340ms cubic-bezier(0.16,1,0.3,1), width 340ms cubic-bezier(0.16,1,0.3,1), opacity 180ms ease-out',
-                    willChange: 'transform',
-                  }}
-                />
+            <div
+              ref={bottomNavRef}
+              className="relative flex items-center justify-around h-16 w-full"
+            >
+              <span
+                ref={indicatorRef}
+                aria-hidden
+                className="pointer-events-none absolute top-2 left-0 h-12 rounded-2xl bg-[#D97706]/12 ring-1 ring-inset ring-[#D97706]/22 opacity-0"
+                style={{
+                  transition:
+                    'transform 340ms cubic-bezier(0.16,1,0.3,1), width 340ms cubic-bezier(0.16,1,0.3,1), opacity 180ms ease-out',
+                  willChange: 'transform',
+                }}
+              />
 
-                {allNav.map((item) => (
-                  <NavLink
-                    key={item.to}
-                    to={item.to}
-                    ref={(el) => {
-                      tabRefs.current[item.to] = el;
-                    }}
-                    className={({ isActive }) =>
-                      `relative z-10 flex flex-col items-center justify-center flex-1 h-16 gap-1 touch-manipulation transition-colors ${
-                        isActive
-                          ? 'text-[#D97706]'
-                          : 'text-[#A8A29E] hover:text-[#EDE5D4]'
-                      }`
-                    }
-                  >
-                    <item.icon size={20} />
-                    <span className="text-[10px] font-medium whitespace-nowrap">{item.label}</span>
-                  </NavLink>
-                ))}
-              </div>
-
-              <div className="relative flex items-center justify-center w-14 h-16 shrink-0 bg-[#0B0A09] z-20">
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setMobileUserMenuOpen((v) => !v);
+              {allNav.map((item) => (
+                <NavLink
+                  key={item.to}
+                  to={item.to}
+                  ref={(el) => {
+                    tabRefs.current[item.to] = el;
                   }}
-                  className={`flex items-center justify-center p-1 rounded-full transition-all touch-manipulation ${
-                    mobileUserMenuOpen
-                      ? 'bg-white/[0.1] ring-1 ring-white/[0.2]'
-                      : ''
-                  }`}
-                  aria-haspopup="menu"
-                  aria-expanded={mobileUserMenuOpen}
-                  aria-label="Open profile menu"
+                  className={({ isActive }) =>
+                    `relative z-10 flex flex-col items-center justify-center flex-1 h-16 gap-1 touch-manipulation transition-colors ${
+                      isActive
+                        ? 'text-[#D97706]'
+                        : 'text-[#A8A29E] hover:text-[#EDE5D4]'
+                    }`
+                  }
                 >
-                  <Avatar
-                    name={user?.displayName || 'User'}
-                    src={user?.avatarUrl}
-                    size="sm"
-                    isOnline
-                  />
-                </button>
-
-                {mobileUserMenuOpen && (
-                  <div
-                    className="menu-pop-right absolute bottom-[calc(100%+10px)] right-0 w-[220px] rounded-2xl bg-[#131110] border border-white/[0.1] shadow-[0_20px_60px_-12px_rgba(0,0,0,0.95),inset_0_1px_0_rgba(255,255,255,0.05)] overflow-hidden z-50"
-                    onClick={() => setMobileUserMenuOpen(false)}
-                    role="menu"
-                  >
-                    <div className="px-4 py-4 border-b border-white/[0.06] bg-gradient-to-b from-white/[0.02] to-transparent">
-                      <div className="flex items-center gap-3">
-                        <Avatar
-                          name={user?.displayName || 'User'}
-                          src={user?.avatarUrl}
-                          size="sm"
-                        />
-                        <div className="min-w-0">
-                          <p className="text-[13px] font-medium text-[#EDE5D4] truncate">
-                            {user?.displayName || 'Active User'}
-                          </p>
-                          <p className="text-[11px] text-[#6B6259] truncate mt-0.5">
-                            @{user?.userHandle || 'guest'}
-                          </p>
-                        </div>
-                      </div>
-                    </div>
-
-                    <div className="p-1.5">
-                      <Link
-                        to="/app/orbit"
-                        onClick={() => setMobileUserMenuOpen(false)}
-                        className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-[13px] font-medium text-[#A8A29E] hover:text-[#EDE5D4] hover:bg-white/[0.06] transition-colors touch-manipulation"
-                        role="menuitem"
-                      >
-                        <IconOrbit size={16} />
-                        <span>Your Orbit</span>
-                      </Link>
-                      <Link
-                        to="/app/settings"
-                        onClick={() => setMobileUserMenuOpen(false)}
-                        className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-[13px] font-medium text-[#A8A29E] hover:text-[#EDE5D4] hover:bg-white/[0.06] transition-colors touch-manipulation"
-                        role="menuitem"
-                      >
-                        <IconSettings size={16} />
-                        <span>Settings</span>
-                      </Link>
-                    </div>
-
-                    <div className="p-1.5 border-t border-white/[0.06]">
-                      <button
-                        onClick={() => void handleSignOut()}
-                        className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-[13px] font-medium text-[#A8A29E] hover:text-[#F87171] hover:bg-[#B91C1C]/[0.1] transition-colors touch-manipulation"
-                        role="menuitem"
-                      >
-                        <LogOut className="w-4 h-4" strokeWidth={1.8} />
-                        <span>Sign out</span>
-                      </button>
-                    </div>
-                  </div>
-                )}
-              </div>
+                  <item.icon size={20} />
+                  <span className="text-[10px] font-medium whitespace-nowrap">{item.label}</span>
+                </NavLink>
+              ))}
             </div>
           </nav>
         )}

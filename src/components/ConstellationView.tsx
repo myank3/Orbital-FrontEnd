@@ -1018,30 +1018,7 @@ export default function ConstellationView({ friends: friendsProp }: Constellatio
     />
 
     {/* Inner pill */}
-    <div
-      className="relative flex items-center gap-2.5 pl-3 pr-3.5 py-1.5 rounded-full
-                 bg-[#0A0F08]
-                 shadow-[0_4px_24px_-4px_rgba(0,0,0,0.75),inset_0_1px_0_rgba(255,255,255,0.04)]"
-    >
-      {/* Pulsing live dot */}
-      <span className="relative flex items-center justify-center shrink-0 w-3.5 h-3.5">
-        <span className="absolute inset-0 rounded-full bg-[#22C55E]/25 animate-ping" />
-        <span className="relative w-1.5 h-1.5 rounded-full bg-[#22C55E] shadow-[0_0_10px_rgba(34,197,94,1)]" />
-      </span>
-
-      {/* Label */}
-      <span className="text-[9.5px] font-bold uppercase tracking-[0.24em] text-[#22C55E]">
-        Online
-      </span>
-
-      {/* Divider */}
-      <span aria-hidden className="w-px h-3 bg-white/[0.15]" />
-
-      {/* Count */}
-      <span className="text-[13px] font-semibold tabular-nums text-[#EDE5D4] leading-none pr-0.5">
-        {onlineTotal}
-      </span>
-    </div>
+   
   </div>
 </motion.div>
 
