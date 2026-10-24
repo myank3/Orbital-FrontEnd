@@ -237,6 +237,14 @@ const SHELL_CSS = `
     .shell-main-with-nav {
       padding-bottom: max(0px, 4rem - var(--vv-gap, 0px));
     }
+
+    /* ── Chat detail top gap — DM detail and Group detail only.
+          Adds breathing room from the punch-hole / status bar while
+          keeping the pane near-fullscreen. The shell bg shows through
+          the gap, so the pane reads as a floating card. */
+    .shell-main-chat-gap {
+      padding-top: calc(env(safe-area-inset-top, 0px) + 10px);
+    }
   }
 
   @media (prefers-reduced-motion: reduce) {
@@ -256,6 +264,18 @@ function isFullScreenRoute(pathname: string): boolean {
   return isDmDetail || isGroupDetail || isSignals;
 }
 
+/**
+ * Chat detail routes (DM conversation, group conversation) get the
+ * top-gap treatment. Signals (also a full-screen route) keeps its
+ * edge-to-edge layout since it has its own self-contained chrome.
+ */
+function isChatDetailRoute(pathname: string): boolean {
+  const isDmDetail = pathname.startsWith('/app/dm/') && pathname !== '/app/dm';
+  const isGroupDetail =
+    pathname.startsWith('/app/groups/') && pathname !== '/app/groups';
+  return isDmDetail || isGroupDetail;
+}
+
 /* ────────────────────────────────────────────────────────── */
 /* AppShell                                                   */
 /* ────────────────────────────────────────────────────────── */
@@ -268,6 +288,7 @@ function AppShell(): React.JSX.Element {
 
   const fullScreen = isFullScreenRoute(location.pathname);
   const hideMobileChrome = fullScreen;
+  const chatDetail = isChatDetailRoute(location.pathname);
 
   const shellRef = useRef<HTMLDivElement | null>(null);
   const mainRef = useRef<HTMLElement | null>(null);
@@ -1014,7 +1035,7 @@ function AppShell(): React.JSX.Element {
           key={location.pathname}
           className={`tab-swipe-surface shell-main flex-1 overflow-y-auto bg-transparent relative custom-scrollbar overscroll-contain ${routeAnim} ${
             !hideMobileChrome ? 'shell-main-with-nav' : ''
-          }`}
+          } ${chatDetail ? 'shell-main-chat-gap' : ''}`}
         >
           <Outlet />
         </main>
