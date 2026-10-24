@@ -12,7 +12,18 @@
     <meta property="og:description" content="Warm editorial web client for Orbital chat, real-time messaging, and direct calls." />
     <meta property="og:type" content="website" />
     <meta name="twitter:card" content="summary_large_image" />
-    <meta name="theme-color" content="#0B0A08" />
+
+    <!--
+      color-scheme: dark — CRITICAL for Android WebView.
+      Tells the WebView renderer (before any CSS loads) that
+      form controls, scrollbars, and the initial paint are dark.
+      Without this, WebView paints white during the keyboard
+      transition and page navigations.
+    -->
+    <meta name="color-scheme" content="dark" />
+
+    <!-- theme-color — must match the CSS background (#0C0B09) -->
+    <meta name="theme-color" content="#0C0B09" />
 
     <!-- PWA + fullscreen -->
     <meta name="mobile-web-app-capable" content="yes" />
@@ -28,8 +39,22 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+
+    <!--
+      Inline pre-paint background.
+      External CSS hasn't loaded when the first frame paints in WebView.
+      This inline block guarantees the correct dark color immediately,
+      eliminating the "white flash before React loads" during the
+      splash → app transition.
+    -->
+    <style>
+      html, body, #root {
+        background-color: #0C0B09;
+        color-scheme: dark;
+      }
+    </style>
   </head>
-  <body class="bg-[#0B0A08] text-[#EDE5D4]">
+  <body class="bg-[#0C0B09] text-[#EDE5D4]">
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
 
