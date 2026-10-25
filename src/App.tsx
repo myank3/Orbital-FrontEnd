@@ -22,6 +22,7 @@ import { Capacitor } from '@capacitor/core';
 import { App as CapacitorApp } from '@capacitor/app';
 import { Preferences } from '@capacitor/preferences';
 import { initPushNotifications } from './services/pushService';
+import { requestCallPermissions } from './services/permissions'; // 🔥 Added
 
 // Public pages
 import Landing from './pages/Landing';
@@ -47,10 +48,6 @@ import NotificationsPane from './components/NotificationsPane';
 import OrbitView from './pages/OrbitView';
 import SignalsPage from './pages/SignalsPage';
 
-/**
- * Routes on which a `?token=` query param represents a *login* token
- * that should be exchanged for a session via hydrateFromToken().
- */
 const TOKEN_INTERCEPT_ROUTES = [
   '/auth/google/success',
   '/confirm-email',
@@ -127,16 +124,26 @@ function TokenInterceptor() {
   return null;
 }
 
-// 🔥 NEW: Native Integration for Deep Links & Push Notifications
+// 🔥 Native Integration for Deep Links, Push Notifications & Call Permissions
 function NativeIntegration() {
   const { isAuthenticated } = useAuth();
 
   useEffect(() => {
     if (!Capacitor.isNativePlatform()) return;
 
-    // 1. Initialize Push Notifications if logged in
+    // 1. Initialize Push Notifications & Call Permissions if logged in
     if (isAuthenticated) {
       initPushNotifications();
+
+      // Delay the camera/mic prompt by 1.5 seconds so it doesn't clash with the Notification prompt
+      const timer = setTimeout(async () => {
+        const granted = await requestCallPermissions(true);
+        if (!granted) {
+          console.log('User denied call permissions during onboarding.');
+        }
+      }, 1500);
+
+      return () => clearTimeout(timer);
     }
 
     // 2. Listen for Google Auth Deep Link
@@ -177,33 +184,12 @@ export default function App() {
         <CallProvider>
           <ScrollToTop />
           <TokenInterceptor />
-          <NativeIntegration /> {/* 🔥 Added here inside AuthProvider */}
+          <NativeIntegration />
           <Routes>
             {/* ── Public (redirects to /app if logged in) ── */}
-            <Route
-              path="/"
-              element={
-                <PublicOnlyRoute>
-                  <Landing />
-                </PublicOnlyRoute>
-              }
-            />
-            <Route
-              path="/login"
-              element={
-                <PublicOnlyRoute>
-                  <Login />
-                </PublicOnlyRoute>
-              }
-            />
-            <Route
-              path="/register"
-              element={
-                <PublicOnlyRoute>
-                  <Register />
-                </PublicOnlyRoute>
-              }
-            />
+            <Route path="/" element={<PublicOnlyRoute><Landing /></PublicOnlyRoute>} />
+            <Route path="/login" element={<PublicOnlyRoute><Login /></PublicOnlyRoute>} />
+            <Route path="/register" element={<PublicOnlyRoute><Register /></PublicOnlyRoute>} />
 
             {/* ── Public (always accessible) ───────────── */}
             <Route path="/forgot-password" element={<ForgotPassword />} />
