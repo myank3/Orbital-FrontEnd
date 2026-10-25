@@ -1,4 +1,4 @@
-package com.getcapacitor.myapp;
+package com.orbitalhq.app;
 
 import com.getcapacitor.BridgeActivity;
 
