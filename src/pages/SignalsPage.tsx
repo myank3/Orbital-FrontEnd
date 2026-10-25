@@ -540,47 +540,10 @@ function Viewer({
         title="Back to Signals"
       >
         <ArrowLeft className="w-5 h-5 shrink-0" strokeWidth={2.4} />
-        <span>Back</span>
+        <span></span>
       </button>
 
-      {/* ── Reload button — 48x48, solid, Android-friendly ── */}
-      <button
-        type="button"
-        onClick={onReload}
-        disabled={isLoading}
-        className="
-          absolute z-30
-          inline-flex items-center justify-center
-          w-12 h-12 rounded-full
-          bg-[#0B0A09] text-[#F5EFE6]
-          border border-white/20
-          tap-safe
-          disabled:opacity-50 disabled:cursor-wait
-          transition-opacity duration-100
-          touch-manipulation
-          expensive-shadow
-          shadow-[0_2px_8px_rgba(0,0,0,0.5)]
-        "
-        style={{
-          top: 'calc(0.75rem + env(safe-area-inset-top, 0px))',
-          right: 'calc(0.75rem + env(safe-area-inset-right, 0px))',
-          willChange: isWebView ? undefined : 'transform',
-        }}
-        aria-label="Reload channel"
-        title="Reload channel"
-      >
-        <RefreshCw
-          className={`w-5 h-5 ${
-            isLoading
-              ? 'animate-spin'
-              : isWebView
-              ? ''
-              : 'transition-transform duration-500 hover:rotate-180'
-          }`}
-          strokeWidth={2.2}
-        />
-      </button>
-
+     
       {/* ── Loading overlay — lite on WebView ── */}
       {isLoading && !isWebView && (
         <AnimatePresence>
