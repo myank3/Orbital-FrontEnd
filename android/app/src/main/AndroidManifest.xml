@@ -21,13 +21,13 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
 
-            <!-- Deep Link for Google Auth Redirect -->
-            <intent-filter android:autoVerify="true">
+            <!-- 🔥 DEEP LINK FOR GOOGLE AUTH (Matches your backend) -->
+            <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
-                <!-- This matches your Vercel domain -->
-                <data android:scheme="https" android:host="orbitalhq.vercel.app" />
+                <!-- Listen for orbital://auth -->
+                <data android:scheme="orbital" android:host="auth" />
             </intent-filter>
             
         </activity>
@@ -44,14 +44,14 @@
     <!-- Permissions -->
     <uses-permission android:name="android.permission.INTERNET" />
     
+    <!-- 🔥 REQUIRED FOR ANDROID 13+ NOTIFICATIONS -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    
     <!-- Calling Permissions (WebRTC / Audio / Video) -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
-    
-    <!-- Optional: Add this if you are using native phone calls instead of WebRTC -->
-    <!-- <uses-permission android:name="android.permission.CALL_PHONE" /> -->
 
 </manifest>
