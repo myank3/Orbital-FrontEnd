@@ -172,13 +172,12 @@ function AuthProviderComponent({ children }: AuthProviderProps) {
         identifier: trimmed,
         password,
       });
-
-      if (!loginResponse?.token) {
+      if (!loginResponse?.accessToken) {
         throw new Error('Authentication succeeded but no token was returned.');
       }
 
-      setAccessToken(loginResponse.token);
-      setTokenState(loginResponse.token);
+      setAccessToken(loginResponse.accessToken);
+      setTokenState(loginResponse.accessToken);
 
       const profile = await apiService.getMyProfile();
       setUser(profile);

@@ -4,6 +4,7 @@
  */
 
 import { Preferences } from '@capacitor/preferences';
+import { Capacitor } from '@capacitor/core';
 import {
   ApiMessage,
   CallSessionDto,
@@ -37,6 +38,7 @@ export const API_BASE_URL: string =
   (import.meta.env.VITE_API_BASE as string | undefined) ?? 'https://orbital.runasp.net';
 
 export const TOKEN_KEY = 'orbital.token';
+export const REFRESH_TOKEN_KEY = 'refreshToken';
 export const MAX_FILE_SIZE = 5 * 1024 * 1024; // 5 MB
 
 /* ────────────────────────────────────────────────────────── */
@@ -70,9 +72,7 @@ export function setAccessToken(token: string | null): void {
 
 /**
  * Refresh the access token if it's expired or about to expire.
- * Uses the httpOnly refresh cookie set by /api/Auth/login.
- * Safe to call on every request — returns the current token
- * immediately if it has more than 60 seconds of life left.
+ * Uses the httpOnly refresh cookie (web) OR Capacitor Preferences (mobile).
  */
 export async function refreshAuthToken(): Promise<string | null> {
   const current = getAccessToken();
@@ -89,28 +89,34 @@ export async function refreshAuthToken(): Promise<string | null> {
     }
   }
 
-  // 2. Try to use the httpOnly refresh cookie
+  // 2. Try to use the refresh token
   try {
+    // Get the refresh token from Capacitor Preferences (saved during login or deep link)
+    const { value: storedRefreshToken } = await Preferences.get({ key: REFRESH_TOKEN_KEY });
+
     const res = await fetch(
       `${API_BASE_URL.replace(/\/+$/, '')}/api/Auth/refresh`,
       {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
-        body: JSON.stringify({}),
+        headers: { 
+          'Content-Type': 'application/json',
+          ...(Capacitor.isNativePlatform() ? { 'X-Client-Type': 'mobile' } : {})
+        },
+        credentials: 'include', // Fallback for web cookies
+        body: JSON.stringify({ refreshToken: storedRefreshToken || undefined }),
       },
     );
 
     if (!res.ok) return current;
 
-    const data = (await res.json()) as {
-      token?: string;
-      accessToken?: string;
-    };
-    const newToken = data.token ?? data.accessToken ?? null;
-    if (newToken) {
-      setAccessToken(newToken);
-      return newToken;
+    const data = (await res.json()) as LoginResponseDto;
+    
+    if (data.accessToken) {
+      setAccessToken(data.accessToken);
+      if (data.refreshToken) {
+        await Preferences.set({ key: REFRESH_TOKEN_KEY, value: data.refreshToken });
+      }
+      return data.accessToken;
     }
     return current;
   } catch {
@@ -216,6 +222,11 @@ async function request<T>(endpoint: string, config: RequestConfig = {}): Promise
     if (token) {
       requestHeaders.Authorization = `Bearer ${token}`;
     }
+  }
+
+  // 🔥 Add native header so the backend knows to return refresh tokens in the JSON
+  if (Capacitor.isNativePlatform()) {
+    requestHeaders['X-Client-Type'] = 'mobile';
   }
 
   const response = await fetch(url, {
@@ -339,7 +350,8 @@ const apiService = {
       body: JSON.stringify({ refreshToken }),
       skipAuth: true,
     });
-    if (result?.token) setAccessToken(result.token);
+    // 🔥 FIXED: Use accessToken instead of token
+    if (result?.accessToken) setAccessToken(result.accessToken);
     return result;
   },
 
@@ -348,6 +360,7 @@ const apiService = {
       await request<void>('/api/Auth/logout', { method: 'POST' });
     } finally {
       setAccessToken(null);
+      await Preferences.remove({ key: REFRESH_TOKEN_KEY });
     }
   },
 

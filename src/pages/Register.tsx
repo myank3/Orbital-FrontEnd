@@ -1,4 +1,5 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { Browser } from '@capacitor/browser';
+import { Capacitor } from '@capacitor/core';import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { AlertCircle, AtSign, Check, KeyRound, Lock, Mail, User as UserIcon, X } from 'lucide-react';
 
@@ -177,8 +178,16 @@ export default function Register(): React.JSX.Element {
     }
   }, [displayName, handle, email, password, confirm, consent, loading, register, navigate]);
 
-  const handleGoogleLogin = () => {
-    window.location.href = `${API_BASE_URL.replace(/\/+$/, '')}/api/Auth/google-login?prompt=select_account`;
+    const handleGoogleLogin = async () => {
+    const isMobile = Capacitor.isNativePlatform();
+    const baseUrl = API_BASE_URL.replace(/\/+$/, '');
+    const url = `${baseUrl}/api/Auth/google-login${isMobile ? '?client=mobile' : '?prompt=select_account'}`;
+    
+    if (isMobile) {
+      await Browser.open({ url });
+    } else {
+      window.location.href = url;
+    }
   };
 
   return (

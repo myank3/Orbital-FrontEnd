@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "895965728514",
+    "project_id": "orbital-ba21f",
+    "storage_bucket": "orbital-ba21f.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:895965728514:android:b370edacccc4e3b40f3c1b",
+        "android_client_info": {
+          "package_name": "com.orbitalhq.app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCksup190ssQjZpPevFhz5H7K2zcROLS1I"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

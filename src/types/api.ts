@@ -173,7 +173,8 @@ export interface LoginDto {
 }
 
 export interface LoginResponseDto {
-  token: string;
+  accessToken: string;
+  refreshToken?: string | null;
 }
 
 export interface ConfirmEmailDto {

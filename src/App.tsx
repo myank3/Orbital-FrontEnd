@@ -17,6 +17,12 @@ import { CallProvider } from './context/CallContext';
 import { ScrollToTop } from './components/ScrollToTop';
 import ConnectionBanner from './components/ConnectionBanner';
 
+// Capacitor Native Imports
+import { Capacitor } from '@capacitor/core';
+import { App as CapacitorApp } from '@capacitor/app';
+import { Preferences } from '@capacitor/preferences';
+import { initPushNotifications } from './services/pushService';
+
 // Public pages
 import Landing from './pages/Landing';
 import Login from './pages/Login';
@@ -121,6 +127,49 @@ function TokenInterceptor() {
   return null;
 }
 
+// 🔥 NEW: Native Integration for Deep Links & Push Notifications
+function NativeIntegration() {
+  const { isAuthenticated } = useAuth();
+
+  useEffect(() => {
+    if (!Capacitor.isNativePlatform()) return;
+
+    // 1. Initialize Push Notifications if logged in
+    if (isAuthenticated) {
+      initPushNotifications();
+    }
+
+    // 2. Listen for Google Auth Deep Link
+    const setupDeepLink = async () => {
+      CapacitorApp.addListener('appUrlOpen', async (event) => {
+        console.log('App opened with URL:', event.url);
+        
+        // Catch the orbital://auth?token=... redirect from your backend
+        if (event.url.includes('auth?')) {
+          const url = new URL(event.url);
+          const token = url.searchParams.get('token');
+          const refreshToken = url.searchParams.get('refreshToken');
+
+          if (token) {
+            // Save tokens to native storage
+            await Preferences.set({ key: 'accessToken', value: token });
+            if (refreshToken) {
+              await Preferences.set({ key: 'refreshToken', value: refreshToken });
+            }
+            
+            // Redirect to the route that your TokenInterceptor already handles
+            window.location.href = `/auth/google/success?token=${token}`;
+          }
+        }
+      });
+    };
+
+    setupDeepLink();
+  }, [isAuthenticated]);
+
+  return null;
+}
+
 export default function App() {
   return (
     <BrowserRouter>
@@ -128,6 +177,7 @@ export default function App() {
         <CallProvider>
           <ScrollToTop />
           <TokenInterceptor />
+          <NativeIntegration /> {/* 🔥 Added here inside AuthProvider */}
           <Routes>
             {/* ── Public (redirects to /app if logged in) ── */}
             <Route

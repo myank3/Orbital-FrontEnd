@@ -1164,7 +1164,15 @@ function AppShell(): React.JSX.Element {
           )}
 
         {incomingCall && (
-          <div className="shrink-0 z-30 px-4 sm:px-6 py-3 bg-[#0B0A09] border-b border-[#22C55E]/30 shadow-[0_10px_30px_-10px_rgba(34,197,94,0.15)]">
+          <div 
+            className="shrink-0 z-30 px-4 sm:px-6 pb-3 bg-[#0B0A09] border-b border-[#22C55E]/30 shadow-[0_10px_30px_-10px_rgba(34,197,94,0.15)]"
+            style={{
+              paddingTop: hideMobileChrome 
+                ? 'calc(env(safe-area-inset-top, 0px) + 12px)' 
+                : `calc(${headerIsHidden ? 0 : MOBILE_HEADER_H}px + env(safe-area-inset-top, 0px) + 12px)`,
+              transition: 'padding-top 220ms cubic-bezier(0.22, 1, 0.36, 1)'
+            }}
+          >
             <div className="flex items-center justify-between gap-4">
               <div className="flex items-center gap-3 min-w-0">
                 <div className="call-pulse w-10 h-10 rounded-full bg-[#22C55E]/15 border border-[#22C55E]/30 text-[#22C55E] flex items-center justify-center shrink-0 shadow-[0_0_20px_rgba(34,197,94,0.3)]">
@@ -1204,11 +1212,11 @@ function AppShell(): React.JSX.Element {
           key={location.pathname}
           className={`tab-swipe-surface shell-main flex-1 overflow-y-auto bg-transparent relative custom-scrollbar overscroll-contain ${routeAnim} ${
             !hideMobileChrome
-              ? `shell-main-with-nav shell-main-with-header ${
+              ? `shell-main-with-nav ${!incomingCall ? 'shell-main-with-header' : ''} ${
                   headerIsHidden ? 'is-header-hidden' : ''
                 }`
               : ''
-          } ${chatDetail ? 'shell-main-chat-gap' : ''}`}
+          } ${chatDetail && !incomingCall ? 'shell-main-chat-gap' : ''}`}
         >
           <Outlet />
         </main>
