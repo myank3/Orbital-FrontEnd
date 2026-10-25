@@ -62,15 +62,33 @@ function isTokenInterceptRoute(pathname: string): boolean {
   );
 }
 
+// 🔥 NEW CUSTOM LOADING SCREEN COMPONENT
+function LoadingScreen() {
+  return (
+    <div className="h-screen w-screen flex flex-col items-center justify-center bg-[#0B0A08]">
+      {/* Change /logo.svg to /icon.png if that's the path to your logo */}
+      <img 
+        src="/logo.svg" 
+        alt="Orbital" 
+        className="w-20 h-20 animate-pulse drop-shadow-[0_0_15px_rgba(217,119,6,0.5)] mb-6 object-contain" 
+      />
+      
+      {/* Spinner */}
+      <div className="w-8 h-8 border-4 border-[#D97706]/30 border-t-[#D97706] rounded-full animate-spin"></div>
+      
+      {/* Loading Text */}
+      <p className="mt-5 text-[#6B6259] font-mono text-xs tracking-[0.2em] uppercase animate-pulse">
+        Connecting to Orbital
+      </p>
+    </div>
+  );
+}
+
 function PublicOnlyRoute({ children }: { children: ReactElement }) {
   const { isAuthenticated, loading } = useAuth();
 
   if (loading) {
-    return (
-      <div className="h-screen w-screen flex items-center justify-center bg-[#0B0A08] text-[#6B6259] font-mono text-xs">
-        Loading…
-      </div>
-    );
+    return <LoadingScreen />; // 🔥 REPLACED BORING TEXT
   }
 
   if (isAuthenticated) return <Navigate to="/app" replace />;
@@ -82,11 +100,7 @@ function ProtectedRoute({ children }: { children: ReactElement }) {
   const { isAuthenticated, loading } = useAuth();
 
   if (loading) {
-    return (
-      <div className="h-screen w-screen flex items-center justify-center bg-[#0B0A08] text-[#6B6259] font-mono text-xs">
-        Loading…
-      </div>
-    );
+    return <LoadingScreen />; // 🔥 REPLACED BORING TEXT
   }
 
   if (!isAuthenticated) return <Navigate to="/login" replace />;
@@ -124,7 +138,7 @@ function TokenInterceptor() {
   return null;
 }
 
-// 🔥 FIXED: Native Integration with separated useEffects
+// 🔥 Native Integration with separated useEffects
 function NativeIntegration() {
   const { isAuthenticated } = useAuth();
 
