@@ -22,7 +22,7 @@ import { Capacitor } from '@capacitor/core';
 import { App as CapacitorApp } from '@capacitor/app';
 import { Preferences } from '@capacitor/preferences';
 import { initPushNotifications } from './services/pushService';
-import { requestCallPermissions } from './services/permissions'; // 🔥 Added
+import { requestCallPermissions } from './services/permissions';
 
 // Public pages
 import Landing from './pages/Landing';
@@ -124,47 +124,28 @@ function TokenInterceptor() {
   return null;
 }
 
-// 🔥 Native Integration for Deep Links, Push Notifications & Call Permissions
+// 🔥 FIXED: Native Integration with separated useEffects
 function NativeIntegration() {
   const { isAuthenticated } = useAuth();
 
+  // 1. Setup Deep Link Listener (Runs ONCE on app load)
   useEffect(() => {
     if (!Capacitor.isNativePlatform()) return;
 
-    // 1. Initialize Push Notifications & Call Permissions if logged in
-    if (isAuthenticated) {
-      initPushNotifications();
-
-      // Delay the camera/mic prompt by 1.5 seconds so it doesn't clash with the Notification prompt
-      const timer = setTimeout(async () => {
-        const granted = await requestCallPermissions(true);
-        if (!granted) {
-          console.log('User denied call permissions during onboarding.');
-        }
-      }, 1500);
-
-      return () => clearTimeout(timer);
-    }
-
-    // 2. Listen for Google Auth Deep Link
     const setupDeepLink = async () => {
       CapacitorApp.addListener('appUrlOpen', async (event) => {
         console.log('App opened with URL:', event.url);
         
-        // Catch the orbital://auth?token=... redirect from your backend
         if (event.url.includes('auth?')) {
           const url = new URL(event.url);
           const token = url.searchParams.get('token');
           const refreshToken = url.searchParams.get('refreshToken');
 
           if (token) {
-            // Save tokens to native storage
             await Preferences.set({ key: 'accessToken', value: token });
             if (refreshToken) {
               await Preferences.set({ key: 'refreshToken', value: refreshToken });
             }
-            
-            // Redirect to the route that your TokenInterceptor already handles
             window.location.href = `/auth/google/success?token=${token}`;
           }
         }
@@ -172,6 +153,23 @@ function NativeIntegration() {
     };
 
     setupDeepLink();
+  }, []);
+
+  // 2. Request Push & Call Permissions (Runs when user logs in)
+  useEffect(() => {
+    if (!Capacitor.isNativePlatform() || !isAuthenticated) return;
+
+    // Ask for Push Notifications
+    initPushNotifications();
+
+    // Ask for Mic/Camera after 1.5 seconds
+    const timer = setTimeout(async () => {
+      console.log('Requesting call permissions...');
+      const granted = await requestCallPermissions(true);
+      console.log('Call permissions granted:', granted);
+    }, 1500);
+
+    return () => clearTimeout(timer);
   }, [isAuthenticated]);
 
   return null;

@@ -47,21 +47,33 @@ export const initPushNotifications = async () => {
       }
     });
 
-    // 🔥 4. Handle errors safely so the app doesn't crash
+    // 4. Handle errors safely
     PushNotifications.addListener('registrationError', (error) => {
       console.error('❌ Firebase Registration Error:', error.error);
     });
 
-    // 5. Handle Notification Taps
+    // 5. Handle Notification Taps (Routing)
     PushNotifications.addListener('pushNotificationActionPerformed', (notification) => {
       const data = notification?.notification?.data;
-      if (data?.type === 'message' && data?.chatId) {
-        window.location.href = `/chat/${data.chatId}`; 
+      console.log('Notification tapped:', data);
+      
+      if (!data || !data.type) return;
+
+      // 🔥 Route based on the type sent from the C# backend
+      if (data.type === 'friend_request' || data.type === 'friend_accept') {
+        window.location.href = '/app/friends'; 
+      } 
+      else if (data.type === 'message' && data.chatId) {
+        // For DMs, the backend sends the sender's ID as chatId
+        window.location.href = `/app/dm/${data.chatId}`;
+      }
+      else if (data.type === 'group_message' && data.chatId) {
+        // For Groups, the backend sends the Group ID as chatId
+        window.location.href = `/app/groups/${data.chatId}`;
       }
     });
     
   } catch (error) {
-    // 🔥 Catch any native plugin errors so the app stays alive
     console.error('❌ Push Notifications failed to initialize:', error);
   }
 };

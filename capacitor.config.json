@@ -1,11 +1,5 @@
-﻿
-{
+﻿{
   "appId": "com.orbitalhq.app",
   "appName": "Orbital",
-  "webDir": "dist",
-  "server": {
-    "url": "https://orbitalhq.vercel.app",
-    "cleartext": false,
-    "androidScheme": "https"
-  }
+  "webDir": "dist"
 }
