@@ -61,12 +61,6 @@ const CHANNELS: Record<SignalKey, Channel> = {
 /* WebView detection                                          */
 /* ────────────────────────────────────────────────────────── */
 
-/**
- * Detects Android WebView by the `; wv)` marker in the UA string.
- * TWA (Trusted Web Activity) and mobile Chrome do NOT include this
- * marker — so they run with full desktop animations and look identical
- * to a PC browser.
- */
 function detectAndroidWebView(): boolean {
   if (typeof navigator === 'undefined') return false;
   const ua = navigator.userAgent || '';
@@ -117,9 +111,7 @@ const SIGNALS_CSS = `
     .s-blink      { animation-duration: 2.5s; }
   }
 
-  /* ── Tier 3: Android WebView — nuke ALL animations ──
-     WebView has a weaker compositor; every running animation
-     competes with the iframe's own render loop and drops frames. */
+  /* ── Tier 3: Android WebView — nuke ALL animations ── */
   .android-webview .s-rotate,
   .android-webview .s-rotate-rev,
   .android-webview .s-pulse,
@@ -134,12 +126,10 @@ const SIGNALS_CSS = `
   .android-webview .s-blink       { opacity: 0.9 !important; }
   .android-webview .s-drift       { display: none !important; }
 
-  /* Suppress heavy shadows on WebView — expensive per-frame repaints */
   .android-webview .expensive-shadow {
     box-shadow: none !important;
   }
 
-  /* Prefer opacity feedback over transform scale on tap (WebView-safe) */
   @media (hover: none) and (pointer: coarse) {
     .tap-safe:active { opacity: 0.75 !important; }
   }
@@ -182,7 +172,6 @@ const SIGNALS_CSS = `
 const Clock = React.memo(function Clock({ isWebView }: { isWebView: boolean }) {
   const [time, setTime] = useState(() => new Date());
   useEffect(() => {
-    // On WebView, update every 30s instead of every second — saves wakeups
     const ms = isWebView ? 30000 : 1000;
     const id = window.setInterval(() => setTime(new Date()), ms);
     return () => window.clearInterval(id);
@@ -219,13 +208,8 @@ function ChannelPanel({
   isWebView,
 }: ChannelPanelProps) {
   const Icon = channel.icon;
-
   const prefetch = () => onPrefetch?.(channel.url);
-
-  // On WebView, skip the entrance animation entirely — it competes with layout
-  const initialAnim = isWebView
-    ? false
-    : { opacity: 0, scale: 0.97 };
+  const initialAnim = isWebView ? false : { opacity: 0, scale: 0.97 };
 
   return (
     <motion.button
@@ -479,12 +463,10 @@ function Viewer({
       className="relative h-full w-full overflow-hidden"
       style={{
         backgroundColor: '#0B0A09',
-        // contain/isolation helps Chrome but can *hurt* Android WebView
         contain: isWebView ? undefined : 'layout paint style',
         isolation: isWebView ? undefined : 'isolate',
       }}
     >
-      {/* Accent line */}
       <div
         aria-hidden
         className="absolute top-0 left-0 right-0 h-[2px] z-20 pointer-events-none"
@@ -493,7 +475,6 @@ function Viewer({
         }}
       />
 
-      {/* Iframe — explicit sizing, GPU hints only on non-WebView */}
       <iframe
         key={`${channel.id}-${reloadKey}`}
         src={channel.url}
@@ -507,13 +488,11 @@ function Viewer({
         style={{
           transform: isWebView ? undefined : 'translateZ(0)',
           backfaceVisibility: isWebView ? undefined : 'hidden',
-          // Explicit dimensions prevent resize thrash on WebView
           width: '100%',
           height: '100%',
         }}
       />
 
-      {/* ── Back button — 48px, solid, Android-friendly ── */}
       <button
         type="button"
         onClick={onClose}
@@ -533,7 +512,6 @@ function Viewer({
         style={{
           top: 'calc(0.75rem + env(safe-area-inset-top, 0px))',
           left: 'calc(0.75rem + env(safe-area-inset-left, 0px))',
-          // Force dedicated layer only on non-WebView (WebView promotes poorly)
           willChange: isWebView ? undefined : 'transform',
         }}
         aria-label="Back to Signals"
@@ -543,8 +521,6 @@ function Viewer({
         <span></span>
       </button>
 
-     
-      {/* ── Loading overlay — lite on WebView ── */}
       {isLoading && !isWebView && (
         <AnimatePresence>
           <motion.div
@@ -609,7 +585,6 @@ export default function SignalsPage() {
   const [isLoading, setIsLoading] = useState(false);
   const [reloadKey, setReloadKey] = useState(0);
 
-  // ── Environment detection ──
   const [isWebView, setIsWebView] = useState(false);
   const [isMobile, setIsMobile] = useState(false);
 
@@ -626,7 +601,6 @@ export default function SignalsPage() {
     };
   }, []);
 
-  // ── Preconnect + prefetch ──
   useEffect(() => {
     if (typeof document === 'undefined') return;
 
@@ -721,7 +695,6 @@ export default function SignalsPage() {
     <div
       className="h-[100dvh] w-full bg-[#0B0A08] overflow-hidden relative"
       style={{
-        // `contain` helps Chrome but can confuse Android WebView's layout
         contain: isViewerActive && !isWebView ? 'layout paint style' : undefined,
       }}
     >
@@ -736,9 +709,11 @@ export default function SignalsPage() {
             initial={false}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0, transition: { duration: exitDuration } }}
-            className="relative z-10 h-full w-full flex flex-col p-2 md:p-3 gap-2 md:gap-3"
+            // 🔥 FIXED: Applied env(safe-area-inset-top) to prevent notch overlap
+            className="relative z-10 h-full w-full flex flex-col px-2 pb-2 md:p-3 gap-2 md:gap-3"
+            style={{ paddingTop: 'calc(env(safe-area-inset-top, 0px) + 8px)' }}
           >
-            <div className="shrink-0 h-9 flex items-center justify-between gap-2">
+            <div className="shrink-0 h-9 flex items-center justify-between gap-2 mt-1">
               <button
                 type="button"
                 onClick={() => navigate('/app/orbit')}
