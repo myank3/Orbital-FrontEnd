@@ -460,40 +460,11 @@ function Viewer({
           />
         </span>
         <span className="text-[12.5px] font-semibold tracking-tight whitespace-nowrap">
-          Satellite
+          
         </span>
       </button>
 
-      {/* ── Floating reload circle — solid (no backdrop-blur) for 240 Hz ── */}
-      <button
-        type="button"
-        onClick={onReload}
-        disabled={isLoading}
-        className="absolute z-30 w-11 h-11 rounded-full flex items-center justify-center
-                   bg-[#0B0A09]/95
-                   border border-white/[0.12]
-                   shadow-[0_8px_24px_-4px_rgba(0,0,0,0.85),inset_0_1px_0_rgba(255,255,255,0.08)]
-                   text-[#EDE5D4]
-                   hover:bg-[#0B0A09] hover:border-white/[0.2]
-                   active:scale-90
-                   disabled:opacity-60 disabled:cursor-wait
-                   transition-colors transition-transform duration-200 touch-manipulation group"
-        style={{
-          top: 'calc(0.75rem + env(safe-area-inset-top, 0px))',
-          right: 'calc(0.75rem + env(safe-area-inset-right, 0px))',
-        }}
-        aria-label="Reload channel"
-        title="Reload channel"
-      >
-        <RefreshCw
-          className={`w-4 h-4 ${
-            isLoading
-              ? 'animate-spin'
-              : 'transition-transform duration-500 group-hover:rotate-180'
-          }`}
-          strokeWidth={2}
-        />
-      </button>
+     
 
       {/* Loading overlay */}
       <AnimatePresence>
