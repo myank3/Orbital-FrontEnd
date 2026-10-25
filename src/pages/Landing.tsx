@@ -35,7 +35,8 @@ import {
   ToneMapping,
   Vignette,
 } from "@react-three/postprocessing";
-import { ToneMappingMode, BlendFunction } from "postprocessing";
+import { ToneMappingMode, BlendFunction,KernelSize  } from "postprocessing";
+
 import {
   motion,
   useReducedMotion,
@@ -67,7 +68,6 @@ import {
 /* ═══════════════════════════════════════════════════════════
    IMAGE MANIFEST — Curated Professional & Editorial Pass
    ═══════════════════════════════════════════════════════════ */
-
 const u = (id: string, w: number, q = 85) => {
   if (id.startsWith("http")) return id;
   if (id.startsWith("px:")) {
@@ -77,38 +77,37 @@ const u = (id: string, w: number, q = 85) => {
   return `https://images.unsplash.com/photo-${id}?auto=format&fit=crop&crop=faces,entropy&w=${w}&q=${q}`;
 };
 
-// All-new professional studio & editorial portraits
+// All-new professional studio & editorial portraits (Pexels + Unsplash mix)
 const FACE_IDS = {
-  ava:    "1534528741775-53994a69daeb", // Editorial studio portrait, warm lighting
-  sienna: "1573496359142-b8d87734a5a2", // Executive woman portrait, tailored blazer
-  lyra:   "1580489944761-15a19d654956", // Minimalist studio headshot
-  nova:   "1544005313-94ddf0286df2",    // Crisp high-contrast portrait
-  iris:   "1531746020798-e6953c6e8e04", // Warm architectural light portrait
-  anita:  "1567532939604-b6b5b0db2604", // Creative director studio shot
-  taylor: "1517841905240-472988babdf9", // Modern editorial profile
-  emery:  "1507003211169-0a1dd7228f2d", // Sharp founder headshot
-  john:   "1500648767791-00dcc994a43e", // Executive portrait, clean studio light
-  sam:    "1519085360753-af0119f7cbe7", // Tailored suit professional portrait
-  finn:   "1492562080023-ab3db95bfbce", // Architect / designer portrait
-  rowan:  "1506794778202-cad84cf45f1d", // Moody studio monochrome-warm portrait
+  ava:    "px:774909",                  // Warm smiling female founder, golden natural light
+  sienna: "1524504388940-b1c1722653e1", // Sunlit editorial model & creative director portrait
+  lyra:   "px:1036623",                 // Stylish modern professional woman, soft studio backdrop
+  nova:   "1534528741775-53994a69daeb", // High-contrast editorial headshot, direct eye contact
+  iris:   "px:733872",                  // Approachable executive woman in blazer, crisp smile
+  anita:  "px:1181686",                 // Confident tech lead with glasses, warm studio light
+  taylor: "1494790108377-be9c29b29330", // Vibrant, friendly creative professional headshot
+  emery:  "px:2379004",                 // Charismatic startup founder, warm genuine smile
+  john:   "1539571696357-5a69c17a67c6", // Sharp young product lead, modern editorial lighting
+  sam:    "px:1043474",                 // Tailored blazer executive portrait, confident presence
+  finn:   "px:1222271",                 // Friendly designer / architect, bright natural catchlight
+  rowan:  "px:1681010",                 // Modern creative director, warm approachable gaze
 } as const;
 
-// All-new architectural, studio, and executive lifestyle scenes
+// People-first chat, video huddle, and luxury social workspace scenes (Pexels + Unsplash mix)
 const SCENE_IDS = {
-  runway:    "1497366216548-37526070297c", // Minimalist architectural office
-  milan:     "1497215728101-856f4ea42174", // Warm designer workspace
-  nyfw:      "1600585154340-be6161a56a0c", // Modern architectural gallery interior
-  group1:    "1522071820081-009f0129c71c", // Design team collaboration
-  manChat:   "1556761175-5973dc0f32e7",    // Founder in modern lounge
-  manCall:   "1553877522-43269d4ea984",    // Executive studio call session
-  tokyo:     "1513694203232-719a280e022f", // Minimalist warm concrete interior
-  paris:     "1600607687939-ce8a6c25118c", // Sunlit architectural atrium
-  aurora:    "1507679799987-c73779587ccf", // Tailored executive aesthetic
-  milkyway:  "1618221195710-dd6b41faaea6", // Luxury dark-mode lounge interior
-  mountains: "1486406146926-c627a92ad1ab", // High-rise glass architecture
-  ocean:     "1517245386807-bb43f82c33c4", // Creative roundtable studio
+  runway:    "px:3184291",                 // Attractive creative team laughing & talking in studio
+  milan:     "1522202176988-66273c2fd55f", // Young professionals chatting over laptops in warm light
+  nyfw:      "px:3182812",                 // Stylish executives conversing in modern glass atrium
+  group1:    "px:3184418",                 // High-energy design squad collaborating closely
+  manChat:   "px:842567",                  // Charismatic founder chatting over coffee in lounge
+  manCall:   "px:4050291",                 // Professional on live video call in sleek studio
+  tokyo:     "1600880292203-757bb62b4baf", // Two attractive co-founders smiling & chatting at desk
+  paris:     "px:1181396",                 // Engaging one-on-one conversation in sunlit atrium
+  aurora:    "1507679799987-c73779587ccf", // Sharp executive smiling in luxury lounge setting
+  milkyway:  "px:3184611",                 // Moody ambient lounge conversation between founders
+  mountains: "1517048676732-d65bc937f952", // Modern glass-room social huddle and strategy chat
+  ocean:     "px:3183150",                 // Creative roundtable session with engaged professionals
 } as const;
-
 function toUrls<T extends Record<string, string>>(
   ids: T,
   w: number,
@@ -119,14 +118,13 @@ function toUrls<T extends Record<string, string>>(
   return out as { [K in keyof T]: string };
 }
 
-// Right-sized for crisp retina display without GPU texture upload lag
-const FACE = toUrls(FACE_IDS, 640, 88);
-const SCENE = toUrls(SCENE_IDS, 1400, 88);
+const FACE = toUrls(FACE_IDS, 800, 88);   // was 640
+const SCENE = toUrls(SCENE_IDS, 1600, 88); // was 1400
 
 const GALLERY: string[] = [
-  ...Object.values(FACE_IDS),
-  ...Object.values(SCENE_IDS),
-].map((id) => u(id, 960, 85));
+  ...Object.values(FACE_IDS).map((id) => u(id, 1000, 88)),
+  ...Object.values(SCENE_IDS).map((id) => u(id, 1800, 88)),
+];
 
 // Preload & decode primary avatar immediately so it never flashes in the phone
 if (typeof window !== "undefined") {
@@ -1149,29 +1147,37 @@ function fallbackTexture(idx: number) {
   t.colorSpace = THREE.SRGBColorSpace;
   return t;
 }
-
 function useGallery(wanted: number[]) {
   const [, bump] = useState(0);
   const ref = useRef<Record<number, THREE.Texture>>({});
+  const { gl } = useThree();          // ← add this
+
   useEffect(() => {
     let alive = true;
     const loader = new THREE.TextureLoader();
+    loader.setCrossOrigin('anonymous');
     const store_ = ref.current;
+    const maxAniso = gl.capabilities.getMaxAnisotropy();
+
     wanted.forEach((idx) => {
       const finish = (t: THREE.Texture) => {
-        if (!alive) {
-          t.dispose();
-          return;
-        }
+        if (!alive) { t.dispose(); return; }
         t.colorSpace = THREE.SRGBColorSpace;
-        t.anisotropy = 4;
-        t.generateMipmaps = false;
-        t.minFilter = THREE.LinearFilter;
+        // ⭐ Trilinear mipmapping — eliminates shimmer when minified
+        // and gives a smooth, crisp result when magnified on a card.
+        t.anisotropy = Math.min(16, maxAniso);
+        t.generateMipmaps = true;
+        t.minFilter = THREE.LinearMipmapLinearFilter;  // trilinear
+        t.magFilter = THREE.LinearFilter;
+        t.needsUpdate = true;
         store_[idx] = t;
         bump((v) => v + 1);
       };
-      loader.load(GALLERY[idx], finish, undefined, () =>
-        finish(fallbackTexture(idx)),
+      loader.load(
+        GALLERY[idx],
+        finish,
+        undefined,
+        () => finish(fallbackTexture(idx)),
       );
     });
     return () => {
@@ -1179,7 +1185,8 @@ function useGallery(wanted: number[]) {
       Object.values(store_).forEach((t) => t.dispose());
       ref.current = {};
     };
-  }, [wanted]);
+  }, [wanted, gl]);
+
   return ref.current;
 }
 
@@ -1231,7 +1238,8 @@ function makeCardMaterial(
           vec2 cuv = vMapUv - 0.5;
           if (uAspect > uTexAspect) { cuv.y *= uTexAspect / uAspect; }
           else                      { cuv.x *= uAspect / uTexAspect; }
-          cuv = cuv * 0.92 + 0.5;
+          cuv = cuv * 0.98 + 0.5;
+
           vec4 texel = texture2D(map, cuv);
           vec2 hs = vec2(uAspect, 1.0) * 0.5;
           vec2 pp = (vMapUv - 0.5) * vec2(uAspect, 1.0);
@@ -1241,7 +1249,9 @@ function makeCardMaterial(
           float edge = 1.0 - smoothstep(-0.004, 0.004, sd);
           float rim = smoothstep(-0.016, -0.002, sd);
           float dcam = distance(cameraPosition, vCW);
-          float fade = smoothstep(1.1, 3.6, dcam) * (1.0 - smoothstep(30.0, 54.0, dcam));
+          float fade =
+  smoothstep(1.4, 2.4, dcam) *
+  (1.0 - smoothstep(38.0, 46.0, dcam));
           vec3 grade = mix(vec3(1.06, 0.95, 0.84), vec3(0.86, 0.95, 1.08), uTint);
           vec3 col = texel.rgb * grade * 0.94;
           col += vec3(0.78, 0.53, 0.23) * rim * 0.45;
@@ -1374,7 +1384,9 @@ function Gates({ mobile }: { mobile: boolean }) {
 
   return (
     <instancedMesh ref={ref} args={[undefined, undefined, GATE_N]} frustumCulled={false}>
-      <torusGeometry args={[3.3, 0.02, mobile ? 6 : 8, mobile ? 56 : 80]} />
+      
+<torusGeometry args={[3.3, 0.035, mobile ? 6 : 8, mobile ? 56 : 80]} />
+
       <meshBasicMaterial
         color={AMBER}
         transparent
@@ -1739,11 +1751,12 @@ function Portal({ mobile }: { mobile: boolean }) {
     <group position={p} quaternion={q}>
       <group ref={ringRef}>
         <mesh>
-          <torusGeometry args={[3.4, 0.045, mobile ? 8 : 12, mobile ? 64 : 96]} />
+          
+<torusGeometry args={[3.4, 0.07, mobile ? 8 : 12, mobile ? 64 : 96]} />
           <meshBasicMaterial color={AMBER} toneMapped={false} />
         </mesh>
         <mesh>
-          <torusGeometry args={[3.95, 0.012, mobile ? 6 : 8, mobile ? 64 : 96]} />
+<torusGeometry args={[3.95, 0.02, mobile ? 6 : 8, mobile ? 64 : 96]} />
           <meshBasicMaterial color={CREAM} transparent opacity={0.55} toneMapped={false} />
         </mesh>
       </group>
@@ -1772,19 +1785,20 @@ function PostFX({ tier, hz, mobile }: { tier: Tier; hz: number; mobile: boolean 
   if (mobile || tier === "low") return null;
   const highHz = hz >= 120;
   if (tier === "mid") {
-    return (
-      <EffectComposer multisampling={0} enableNormalPass={false}>
-        <Bloom
-          intensity={0.55}
-          luminanceThreshold={0.55}
-          luminanceSmoothing={0.25}
-          mipmapBlur
-          resolutionScale={highHz ? 0.45 : 0.6}
-        />
-        <ToneMapping mode={ToneMappingMode.ACES_FILMIC} />
-      </EffectComposer>
-    );
-  }
+  return (
+    <EffectComposer multisampling={0} enableNormalPass={false}>
+      <Bloom
+        intensity={0.55}
+        luminanceThreshold={0.55}
+        luminanceSmoothing={0.25}
+        mipmapBlur
+        kernelSize={highHz ? KernelSize.SMALL : KernelSize.MEDIUM}
+        resolutionScale={highHz ? 0.35 : 0.55}
+      />
+      <ToneMapping mode={ToneMappingMode.ACES_FILMIC} />
+    </EffectComposer>
+  );
+}
   return (
     <EffectComposer multisampling={highHz ? 0 : 2} enableNormalPass={false}>
       <Bloom
@@ -3356,20 +3370,21 @@ export function Landing() {
     return () => document.removeEventListener("error", h, true);
   }, []);
 
-  const { maxDpr, minDpr } = useMemo(() => {
-    if (mobile) return { maxDpr: 1, minDpr: 0.65 };
-    const native =
-      typeof window === "undefined"
-        ? 1
-        : Math.min(window.devicePixelRatio || 1, 1.75);
-    const headroom = hz >= 144 ? 0.85 : hz >= 120 ? 0.9 : 1;
-    const tierCap = tier === "low" ? 1.15 : tier === "mid" ? 1.4 : 1.65;
-    const hi = Math.max(0.7, Math.min(native, tierCap) * headroom);
-    return {
-      maxDpr: Math.round(hi * 100) / 100,
-      minDpr: Math.max(0.75, Math.round(hi * 0.7 * 100) / 100),
-    };
-  }, [tier, hz, mobile]);
+ const { maxDpr, minDpr } = useMemo(() => {
+  if (mobile) return { maxDpr: 1.15, minDpr: 0.85 };
+  const native =
+    typeof window === "undefined"
+      ? 1
+      : Math.min(window.devicePixelRatio || 1, 2.5);
+  // Very small headroom penalty — just enough to avoid fill-rate cliffs.
+  const headroom = hz >= 144 ? 0.95 : hz >= 120 ? 0.98 : 1;
+  const tierCap = tier === "low" ? 1.4 : tier === "mid" ? 1.9 : 2.3;
+  const hi = Math.max(1.4, Math.min(native, tierCap) * headroom);
+  return {
+    maxDpr: Math.round(hi * 100) / 100,
+    minDpr: Math.max(1.1, Math.round(hi * 0.82 * 100) / 100),
+  };
+}, [tier, hz, mobile]);
 
   return (
     <main

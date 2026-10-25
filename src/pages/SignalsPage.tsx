@@ -401,7 +401,14 @@ function Viewer({
   return (
     <div
       className="relative h-full w-full overflow-hidden"
-      style={{ backgroundColor: '#0B0A09' }}
+      style={{
+        backgroundColor: '#0B0A09',
+        // Isolate this subtree's layout/paint/compositing from the parent
+        // page — the iframe gets its own context and the parent stops
+        // re-checking containment every frame.
+        contain: 'layout paint style',
+        isolation: 'isolate',
+      }}
     >
       {/* Thin accent line at very top — native panel frame */}
       <div
@@ -424,18 +431,18 @@ function Viewer({
         referrerPolicy="no-referrer-when-downgrade"
       />
 
-      {/* ── Floating back pill — glass, with label ── */}
+      {/* ── Floating back pill — solid (no backdrop-blur) for 240 Hz ── */}
       <button
         type="button"
         onClick={onClose}
         className="absolute z-30 h-11 pl-2 pr-4 rounded-full flex items-center gap-2.5
-                   bg-[#0B0A09]/80 backdrop-blur-xl
+                   bg-[#0B0A09]/95
                    border border-white/[0.12]
                    shadow-[0_8px_24px_-4px_rgba(0,0,0,0.85),inset_0_1px_0_rgba(255,255,255,0.08)]
                    text-[#EDE5D4]
-                   hover:bg-[#0B0A09]/95 hover:border-white/[0.2]
+                   hover:bg-[#0B0A09] hover:border-white/[0.2]
                    active:scale-[0.97]
-                   transition-all duration-200 touch-manipulation"
+                   transition-colors transition-transform duration-200 touch-manipulation"
         style={{
           top: 'calc(0.75rem + env(safe-area-inset-top, 0px))',
           left: 'calc(0.75rem + env(safe-area-inset-left, 0px))',
@@ -443,7 +450,6 @@ function Viewer({
         aria-label="Back to Signals"
         title="Back to Signals"
       >
-        {/* Circular arrow badge */}
         <span
           className="w-7 h-7 rounded-full flex items-center justify-center shrink-0
                      bg-white/[0.06] border border-white/[0.08]"
@@ -458,20 +464,20 @@ function Viewer({
         </span>
       </button>
 
-      {/* ── Floating reload circle — glass, spins when loading or hovered ── */}
+      {/* ── Floating reload circle — solid (no backdrop-blur) for 240 Hz ── */}
       <button
         type="button"
         onClick={onReload}
         disabled={isLoading}
         className="absolute z-30 w-11 h-11 rounded-full flex items-center justify-center
-                   bg-[#0B0A09]/80 backdrop-blur-xl
+                   bg-[#0B0A09]/95
                    border border-white/[0.12]
                    shadow-[0_8px_24px_-4px_rgba(0,0,0,0.85),inset_0_1px_0_rgba(255,255,255,0.08)]
                    text-[#EDE5D4]
-                   hover:bg-[#0B0A09]/95 hover:border-white/[0.2]
+                   hover:bg-[#0B0A09] hover:border-white/[0.2]
                    active:scale-90
                    disabled:opacity-60 disabled:cursor-wait
-                   transition-all duration-200 touch-manipulation group"
+                   transition-colors transition-transform duration-200 touch-manipulation group"
         style={{
           top: 'calc(0.75rem + env(safe-area-inset-top, 0px))',
           right: 'calc(0.75rem + env(safe-area-inset-right, 0px))',
@@ -570,11 +576,27 @@ export default function SignalsPage() {
     return () => window.removeEventListener('keydown', onKey);
   }, [activeSignal, navigate]);
 
+  const isViewerActive = activeSignal !== null;
+
   return (
-    <div className="h-full w-full bg-[#0B0A08] overflow-hidden relative">
+    <div
+      className="h-full w-full bg-[#0B0A08] overflow-hidden relative"
+      style={{
+        // While the viewer is open, isolate the page so the iframe's
+        // rendering context doesn't couple to the outer layout.
+        contain: isViewerActive ? 'layout paint style' : undefined,
+      }}
+    >
       <style>{SIGNALS_CSS}</style>
 
-      <AmbientBackground />
+      {/*
+        ⭐ Ambient only mounts on the landing screen.
+        Previously it stayed mounted behind the iframe, so the .s-drift
+        line (with will-change: transform) plus four radial-gradient
+        layers were compositing at 240 Hz on top of the iframe's own
+        render loop. Unmounting it cuts that entire cost to zero.
+      */}
+      {!isViewerActive && <AmbientBackground />}
 
       <AnimatePresence mode="wait" initial={false}>
         {!activeSignal ? (
