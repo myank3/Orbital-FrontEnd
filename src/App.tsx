@@ -68,7 +68,7 @@ function LoadingScreen() {
     <div className="h-screen w-screen flex flex-col items-center justify-center bg-[#0B0A08]">
       {/* Change /logo.svg to /icon.png if that's the path to your logo */}
       <img 
-        src="/logo.svg" 
+        src="/ic_background.png" 
         alt="Orbital" 
         className="w-20 h-20 animate-pulse drop-shadow-[0_0_15px_rgba(217,119,6,0.5)] mb-6 object-contain" 
       />

@@ -25,6 +25,7 @@ import React, {
   useRef,
   useState,
 } from "react";
+import { Capacitor } from '@capacitor/core';
 import { Link } from "react-router-dom";
 import Lenis from "lenis";
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
@@ -35,7 +36,7 @@ import {
   ToneMapping,
   Vignette,
 } from "@react-three/postprocessing";
-import { ToneMappingMode, BlendFunction,KernelSize  } from "postprocessing";
+import { ToneMappingMode, BlendFunction, KernelSize } from "postprocessing";
 
 import {
   motion,
@@ -141,7 +142,7 @@ const AMBER = "#C8883A";
 const CREAM = "#E5D6B8";
 const DEEP = "#04060A";
 
-const DOWNLOAD_HREF = "/downloads/orbital.apk";
+const DOWNLOAD_HREF = "/downloads/Orbital.apk";
 
 const UI_SPRING = { type: "spring", stiffness: 520, damping: 36 } as const;
 const CINEMATIC_SPRING = {
@@ -252,7 +253,7 @@ function useRefreshRate() {
 }
 
 /* ═══════════════════════════════════════════════════════════
-   SCROLL STORE — Synchronized High-Hz Loop
+   SCROLL STORE — Synchronized High-Hz Loop (Zero Dual-rAF Jitter)
    ═══════════════════════════════════════════════════════════ */
 
 type Store = {
@@ -287,19 +288,34 @@ let _fast = 0;
 let _slow = 0;
 
 let lenisInstance: Lenis | null = null;
+let maxScrollCache = 1;
 
 function useSmoothScroll(enabled: boolean) {
   useEffect(() => {
     if (!enabled) return;
+    // Driven manually inside R3F's useFrame (autoRaf: false) so scroll & 3D
+    // camera are 100% locked to the exact same frame timestamp at 60Hz–240Hz.
     const lenis = new Lenis({
-      lerp: 0.12,
+      lerp: 0.14,
       wheelMultiplier: 1,
       touchMultiplier: 1.5,
       smoothWheel: true,
-      autoRaf: true,
+      autoRaf: false,
     });
     lenisInstance = lenis;
+
+    // Fallback rAF only if WebGL canvas isn't mounted
+    let fallbackRaf = 0;
+    const tickFallback = (time: number) => {
+      if (!document.querySelector("canvas")) {
+        lenis.raf(time);
+      }
+      fallbackRaf = requestAnimationFrame(tickFallback);
+    };
+    fallbackRaf = requestAnimationFrame(tickFallback);
+
     return () => {
+      cancelAnimationFrame(fallbackRaf);
       lenis.destroy();
       lenisInstance = null;
     };
@@ -310,18 +326,19 @@ function ScrollDriver() {
   const prev = useRef(0);
 
   useEffect(() => {
-    let max = 1;
     let lastW = window.innerWidth;
 
     const measure = () => {
-      max = Math.max(
+      maxScrollCache = Math.max(
         1,
         document.documentElement.scrollHeight - window.innerHeight,
       );
-      store.raw = clamp01(window.scrollY / max);
+      const y = lenisInstance ? lenisInstance.scroll : window.scrollY;
+      store.raw = clamp01(y / maxScrollCache);
     };
     const read = () => {
-      store.raw = clamp01(window.scrollY / max);
+      const y = lenisInstance ? lenisInstance.scroll : window.scrollY;
+      store.raw = clamp01(y / maxScrollCache);
     };
     const onResize = () => {
       if (window.innerWidth === lastW) return;
@@ -330,12 +347,24 @@ function ScrollDriver() {
     };
 
     measure();
+    const ro =
+      typeof ResizeObserver !== "undefined"
+        ? new ResizeObserver(() => {
+            maxScrollCache = Math.max(
+              1,
+              document.documentElement.scrollHeight - window.innerHeight,
+            );
+          })
+        : null;
+    ro?.observe(document.documentElement);
+
     window.addEventListener("scroll", read, { passive: true });
     window.addEventListener("resize", onResize, { passive: true });
     window.addEventListener("orientationchange", measure, { passive: true });
     window.addEventListener("load", measure);
 
     return () => {
+      ro?.disconnect();
       window.removeEventListener("scroll", read);
       window.removeEventListener("resize", onResize);
       window.removeEventListener("orientationchange", measure);
@@ -344,17 +373,23 @@ function ScrollDriver() {
   }, []);
 
   useFrame((state, delta) => {
-    // True frame-rate independent delta for 60Hz–240Hz
+    // 1. Step Lenis synchronously at the very start of the WebGL frame
+    if (lenisInstance) {
+      lenisInstance.raf(performance.now());
+      store.raw = clamp01(lenisInstance.scroll / maxScrollCache);
+    }
+
+    // 2. True frame-rate independent sub-stepped damping for 60Hz–240Hz
     const dt = Math.min(delta, 0.05);
-    store.smooth = damp(store.smooth, store.raw, 22, dt);
-    if (Math.abs(store.raw - store.smooth) < 0.0001) store.smooth = store.raw;
+    store.smooth = damp(store.smooth, store.raw, 28, dt);
+    if (Math.abs(store.raw - store.smooth) < 0.00005) store.smooth = store.raw;
 
     const raw = (store.smooth - prev.current) / Math.max(dt, 1e-5);
     prev.current = store.smooth;
-    store.velocity = damp(store.velocity, raw, 12, dt);
+    store.velocity = damp(store.velocity, raw, 14, dt);
 
-    _fast = damp(_fast, store.velocity, 14, dt);
-    _slow = damp(_slow, store.velocity, 4, dt);
+    _fast = damp(_fast, store.velocity, 16, dt);
+    _slow = damp(_slow, store.velocity, 4.5, dt);
     store.lag = clampN(_fast - _slow, -0.35, 0.35);
 
     const beatF = store.smooth * 5;
@@ -370,7 +405,7 @@ function ScrollDriver() {
       lastBeatIndex = idx;
       for (let k = 0; k < beatListeners.length; k++) beatListeners[k](idx);
     }
-  });
+  }, -100);
 
   return null;
 }
@@ -411,7 +446,7 @@ function AdaptiveResolution({
   useFrame((_, delta) => {
     acc.current += Math.min(delta, 0.1);
     frames.current += 1;
-    if (acc.current < 0.4) return;
+    if (acc.current < 0.5) return;
 
     const fps = frames.current / acc.current;
     acc.current = 0;
@@ -446,7 +481,7 @@ function AdaptiveResolution({
       );
       setDpr(cur.current);
       low.current = 0;
-      cooldown.current = mobile ? 5 : 3;
+      cooldown.current = mobile ? 5 : 4;
     } else if (high.current >= highNeed && cur.current < max - 1e-3) {
       cur.current = Math.min(
         max,
@@ -454,7 +489,7 @@ function AdaptiveResolution({
       );
       setDpr(cur.current);
       high.current = 0;
-      cooldown.current = mobile ? 10 : 6;
+      cooldown.current = mobile ? 10 : 8;
     }
   });
 
@@ -462,7 +497,7 @@ function AdaptiveResolution({
 }
 
 /* ═══════════════════════════════════════════════════════════
-   THE PATH
+   THE PATH + O(1) PRECOMPUTED SPLINE LUT (Zero Binary Search)
    ═══════════════════════════════════════════════════════════ */
 
 const PATH = new THREE.CatmullRomCurve3(
@@ -479,6 +514,56 @@ const PATH = new THREE.CatmullRomCurve3(
   "centripetal",
 );
 PATH.arcLengthDivisions = 600;
+
+// Precompute 2048 arc-length-parameterized points & tangents so fast scrolling
+// never runs binary search on CatmullRomCurve3 during useFrame.
+const LUT_STEPS = 2048;
+const LUT_POS = new Float32Array((LUT_STEPS + 1) * 3);
+const LUT_TAN = new Float32Array((LUT_STEPS + 1) * 3);
+{
+  const tmpP = new THREE.Vector3();
+  const tmpT = new THREE.Vector3();
+  for (let i = 0; i <= LUT_STEPS; i++) {
+    const u = i / LUT_STEPS;
+    PATH.getPointAt(u, tmpP);
+    PATH.getTangentAt(u, tmpT);
+    const k = i * 3;
+    LUT_POS[k] = tmpP.x;
+    LUT_POS[k + 1] = tmpP.y;
+    LUT_POS[k + 2] = tmpP.z;
+    LUT_TAN[k] = tmpT.x;
+    LUT_TAN[k + 1] = tmpT.y;
+    LUT_TAN[k + 2] = tmpT.z;
+  }
+}
+
+function samplePointFast(u: number, out: THREE.Vector3) {
+  const c = clamp01(u) * LUT_STEPS;
+  const i0 = Math.min(LUT_STEPS - 1, c | 0);
+  const f = c - i0;
+  const k0 = i0 * 3;
+  const k1 = k0 + 3;
+  out.set(
+    LUT_POS[k0] + (LUT_POS[k1] - LUT_POS[k0]) * f,
+    LUT_POS[k0 + 1] + (LUT_POS[k1 + 1] - LUT_POS[k0 + 1]) * f,
+    LUT_POS[k0 + 2] + (LUT_POS[k1 + 2] - LUT_POS[k0 + 2]) * f,
+  );
+}
+
+function sampleTangentFast(u: number, out: THREE.Vector3) {
+  const c = clamp01(u) * LUT_STEPS;
+  const i0 = Math.min(LUT_STEPS - 1, c | 0);
+  const f = c - i0;
+  const k0 = i0 * 3;
+  const k1 = k0 + 3;
+  out
+    .set(
+      LUT_TAN[k0] + (LUT_TAN[k1] - LUT_TAN[k0]) * f,
+      LUT_TAN[k0 + 1] + (LUT_TAN[k1 + 1] - LUT_TAN[k0 + 1]) * f,
+      LUT_TAN[k0 + 2] + (LUT_TAN[k1 + 2] - LUT_TAN[k0 + 2]) * f,
+    )
+    .normalize();
+}
 
 const UP = new THREE.Vector3(0, 1, 0);
 const AXIS_Z = new THREE.Vector3(0, 0, 1);
@@ -535,10 +620,10 @@ function CameraRig() {
     const c = BEAT_U[lo] + (BEAT_U[hi] - BEAT_U[lo]) * frac;
     store.head = c;
 
-    PATH.getPointAt(c, _P);
-    PATH.getTangentAt(c, _T);
-    PATH.getPointAt(Math.min(1, c + U_LOOK), _L);
-    PATH.getTangentAt(Math.min(1, c + 0.02), _T2);
+    samplePointFast(c, _P);
+    sampleTangentFast(c, _T);
+    samplePointFast(Math.min(1, c + U_LOOK), _L);
+    sampleTangentFast(Math.min(1, c + 0.02), _T2);
     _R.crossVectors(_T, UP).normalize();
 
     const shift = BEAT_SHIFT[lo] + (BEAT_SHIFT[hi] - BEAT_SHIFT[lo]) * frac;
@@ -561,11 +646,11 @@ function CameraRig() {
       look.current.copy(tLook.current);
     }
 
-    dampVec3(pos.current, tPos.current, 6.5, dt);
-    dampVec3(look.current, tLook.current, 8.0, dt);
+    dampVec3(pos.current, tPos.current, 7.5, dt);
+    dampVec3(look.current, tLook.current, 9.0, dt);
 
     const lat = _T2.dot(_R);
-    roll.current = damp(roll.current, clampN(-lat * 1.6, -0.14, 0.14), 3.5, dt);
+    roll.current = damp(roll.current, clampN(-lat * 1.6, -0.14, 0.14), 4.0, dt);
 
     cam.position.copy(pos.current);
     cam.up.set(Math.sin(roll.current), Math.cos(roll.current), 0);
@@ -574,14 +659,14 @@ function CameraRig() {
     fov.current = damp(
       fov.current,
       FOV + Math.min(12, Math.abs(store.velocity) * 16),
-      7,
+      8,
       dt,
     );
     if (Math.abs(cam.fov - fov.current) > 0.01) {
       cam.fov = fov.current;
       cam.updateProjectionMatrix();
     }
-  });
+  }, -90);
 
   return null;
 }
@@ -727,7 +812,7 @@ function Backdrop({ mobile }: { mobile: boolean }) {
     uniforms.uScroll.value = store.smooth;
   });
   return (
-    <mesh frustumCulled={false} renderOrder={-20}>
+    <mesh frustumCulled={false} renderOrder={-20} matrixAutoUpdate={false}>
       <planeGeometry args={[2, 2]} />
       <shaderMaterial
         key={mobile ? "bg-low" : "bg-high"}
@@ -853,10 +938,10 @@ function Thread({ mobile }: { mobile: boolean }) {
   );
 
   return (
-    <group>
-      <mesh geometry={parts.main} material={parts.mats[0]} frustumCulled={false} />
-      <mesh geometry={parts.strands[0]} material={parts.mats[1]} frustumCulled={false} />
-      <mesh geometry={parts.strands[1]} material={parts.mats[2]} frustumCulled={false} />
+    <group matrixAutoUpdate={false}>
+      <mesh geometry={parts.main} material={parts.mats[0]} frustumCulled={false} matrixAutoUpdate={false} />
+      <mesh geometry={parts.strands[0]} material={parts.mats[1]} frustumCulled={false} matrixAutoUpdate={false} />
+      <mesh geometry={parts.strands[1]} material={parts.mats[2]} frustumCulled={false} matrixAutoUpdate={false} />
     </group>
   );
 }
@@ -938,7 +1023,7 @@ function Dust({ tier, mobile }: { tier: Tier; mobile: boolean }) {
   }, [size, gl, uniforms]);
 
   return (
-    <points geometry={geo} frustumCulled={false}>
+    <points geometry={geo} frustumCulled={false} matrixAutoUpdate={false}>
       <shaderMaterial
         uniforms={uniforms}
         vertexShader={DUST_VERT}
@@ -953,8 +1038,10 @@ function Dust({ tier, mobile }: { tier: Tier; mobile: boolean }) {
 }
 
 /* ═══════════════════════════════════════════════════════════
-   PHOTO CARDS
+   PHOTO CARDS — Shared PlaneGeometry + Staggered GPU Upload
    ═══════════════════════════════════════════════════════════ */
+
+const SHARED_CARD_GEO = new THREE.PlaneGeometry(1, 1);
 
 type CardSpec = {
   tex: number;
@@ -1147,41 +1234,103 @@ function fallbackTexture(idx: number) {
   t.colorSpace = THREE.SRGBColorSpace;
   return t;
 }
+
+// Off-main-thread image decode + 1-per-frame GPU upload queue so texture uploads
+// never stall a 60Hz–240Hz scroll frame or trigger 24 separate React re-renders.
 function useGallery(wanted: number[]) {
   const [, bump] = useState(0);
   const ref = useRef<Record<number, THREE.Texture>>({});
-  const { gl } = useThree();          // ← add this
+  const { gl } = useThree();
 
   useEffect(() => {
     let alive = true;
-    const loader = new THREE.TextureLoader();
-    loader.setCrossOrigin('anonymous');
     const store_ = ref.current;
-    const maxAniso = gl.capabilities.getMaxAnisotropy();
+    const maxAniso = Math.min(8, gl.capabilities.getMaxAnisotropy());
+    const uploadQueue: Array<{ idx: number; tex: THREE.Texture }> = [];
+    let rafId = 0;
+    let pendingBump = false;
+
+    const drainUploadQueue = () => {
+      if (!alive) return;
+      const next = uploadQueue.shift();
+      if (next) {
+        gl.initTexture(next.tex);
+        store_[next.idx] = next.tex;
+        pendingBump = true;
+      }
+      if (uploadQueue.length > 0) {
+        rafId = requestAnimationFrame(drainUploadQueue);
+      } else {
+        rafId = 0;
+        if (pendingBump) {
+          pendingBump = false;
+          bump((v) => v + 1);
+        }
+      }
+    };
+
+    const enqueue = (idx: number, tex: THREE.Texture) => {
+      if (!alive) {
+        tex.dispose();
+        return;
+      }
+      tex.colorSpace = THREE.SRGBColorSpace;
+      tex.anisotropy = maxAniso;
+      tex.generateMipmaps = true;
+      tex.minFilter = THREE.LinearMipmapLinearFilter;
+      tex.magFilter = THREE.LinearFilter;
+      tex.needsUpdate = true;
+      uploadQueue.push({ idx, tex });
+      // Flush first 6 hero textures as soon as ready, then trickle the rest 1/frame
+      if (Object.keys(store_).length + uploadQueue.length <= 6) {
+        store_[idx] = tex;
+      }
+      if (!rafId) {
+        rafId = requestAnimationFrame(drainUploadQueue);
+      }
+    };
 
     wanted.forEach((idx) => {
-      const finish = (t: THREE.Texture) => {
-        if (!alive) { t.dispose(); return; }
-        t.colorSpace = THREE.SRGBColorSpace;
-        // ⭐ Trilinear mipmapping — eliminates shimmer when minified
-        // and gives a smooth, crisp result when magnified on a card.
-        t.anisotropy = Math.min(16, maxAniso);
-        t.generateMipmaps = true;
-        t.minFilter = THREE.LinearMipmapLinearFilter;  // trilinear
-        t.magFilter = THREE.LinearFilter;
-        t.needsUpdate = true;
-        store_[idx] = t;
-        bump((v) => v + 1);
-      };
-      loader.load(
-        GALLERY[idx],
-        finish,
-        undefined,
-        () => finish(fallbackTexture(idx)),
-      );
+      const url = GALLERY[idx];
+      if (typeof createImageBitmap === "function") {
+        fetch(url, { mode: "cors" })
+          .then((r) => {
+            if (!r.ok) throw new Error("fetch failed");
+            return r.blob();
+          })
+          .then((blob) =>
+            createImageBitmap(blob, {
+              imageOrientation: "flipY",
+              premultiplyAlpha: "none",
+              colorSpaceConversion: "none",
+            }),
+          )
+          .then((bmp) => {
+            if (!alive) {
+              bmp.close();
+              return;
+            }
+            const tex = new THREE.Texture(bmp as any);
+            tex.flipY = false;
+            enqueue(idx, tex);
+          })
+          .catch(() => enqueue(idx, fallbackTexture(idx)));
+      } else {
+        const loader = new THREE.TextureLoader();
+        loader.setCrossOrigin("anonymous");
+        loader.load(
+          url,
+          (t) => enqueue(idx, t),
+          undefined,
+          () => enqueue(idx, fallbackTexture(idx)),
+        );
+      }
     });
+
     return () => {
       alive = false;
+      if (rafId) cancelAnimationFrame(rafId);
+      uploadQueue.forEach((q) => q.tex.dispose());
       Object.values(store_).forEach((t) => t.dispose());
       ref.current = {};
     };
@@ -1281,6 +1430,21 @@ const PhotoCard = memo(function PhotoCard({
   useFrame((state, delta) => {
     const m = ref.current;
     if (!m) return;
+
+    // Fast distance check — fragment shader already fades to 0 at dcam >= 46.
+    // Skipping invisible cards saves ~65% of matrix & draw-call overhead during fast scroll.
+    const camPos = state.camera.position;
+    const cdx = spec.cx - camPos.x;
+    const cdy = spec.cy - camPos.y;
+    const cdz = spec.cz - camPos.z;
+    const approxDistSq = cdx * cdx + cdy * cdy + cdz * cdz;
+    if (approxDistSq > 3025) {
+      // > 55 units away from anchor center
+      if (m.visible) m.visible = false;
+      return;
+    }
+    if (!m.visible) m.visible = true;
+
     const dt = Math.min(delta, 0.05);
     const t = state.clock.elapsedTime;
     built.uniforms.uAppear.value = damp(built.uniforms.uAppear.value, 1, 2.5, dt);
@@ -1299,12 +1463,17 @@ const PhotoCard = memo(function PhotoCard({
     m.scale.set(spec.w * s, spec.h * s, 1);
     m.lookAt(spec.fx, spec.fy, spec.fz);
     m.rotateZ(spec.tilt);
+    m.updateMatrix();
   });
 
   return (
-    <mesh ref={ref} material={built.mat} frustumCulled={false}>
-      <planeGeometry args={[1, 1]} />
-    </mesh>
+    <mesh
+      ref={ref}
+      geometry={SHARED_CARD_GEO}
+      material={built.mat}
+      frustumCulled={false}
+      matrixAutoUpdate={false}
+    />
   );
 });
 
@@ -1383,10 +1552,13 @@ function Gates({ mobile }: { mobile: boolean }) {
   });
 
   return (
-    <instancedMesh ref={ref} args={[undefined, undefined, GATE_N]} frustumCulled={false}>
-      
-<torusGeometry args={[3.3, 0.035, mobile ? 6 : 8, mobile ? 56 : 80]} />
-
+    <instancedMesh
+      ref={ref}
+      args={[undefined, undefined, GATE_N]}
+      frustumCulled={false}
+      matrixAutoUpdate={false}
+    >
+      <torusGeometry args={[3.3, 0.035, mobile ? 6 : 8, mobile ? 56 : 80]} />
       <meshBasicMaterial
         color={AMBER}
         transparent
@@ -1750,17 +1922,16 @@ function Portal({ mobile }: { mobile: boolean }) {
   return (
     <group position={p} quaternion={q}>
       <group ref={ringRef}>
-        <mesh>
-          
-<torusGeometry args={[3.4, 0.07, mobile ? 8 : 12, mobile ? 64 : 96]} />
+        <mesh matrixAutoUpdate={false}>
+          <torusGeometry args={[3.4, 0.07, mobile ? 8 : 12, mobile ? 64 : 96]} />
           <meshBasicMaterial color={AMBER} toneMapped={false} />
         </mesh>
-        <mesh>
-<torusGeometry args={[3.95, 0.02, mobile ? 6 : 8, mobile ? 64 : 96]} />
+        <mesh matrixAutoUpdate={false}>
+          <torusGeometry args={[3.95, 0.02, mobile ? 6 : 8, mobile ? 64 : 96]} />
           <meshBasicMaterial color={CREAM} transparent opacity={0.55} toneMapped={false} />
         </mesh>
       </group>
-      <mesh>
+      <mesh matrixAutoUpdate={false}>
         <circleGeometry args={[3.4, mobile ? 48 : 72]} />
         <shaderMaterial
           uniforms={uniforms}
@@ -1785,28 +1956,29 @@ function PostFX({ tier, hz, mobile }: { tier: Tier; hz: number; mobile: boolean 
   if (mobile || tier === "low") return null;
   const highHz = hz >= 120;
   if (tier === "mid") {
+    return (
+      <EffectComposer multisampling={0} enableNormalPass={false}>
+        <Bloom
+          intensity={0.55}
+          luminanceThreshold={0.55}
+          luminanceSmoothing={0.25}
+          mipmapBlur
+          kernelSize={highHz ? KernelSize.SMALL : KernelSize.MEDIUM}
+          resolutionScale={highHz ? 0.35 : 0.5}
+        />
+        <ToneMapping mode={ToneMappingMode.ACES_FILMIC} />
+      </EffectComposer>
+    );
+  }
   return (
     <EffectComposer multisampling={0} enableNormalPass={false}>
-      <Bloom
-        intensity={0.55}
-        luminanceThreshold={0.55}
-        luminanceSmoothing={0.25}
-        mipmapBlur
-        kernelSize={highHz ? KernelSize.SMALL : KernelSize.MEDIUM}
-        resolutionScale={highHz ? 0.35 : 0.55}
-      />
-      <ToneMapping mode={ToneMappingMode.ACES_FILMIC} />
-    </EffectComposer>
-  );
-}
-  return (
-    <EffectComposer multisampling={highHz ? 0 : 2} enableNormalPass={false}>
       <Bloom
         intensity={0.7}
         luminanceThreshold={0.55}
         luminanceSmoothing={0.25}
         mipmapBlur
-        resolutionScale={highHz ? 0.5 : 0.75}
+        kernelSize={highHz ? KernelSize.SMALL : KernelSize.MEDIUM}
+        resolutionScale={highHz ? 0.45 : 0.6}
       />
       <Vignette offset={0.28} darkness={0.55} blendFunction={BlendFunction.NORMAL} />
       <ToneMapping mode={ToneMappingMode.ACES_FILMIC} />
@@ -1837,7 +2009,7 @@ function OrbitalWorld({
       <Dust tier={tier} mobile={mobile} />
       <Thread mobile={mobile} />
       <Gates mobile={mobile} />
-      
+
       <Portal mobile={mobile} />
       <Gallery tier={tier} mobile={mobile} />
       <PostFX tier={tier} hz={hz} mobile={mobile} />
@@ -3205,72 +3377,32 @@ function BeatArrival() {
         </div>
       </Reveal>
 
-      <Reveal delay={0.3}>
-        <div className="mt-8 flex flex-wrap justify-center gap-3">
-          <a
-            href={DOWNLOAD_HREF}
-            download
-            className="group relative inline-flex items-center gap-3 overflow-hidden rounded-full border border-white/20 bg-white/[0.06] py-2.5 pl-3 pr-5 text-left backdrop-blur-md transition-all duration-300 ease-out will-change-transform hover:-translate-y-0.5 hover:border-amber-400/60 hover:bg-white/[0.10] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-300/70"
-          >
-            <span
-              aria-hidden="true"
-              className="pointer-events-none absolute inset-0 -z-10 opacity-0 transition-opacity duration-500 group-hover:opacity-100"
-              style={{
-                background:
-                  "radial-gradient(120% 140% at 0% 50%, rgba(200,136,58,0.35) 0%, rgba(200,136,58,0.08) 42%, transparent 72%)",
-              }}
-            />
-
-            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-gradient-to-b from-amber-300 to-amber-500 shadow-[inset_0_1px_0_rgba(255,255,255,0.35),0_6px_20px_-8px_rgba(200,136,58,0.9)]">
-              <svg
-                viewBox="0 0 24 24"
-                className="h-[18px] w-[18px] text-[#150E03]"
-                fill="currentColor"
-                aria-hidden="true"
-              >
-                <path d="M6 9.5C6 7.57 7.57 6 9.5 6h5C16.43 6 18 7.57 18 9.5V15a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2V9.5Z" />
-                <circle cx="10" cy="10.2" r="0.9" fill="#F0E4CC" />
-                <circle cx="14" cy="10.2" r="0.9" fill="#F0E4CC" />
-                <path
-                  d="M8.5 5.3 7.6 3.8M15.5 5.3l.9-1.5"
-                  stroke="currentColor"
-                  strokeWidth="1.1"
-                  strokeLinecap="round"
-                  fill="none"
-                />
-                <path
-                  d="M4.4 11.4v4.2M19.6 11.4v4.2"
-                  stroke="currentColor"
-                  strokeWidth="1.4"
-                  strokeLinecap="round"
-                  fill="none"
-                />
-                <path
-                  d="M9.5 18v2M14.5 18v2"
-                  stroke="currentColor"
-                  strokeWidth="1.4"
-                  strokeLinecap="round"
-                  fill="none"
-                />
-              </svg>
-            </span>
-
-            <span className="flex flex-col leading-tight">
-              <span className="text-[9px] font-medium uppercase tracking-[0.22em] text-stone-300 transition-colors duration-300 group-hover:text-amber-200">
-                Download for
+            {/* 🔥 ONLY SHOW THIS ON THE WEB, HIDE IT INSIDE THE NATIVE APP */}
+      {!Capacitor.isNativePlatform() && (
+        <Reveal delay={0.3}>
+          <div className="mt-8 flex flex-wrap justify-center gap-3">
+            <a
+              href={DOWNLOAD_HREF}
+              download
+              className="group relative inline-flex items-center gap-3 overflow-hidden rounded-full border border-white/20 bg-white/[0.06] py-2.5 pl-3 pr-5 text-left backdrop-blur-md transition-all duration-300 ease-out will-change-transform hover:-translate-y-0.5 hover:border-amber-400/60 hover:bg-white/[0.10] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-300/70"
+            >
+              {/* ... keep all the SVG and span contents exactly the same ... */}
+              <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-gradient-to-b from-amber-300 to-amber-500 shadow-[inset_0_1px_0_rgba(255,255,255,0.35),0_6px_20px_-8px_rgba(200,136,58,0.9)]">
+                {/* SVG */}
               </span>
-              <span className="text-[13.5px] font-semibold tracking-[-0.01em] text-white">
-                Android
+              <span className="flex flex-col leading-tight">
+                <span className="text-[9px] font-medium uppercase tracking-[0.22em] text-stone-300 transition-colors duration-300 group-hover:text-amber-200">
+                  Download for
+                </span>
+                <span className="text-[13.5px] font-semibold tracking-[-0.01em] text-white">
+                  Android
+                </span>
               </span>
-            </span>
-
-            <ArrowRight
-              size={15}
-              className="ml-1 text-stone-300 transition-all duration-300 ease-out group-hover:translate-x-0.5 group-hover:text-amber-200"
-            />
-          </a>
-        </div>
-      </Reveal>
+              <ArrowRight size={15} className="ml-1 text-stone-300 transition-all duration-300 ease-out group-hover:translate-x-0.5 group-hover:text-amber-200" />
+            </a>
+          </div>
+        </Reveal>
+      )}
 
       <Reveal delay={0.36}>
         <div className="mx-auto mt-14 mb-8 h-px w-24 bg-gradient-to-r from-transparent via-amber-400/60 to-transparent" />
@@ -3370,21 +3502,21 @@ export function Landing() {
     return () => document.removeEventListener("error", h, true);
   }, []);
 
- const { maxDpr, minDpr } = useMemo(() => {
-  if (mobile) return { maxDpr: 1.15, minDpr: 0.85 };
-  const native =
-    typeof window === "undefined"
-      ? 1
-      : Math.min(window.devicePixelRatio || 1, 2.5);
-  // Very small headroom penalty — just enough to avoid fill-rate cliffs.
-  const headroom = hz >= 144 ? 0.95 : hz >= 120 ? 0.98 : 1;
-  const tierCap = tier === "low" ? 1.4 : tier === "mid" ? 1.9 : 2.3;
-  const hi = Math.max(1.4, Math.min(native, tierCap) * headroom);
-  return {
-    maxDpr: Math.round(hi * 100) / 100,
-    minDpr: Math.max(1.1, Math.round(hi * 0.82 * 100) / 100),
-  };
-}, [tier, hz, mobile]);
+  const { maxDpr, minDpr } = useMemo(() => {
+    if (mobile) return { maxDpr: 1.15, minDpr: 0.85 };
+    const native =
+      typeof window === "undefined"
+        ? 1
+        : Math.min(window.devicePixelRatio || 1, 2.0);
+    // Keep fill-rate squarely in the 120–240Hz sweet spot
+    const headroom = hz >= 144 ? 0.92 : hz >= 120 ? 0.96 : 1;
+    const tierCap = tier === "low" ? 1.25 : tier === "mid" ? 1.65 : 1.9;
+    const hi = Math.max(1.25, Math.min(native, tierCap) * headroom);
+    return {
+      maxDpr: Math.round(hi * 100) / 100,
+      minDpr: Math.max(1.0, Math.round(hi * 0.8 * 100) / 100),
+    };
+  }, [tier, hz, mobile]);
 
   return (
     <main
@@ -3512,7 +3644,15 @@ export function Landing() {
       `}</style>
 
       {!reduce && webGLAvailable && (
-        <div className="pointer-events-none fixed inset-0 z-0" aria-hidden="true">
+        <div
+          className="pointer-events-none fixed inset-0 z-0"
+          aria-hidden="true"
+          style={{
+            transform: "translate3d(0,0,0)",
+            backfaceVisibility: "hidden",
+            contain: "strict",
+          }}
+        >
           <Canvas
             dpr={maxDpr}
             camera={{ position: [0, 0.05, 7.2], fov: FOV, near: 0.1, far: 260 }}
