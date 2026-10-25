@@ -3,15 +3,10 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'motion/react';
-import {
-  ArrowLeft,
-  Film,
-  Newspaper,
-  RefreshCw,
-} from 'lucide-react';
+import { ArrowLeft, Film, Newspaper, RefreshCw } from 'lucide-react';
 
 /* ────────────────────────────────────────────────────────── */
 /* Types & data                                               */
@@ -63,7 +58,31 @@ const CHANNELS: Record<SignalKey, Channel> = {
 };
 
 /* ────────────────────────────────────────────────────────── */
-/* CSS — GPU-only animations                                  */
+/* WebView detection                                          */
+/* ────────────────────────────────────────────────────────── */
+
+/**
+ * Detects Android WebView by the `; wv)` marker in the UA string.
+ * TWA (Trusted Web Activity) and mobile Chrome do NOT include this
+ * marker — so they run with full desktop animations and look identical
+ * to a PC browser.
+ */
+function detectAndroidWebView(): boolean {
+  if (typeof navigator === 'undefined') return false;
+  const ua = navigator.userAgent || '';
+  return /\bwv\b/i.test(ua) || /Android.*;\s*wv\)/i.test(ua);
+}
+
+function detectMobile(): boolean {
+  if (typeof window === 'undefined') return false;
+  return (
+    window.matchMedia('(max-width: 767px)').matches ||
+    window.matchMedia('(hover: none) and (pointer: coarse)').matches
+  );
+}
+
+/* ────────────────────────────────────────────────────────── */
+/* CSS — animations tiered by device capability               */
 /* ────────────────────────────────────────────────────────── */
 
 const SIGNALS_CSS = `
@@ -82,18 +101,56 @@ const SIGNALS_CSS = `
     100% { transform: translate3d(0, 100vh, 0); }
   }
 
+  /* ── Tier 1: Desktop — full animation set ── */
   .s-rotate      { animation: s-rotate 32s linear infinite; }
   .s-rotate-rev  { animation: s-rotate-rev 22s linear infinite; }
   .s-pulse       { animation: s-pulse 3s cubic-bezier(0,0,0.6,1) infinite; }
   .s-blink       { animation: s-blink 1.8s ease-in-out infinite; }
   .s-drift       { animation: s-drift 11s linear infinite; will-change: transform; }
 
-  @media (max-width: 767px) and (orientation: portrait) {
+  /* ── Tier 2: Mobile browser (Chrome/Safari on phone) ── */
+  @media (max-width: 767px) {
+    .s-drift      { display: none !important; }
+    .s-rotate-rev { animation: none !important; display: none !important; }
+    .s-pulse      { animation: none !important; opacity: 0.35 !important; }
     .s-rotate     { animation-duration: 60s; }
-    .s-rotate-rev { animation-duration: 44s; }
-    .s-drift      { display: none; }
+    .s-blink      { animation-duration: 2.5s; }
   }
 
+  /* ── Tier 3: Android WebView — nuke ALL animations ──
+     WebView has a weaker compositor; every running animation
+     competes with the iframe's own render loop and drops frames. */
+  .android-webview .s-rotate,
+  .android-webview .s-rotate-rev,
+  .android-webview .s-pulse,
+  .android-webview .s-blink,
+  .android-webview .s-drift {
+    animation: none !important;
+    will-change: auto !important;
+  }
+  .android-webview .s-pulse       { display: none !important; }
+  .android-webview .s-rotate      { opacity: 0.55 !important; }
+  .android-webview .s-rotate-rev  { display: none !important; }
+  .android-webview .s-blink       { opacity: 0.9 !important; }
+  .android-webview .s-drift       { display: none !important; }
+
+  /* Suppress heavy shadows on WebView — expensive per-frame repaints */
+  .android-webview .expensive-shadow {
+    box-shadow: none !important;
+  }
+
+  /* Prefer opacity feedback over transform scale on tap (WebView-safe) */
+  @media (hover: none) and (pointer: coarse) {
+    .tap-safe:active { opacity: 0.75 !important; }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .s-rotate, .s-rotate-rev, .s-pulse, .s-blink, .s-drift {
+      animation: none !important;
+    }
+  }
+
+  /* Mobile landscape */
   @media (orientation: landscape) and (max-width: 767px) {
     .signals-grid {
       grid-template-rows: 1fr !important;
@@ -109,21 +166,11 @@ const SIGNALS_CSS = `
       height: 76px !important;
       margin-bottom: 6px;
     }
-    .signal-panel-text {
-      text-align: center !important;
-    }
-    .signal-kicker-row {
-      justify-content: center !important;
-    }
+    .signal-panel-text { text-align: center !important; }
+    .signal-kicker-row { justify-content: center !important; }
     .signal-subtitle {
       font-size: 10.5px !important;
       line-height: 1.35 !important;
-    }
-  }
-
-  @media (prefers-reduced-motion: reduce) {
-    .s-rotate, .s-rotate-rev, .s-pulse, .s-blink, .s-drift {
-      animation: none !important;
     }
   }
 `;
@@ -132,19 +179,21 @@ const SIGNALS_CSS = `
 /* Clock                                                      */
 /* ────────────────────────────────────────────────────────── */
 
-const Clock = React.memo(function Clock() {
+const Clock = React.memo(function Clock({ isWebView }: { isWebView: boolean }) {
   const [time, setTime] = useState(() => new Date());
   useEffect(() => {
-    const id = window.setInterval(() => setTime(new Date()), 1000);
+    // On WebView, update every 30s instead of every second — saves wakeups
+    const ms = isWebView ? 30000 : 1000;
+    const id = window.setInterval(() => setTime(new Date()), ms);
     return () => window.clearInterval(id);
-  }, []);
+  }, [isWebView]);
   const hh = String(time.getUTCHours()).padStart(2, '0');
   const mm = String(time.getUTCMinutes()).padStart(2, '0');
   const ss = String(time.getUTCSeconds()).padStart(2, '0');
   return (
     <span className="tabular-nums text-[10.5px] font-semibold tracking-wider text-[#A8A29E]">
       {hh}:{mm}
-      <span className="opacity-50">:{ss}</span>
+      {!isWebView && <span className="opacity-50">:{ss}</span>}
       <span className="ml-1 text-[9px] opacity-60">UTC</span>
     </span>
   );
@@ -158,24 +207,46 @@ interface ChannelPanelProps {
   channel: Channel;
   index: number;
   onOpen: (key: SignalKey) => void;
+  onPrefetch?: (url: string) => void;
+  isWebView: boolean;
 }
 
-function ChannelPanel({ channel, index, onOpen }: ChannelPanelProps) {
+function ChannelPanel({
+  channel,
+  index,
+  onOpen,
+  onPrefetch,
+  isWebView,
+}: ChannelPanelProps) {
   const Icon = channel.icon;
+
+  const prefetch = () => onPrefetch?.(channel.url);
+
+  // On WebView, skip the entrance animation entirely — it competes with layout
+  const initialAnim = isWebView
+    ? false
+    : { opacity: 0, scale: 0.97 };
 
   return (
     <motion.button
       type="button"
-      initial={{ opacity: 0, scale: 0.97 }}
-      animate={{ opacity: 1, scale: 1 }}
-      transition={{
-        duration: 0.4,
-        delay: index * 0.06,
-        ease: [0.16, 1, 0.3, 1],
-      }}
-      whileTap={{ scale: 0.985 }}
+      initial={initialAnim}
+      animate={isWebView ? undefined : { opacity: 1, scale: 1 }}
+      transition={
+        isWebView
+          ? undefined
+          : {
+              duration: 0.4,
+              delay: index * 0.06,
+              ease: [0.16, 1, 0.3, 1],
+            }
+      }
+      whileTap={isWebView ? undefined : { scale: 0.985 }}
+      onMouseEnter={prefetch}
+      onFocus={prefetch}
+      onTouchStart={prefetch}
       onClick={() => onOpen(channel.id)}
-      className="group relative w-full h-full min-h-0 rounded-2xl md:rounded-3xl overflow-hidden touch-manipulation text-left"
+      className="group relative w-full h-full min-h-0 rounded-2xl md:rounded-3xl overflow-hidden touch-manipulation text-left tap-safe"
       style={{
         background: channel.panelBg,
         border: '1px solid rgba(255,255,255,0.06)',
@@ -224,12 +295,8 @@ function ChannelPanel({ channel, index, onOpen }: ChannelPanelProps) {
               className="absolute top-0 left-1/2 -translate-x-1/2 -translate-y-1/2 w-1.5 h-1.5 md:w-2 md:h-2 rounded-full"
               style={{
                 background: channel.accent,
-                boxShadow: `0 0 14px ${channel.accent}`,
+                boxShadow: isWebView ? 'none' : `0 0 14px ${channel.accent}`,
               }}
-            />
-            <span
-              className="absolute bottom-0 left-1/2 -translate-x-1/2 translate-y-1/2 w-1 h-1 md:w-1.5 md:h-1.5 rounded-full opacity-60"
-              style={{ background: channel.accent }}
             />
           </div>
 
@@ -237,12 +304,7 @@ function ChannelPanel({ channel, index, onOpen }: ChannelPanelProps) {
             aria-hidden
             className="absolute inset-[20%] rounded-full border s-rotate-rev pointer-events-none"
             style={{ borderColor: `rgba(${channel.accentRgb},0.10)` }}
-          >
-            <span
-              className="absolute top-0 left-1/2 -translate-x-1/2 -translate-y-1/2 w-1 h-1 md:w-1.5 md:h-1.5 rounded-full opacity-70"
-              style={{ background: channel.accent }}
-            />
-          </div>
+          />
 
           <div className="relative">
             <span
@@ -262,7 +324,9 @@ function ChannelPanel({ channel, index, onOpen }: ChannelPanelProps) {
               className="relative w-11 h-11 md:w-20 md:h-20 rounded-full flex items-center justify-center transition-transform duration-500 group-hover:scale-110"
               style={{
                 background: `linear-gradient(135deg, rgba(${channel.accentRgb},0.32) 0%, rgba(${channel.accentRgb},0.10) 100%)`,
-                boxShadow: `0 0 44px -8px rgba(${channel.accentRgb},0.65), inset 0 1px 0 rgba(255,255,255,0.14)`,
+                boxShadow: isWebView
+                  ? `inset 0 1px 0 rgba(255,255,255,0.14)`
+                  : `0 0 44px -8px rgba(${channel.accentRgb},0.65), inset 0 1px 0 rgba(255,255,255,0.14)`,
               }}
             >
               <Icon
@@ -303,7 +367,8 @@ function ChannelPanel({ channel, index, onOpen }: ChannelPanelProps) {
             {channel.subtitle}
           </p>
 
-          <div className="hidden md:inline-flex items-center gap-2 h-9 px-4 rounded-full border mt-4 transition-all duration-300 group-hover:gap-2.5"
+          <div
+            className="hidden md:inline-flex items-center gap-2 h-9 px-4 rounded-full border mt-4 transition-all duration-300 group-hover:gap-2.5"
             style={{
               borderColor: `rgba(${channel.accentRgb},0.35)`,
               background: `rgba(${channel.accentRgb},0.10)`,
@@ -313,7 +378,16 @@ function ChannelPanel({ channel, index, onOpen }: ChannelPanelProps) {
             <span className="text-[10.5px] font-bold tracking-[0.18em] uppercase">
               Tune in
             </span>
-            <svg className="w-3.5 h-3.5 transition-transform group-hover:translate-x-0.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+            <svg
+              className="w-3.5 h-3.5 transition-transform group-hover:translate-x-0.5"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth={2.2}
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden
+            >
               <path d="M5 12h14M13 6l6 6-6 6" />
             </svg>
           </div>
@@ -324,7 +398,7 @@ function ChannelPanel({ channel, index, onOpen }: ChannelPanelProps) {
 }
 
 /* ────────────────────────────────────────────────────────── */
-/* Ambient background                                         */
+/* Ambient background (desktop only)                          */
 /* ────────────────────────────────────────────────────────── */
 
 function AmbientBackground() {
@@ -378,7 +452,7 @@ function AmbientBackground() {
 }
 
 /* ────────────────────────────────────────────────────────── */
-/* Viewer — full screen with premium floating controls        */
+/* Viewer                                                     */
 /* ────────────────────────────────────────────────────────── */
 
 interface ViewerProps {
@@ -388,6 +462,7 @@ interface ViewerProps {
   onClose: () => void;
   onReload: () => void;
   onLoaded: () => void;
+  isWebView: boolean;
 }
 
 function Viewer({
@@ -397,20 +472,19 @@ function Viewer({
   onClose,
   onReload,
   onLoaded,
+  isWebView,
 }: ViewerProps) {
   return (
     <div
       className="relative h-full w-full overflow-hidden"
       style={{
         backgroundColor: '#0B0A09',
-        // Isolate this subtree's layout/paint/compositing from the parent
-        // page — the iframe gets its own context and the parent stops
-        // re-checking containment every frame.
-        contain: 'layout paint style',
-        isolation: 'isolate',
+        // contain/isolation helps Chrome but can *hurt* Android WebView
+        contain: isWebView ? undefined : 'layout paint style',
+        isolation: isWebView ? undefined : 'isolate',
       }}
     >
-      {/* Thin accent line at very top — native panel frame */}
+      {/* Accent line */}
       <div
         aria-hidden
         className="absolute top-0 left-0 right-0 h-[2px] z-20 pointer-events-none"
@@ -419,50 +493,101 @@ function Viewer({
         }}
       />
 
-      {/* Full-screen iframe */}
+      {/* Iframe — explicit sizing, GPU hints only on non-WebView */}
       <iframe
         key={`${channel.id}-${reloadKey}`}
         src={channel.url}
-        className="absolute inset-0 w-full h-full border-0"
+        className="absolute inset-0 w-full h-full border-0 block"
         title={channel.title}
         onLoad={onLoaded}
-        allow="fullscreen; autoplay; encrypted-media; picture-in-picture"
+        loading="eager"
+        allow="fullscreen; autoplay; encrypted-media; picture-in-picture; clipboard-write; clipboard-read"
         allowFullScreen
         referrerPolicy="no-referrer-when-downgrade"
+        style={{
+          transform: isWebView ? undefined : 'translateZ(0)',
+          backfaceVisibility: isWebView ? undefined : 'hidden',
+          // Explicit dimensions prevent resize thrash on WebView
+          width: '100%',
+          height: '100%',
+        }}
       />
 
-      {/* ── Floating back pill — solid (no backdrop-blur) for 240 Hz ── */}
+      {/* ── Back button — 48px, solid, Android-friendly ── */}
       <button
         type="button"
         onClick={onClose}
-        className="absolute z-30 h-11 pl-2 pr-4 rounded-full flex items-center gap-2.5
-                   bg-[#0B0A09]/95
-                   border border-white/[0.12]
-                   shadow-[0_8px_24px_-4px_rgba(0,0,0,0.85),inset_0_1px_0_rgba(255,255,255,0.08)]
-                   text-[#EDE5D4]
-                   hover:bg-[#0B0A09] hover:border-white/[0.2]
-                   active:scale-[0.97]
-                   transition-colors transition-transform duration-200 touch-manipulation"
+        className="
+          absolute z-30
+          inline-flex items-center justify-center gap-2
+          h-12 px-4 rounded-full
+          bg-[#0B0A09] text-[#F5EFE6]
+          border border-white/20
+          font-semibold text-[15px] tracking-tight whitespace-nowrap
+          tap-safe
+          transition-opacity duration-100
+          touch-manipulation
+          expensive-shadow
+          shadow-[0_2px_8px_rgba(0,0,0,0.5)]
+        "
         style={{
           top: 'calc(0.75rem + env(safe-area-inset-top, 0px))',
           left: 'calc(0.75rem + env(safe-area-inset-left, 0px))',
+          // Force dedicated layer only on non-WebView (WebView promotes poorly)
+          willChange: isWebView ? undefined : 'transform',
         }}
         aria-label="Back to Signals"
         title="Back to Signals"
       >
-       
+        <ArrowLeft className="w-5 h-5 shrink-0" strokeWidth={2.4} />
+        <span>Back</span>
       </button>
 
-     
+      {/* ── Reload button — 48x48, solid, Android-friendly ── */}
+      <button
+        type="button"
+        onClick={onReload}
+        disabled={isLoading}
+        className="
+          absolute z-30
+          inline-flex items-center justify-center
+          w-12 h-12 rounded-full
+          bg-[#0B0A09] text-[#F5EFE6]
+          border border-white/20
+          tap-safe
+          disabled:opacity-50 disabled:cursor-wait
+          transition-opacity duration-100
+          touch-manipulation
+          expensive-shadow
+          shadow-[0_2px_8px_rgba(0,0,0,0.5)]
+        "
+        style={{
+          top: 'calc(0.75rem + env(safe-area-inset-top, 0px))',
+          right: 'calc(0.75rem + env(safe-area-inset-right, 0px))',
+          willChange: isWebView ? undefined : 'transform',
+        }}
+        aria-label="Reload channel"
+        title="Reload channel"
+      >
+        <RefreshCw
+          className={`w-5 h-5 ${
+            isLoading
+              ? 'animate-spin'
+              : isWebView
+              ? ''
+              : 'transition-transform duration-500 hover:rotate-180'
+          }`}
+          strokeWidth={2.2}
+        />
+      </button>
 
-      {/* Loading overlay */}
-      <AnimatePresence>
-        {isLoading && (
+      {/* ── Loading overlay — lite on WebView ── */}
+      {isLoading && !isWebView && (
+        <AnimatePresence>
           <motion.div
             initial={{ opacity: 1 }}
             animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            transition={{ duration: 0.35 }}
+            exit={{ opacity: 0, transition: { duration: 0.15 } }}
             className="absolute inset-0 z-20 flex flex-col items-center justify-center bg-[#0B0A09] pointer-events-none"
           >
             <div className="relative w-16 h-16 md:w-20 md:h-20 mb-5">
@@ -496,8 +621,17 @@ function Viewer({
               Establishing Link
             </span>
           </motion.div>
-        )}
-      </AnimatePresence>
+        </AnimatePresence>
+      )}
+
+      {isLoading && isWebView && (
+        <div className="absolute inset-0 z-20 flex items-center justify-center bg-[#0B0A09] pointer-events-none">
+          <div
+            className="w-10 h-10 rounded-full border-2 border-white/15 animate-spin"
+            style={{ borderTopColor: channel.accent }}
+          />
+        </div>
+      )}
     </div>
   );
 }
@@ -511,6 +645,87 @@ export default function SignalsPage() {
   const [activeSignal, setActiveSignal] = useState<ActiveSignal>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [reloadKey, setReloadKey] = useState(0);
+
+  // ── Environment detection ──
+  const [isWebView, setIsWebView] = useState(false);
+  const [isMobile, setIsMobile] = useState(false);
+
+  useEffect(() => {
+    const webView = detectAndroidWebView();
+    const mobile = detectMobile();
+    setIsWebView(webView);
+    setIsMobile(mobile);
+    if (webView) {
+      document.documentElement.classList.add('android-webview');
+    }
+    return () => {
+      document.documentElement.classList.remove('android-webview');
+    };
+  }, []);
+
+  // ── Preconnect + prefetch ──
+  useEffect(() => {
+    if (typeof document === 'undefined') return;
+
+    const origins = Array.from(
+      new Set(
+        Object.values(CHANNELS).map((c) => {
+          try {
+            return new URL(c.url).origin;
+          } catch {
+            return c.url;
+          }
+        }),
+      ),
+    );
+
+    origins.forEach((origin) => {
+      const link = document.createElement('link');
+      link.rel = 'preconnect';
+      link.href = origin;
+      link.crossOrigin = 'anonymous';
+      document.head.appendChild(link);
+    });
+
+    const prefetchAll = () => {
+      Object.values(CHANNELS).forEach((ch) => {
+        const link = document.createElement('link');
+        link.rel = 'prefetch';
+        link.href = ch.url;
+        link.as = 'document';
+        document.head.appendChild(link);
+      });
+    };
+
+    let idleId: number | undefined;
+    if (typeof (window as any).requestIdleCallback === 'function') {
+      idleId = (window as any).requestIdleCallback(prefetchAll, {
+        timeout: 1500,
+      });
+    } else {
+      idleId = window.setTimeout(prefetchAll, 500);
+    }
+
+    return () => {
+      if (idleId === undefined) return;
+      if (typeof (window as any).cancelIdleCallback === 'function') {
+        (window as any).cancelIdleCallback(idleId);
+      } else {
+        window.clearTimeout(idleId);
+      }
+    };
+  }, []);
+
+  const prefetchChannel = useCallback((url: string) => {
+    if (typeof document === 'undefined') return;
+    const selector = `link[rel="prefetch"][href="${url}"]`;
+    if (document.querySelector(selector)) return;
+    const link = document.createElement('link');
+    link.rel = 'prefetch';
+    link.href = url;
+    link.as = 'document';
+    document.head.appendChild(link);
+  }, []);
 
   const open = (key: SignalKey) => {
     setIsLoading(true);
@@ -537,35 +752,27 @@ export default function SignalsPage() {
   }, [activeSignal, navigate]);
 
   const isViewerActive = activeSignal !== null;
+  const exitDuration = isWebView ? 0 : 0.15;
 
   return (
     <div
-      className="h-full w-full bg-[#0B0A08] overflow-hidden relative"
+      className="h-[100dvh] w-full bg-[#0B0A08] overflow-hidden relative"
       style={{
-        // While the viewer is open, isolate the page so the iframe's
-        // rendering context doesn't couple to the outer layout.
-        contain: isViewerActive ? 'layout paint style' : undefined,
+        // `contain` helps Chrome but can confuse Android WebView's layout
+        contain: isViewerActive && !isWebView ? 'layout paint style' : undefined,
       }}
     >
       <style>{SIGNALS_CSS}</style>
 
-      {/*
-        ⭐ Ambient only mounts on the landing screen.
-        Previously it stayed mounted behind the iframe, so the .s-drift
-        line (with will-change: transform) plus four radial-gradient
-        layers were compositing at 240 Hz on top of the iframe's own
-        render loop. Unmounting it cuts that entire cost to zero.
-      */}
-      {!isViewerActive && <AmbientBackground />}
+      {!isViewerActive && !isWebView && <AmbientBackground />}
 
-      <AnimatePresence mode="wait" initial={false}>
+      <AnimatePresence initial={false}>
         {!activeSignal ? (
           <motion.div
             key="landing"
-            initial={{ opacity: 0 }}
+            initial={false}
             animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            transition={{ duration: 0.2 }}
+            exit={{ opacity: 0, transition: { duration: exitDuration } }}
             className="relative z-10 h-full w-full flex flex-col p-2 md:p-3 gap-2 md:gap-3"
           >
             <div className="shrink-0 h-9 flex items-center justify-between gap-2">
@@ -580,7 +787,7 @@ export default function SignalsPage() {
               </button>
 
               <div className="h-9 px-3 rounded-full flex items-center gap-2 bg-[#0F0D0A] border border-white/[0.08] shrink-0">
-                <Clock />
+                <Clock isWebView={isWebView} />
                 <span className="w-1.5 h-1.5 rounded-full bg-[#22C55E] s-blink" />
               </div>
             </div>
@@ -591,6 +798,8 @@ export default function SignalsPage() {
                   channel={CHANNELS.movies}
                   index={0}
                   onOpen={open}
+                  onPrefetch={prefetchChannel}
+                  isWebView={isWebView}
                 />
               </div>
               <div className="min-h-0">
@@ -598,6 +807,8 @@ export default function SignalsPage() {
                   channel={CHANNELS.news}
                   index={1}
                   onOpen={open}
+                  onPrefetch={prefetchChannel}
+                  isWebView={isWebView}
                 />
               </div>
             </div>
@@ -605,10 +816,9 @@ export default function SignalsPage() {
         ) : (
           <motion.div
             key="viewer"
-            initial={{ opacity: 0 }}
+            initial={false}
             animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            transition={{ duration: 0.2 }}
+            exit={{ opacity: 0, transition: { duration: exitDuration } }}
             className="relative z-10 h-full w-full"
           >
             <Viewer
@@ -618,6 +828,7 @@ export default function SignalsPage() {
               onClose={close}
               onReload={reload}
               onLoaded={() => setIsLoading(false)}
+              isWebView={isWebView}
             />
           </motion.div>
         )}
