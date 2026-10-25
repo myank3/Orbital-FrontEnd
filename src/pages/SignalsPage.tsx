@@ -450,18 +450,7 @@ function Viewer({
         aria-label="Back to Signals"
         title="Back to Signals"
       >
-        <span
-          className="w-7 h-7 rounded-full flex items-center justify-center shrink-0
-                     bg-white/[0.06] border border-white/[0.08]"
-        >
-          <ArrowLeft
-            className="w-3.5 h-3.5"
-            strokeWidth={2.2}
-          />
-        </span>
-        <span className="text-[12.5px] font-semibold tracking-tight whitespace-nowrap">
-          
-        </span>
+       
       </button>
 
      
