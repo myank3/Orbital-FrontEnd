@@ -142,7 +142,7 @@ const AMBER = "#C8883A";
 const CREAM = "#E5D6B8";
 const DEEP = "#04060A";
 
-const DOWNLOAD_HREF = "/downloads/orbital.apk";
+const DOWNLOAD_HREF = "https://pub-a90950bf9f0a4b059174e3a9cba7a1c9.r2.dev/Orbital.apk";
 
 const UI_SPRING = { type: "spring", stiffness: 520, damping: 36 } as const;
 const CINEMATIC_SPRING = {
@@ -3380,9 +3380,9 @@ function BeatArrival() {
       {!Capacitor.isNativePlatform() && (
         <Reveal delay={0.3}>
           <div className="mt-8 flex flex-wrap justify-center gap-3">
-            <a
+                      <a
               href={DOWNLOAD_HREF}
-              download
+              download="Orbital.apk"
               className="group relative inline-flex items-center gap-3 overflow-hidden rounded-full border border-white/20 bg-white/[0.06] py-2.5 pl-3 pr-5 text-left backdrop-blur-md transition-all duration-300 ease-out will-change-transform hover:-translate-y-0.5 hover:border-amber-400/60 hover:bg-white/[0.10] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-300/70"
             >
               <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-gradient-to-b from-amber-300 to-amber-500 shadow-[inset_0_1px_0_rgba(255,255,255,0.35),0_6px_20px_-8px_rgba(200,136,58,0.9)]">
