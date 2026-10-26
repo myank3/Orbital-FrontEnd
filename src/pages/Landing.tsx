@@ -142,7 +142,7 @@ const AMBER = "#C8883A";
 const CREAM = "#E5D6B8";
 const DEEP = "#04060A";
 
-const DOWNLOAD_HREF = "/downloads/Orbital.apk";
+const DOWNLOAD_HREF = "/downloads/orbital.apk";
 
 const UI_SPRING = { type: "spring", stiffness: 520, damping: 36 } as const;
 const CINEMATIC_SPRING = {
@@ -3325,7 +3325,6 @@ function BeatResonance() {
 /* ═══════════════════════════════════════════════════════════
    BEAT 5 — ARRIVAL
    ═══════════════════════════════════════════════════════════ */
-
 function BeatArrival() {
   return (
     <Section id="beat-5" align="center">
@@ -3377,7 +3376,7 @@ function BeatArrival() {
         </div>
       </Reveal>
 
-            {/* 🔥 ONLY SHOW THIS ON THE WEB, HIDE IT INSIDE THE NATIVE APP */}
+      {/* 🔥 ONLY SHOW THIS ON THE WEB, HIDE IT INSIDE THE NATIVE APP */}
       {!Capacitor.isNativePlatform() && (
         <Reveal delay={0.3}>
           <div className="mt-8 flex flex-wrap justify-center gap-3">
@@ -3386,10 +3385,40 @@ function BeatArrival() {
               download
               className="group relative inline-flex items-center gap-3 overflow-hidden rounded-full border border-white/20 bg-white/[0.06] py-2.5 pl-3 pr-5 text-left backdrop-blur-md transition-all duration-300 ease-out will-change-transform hover:-translate-y-0.5 hover:border-amber-400/60 hover:bg-white/[0.10] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-300/70"
             >
-              {/* ... keep all the SVG and span contents exactly the same ... */}
               <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-gradient-to-b from-amber-300 to-amber-500 shadow-[inset_0_1px_0_rgba(255,255,255,0.35),0_6px_20px_-8px_rgba(200,136,58,0.9)]">
-                {/* SVG */}
+                <svg
+                  viewBox="0 0 24 24"
+                  className="h-[18px] w-[18px] text-[#150E03]"
+                  fill="currentColor"
+                  aria-hidden="true"
+                >
+                  <path d="M6 9.5C6 7.57 7.57 6 9.5 6h5C16.43 6 18 7.57 18 9.5V15a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2V9.5Z" />
+                  <circle cx="10" cy="10.2" r="0.9" fill="#F0E4CC" />
+                  <circle cx="14" cy="10.2" r="0.9" fill="#F0E4CC" />
+                  <path
+                    d="M8.5 5.3 7.6 3.8M15.5 5.3l.9-1.5"
+                    stroke="currentColor"
+                    strokeWidth="1.1"
+                    strokeLinecap="round"
+                    fill="none"
+                  />
+                  <path
+                    d="M4.4 11.4v4.2M19.6 11.4v4.2"
+                    stroke="currentColor"
+                    strokeWidth="1.4"
+                    strokeLinecap="round"
+                    fill="none"
+                  />
+                  <path
+                    d="M9.5 18v2M14.5 18v2"
+                    stroke="currentColor"
+                    strokeWidth="1.4"
+                    strokeLinecap="round"
+                    fill="none"
+                  />
+                </svg>
               </span>
+
               <span className="flex flex-col leading-tight">
                 <span className="text-[9px] font-medium uppercase tracking-[0.22em] text-stone-300 transition-colors duration-300 group-hover:text-amber-200">
                   Download for
@@ -3398,7 +3427,11 @@ function BeatArrival() {
                   Android
                 </span>
               </span>
-              <ArrowRight size={15} className="ml-1 text-stone-300 transition-all duration-300 ease-out group-hover:translate-x-0.5 group-hover:text-amber-200" />
+
+              <ArrowRight
+                size={15}
+                className="ml-1 text-stone-300 transition-all duration-300 ease-out group-hover:translate-x-0.5 group-hover:text-amber-200"
+              />
             </a>
           </div>
         </Reveal>
@@ -3413,7 +3446,6 @@ function BeatArrival() {
     </Section>
   );
 }
-
 /* ═══════════════════════════════════════════════════════════
    STORY CHROME
    ═══════════════════════════════════════════════════════════ */
