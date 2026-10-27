@@ -1,18 +1,20 @@
 /**
  * @file src/pages/Landing.tsx
- * Orbital — v18 · "The Thread" (Pro Polish & 60–240Hz Engine)
+ * Orbital — v18.2 · "The Thread" (Android-native scroll + mobile shader pass
+ *                              + correct PC scroll gating)
  *
- * ⚡ v18 deltas:
- *   · ZERO FLICKER — eliminated the subpixel line & avatar flicker below
- *     "Active now" when messages mount. Header is now a GPU-promoted layer
- *     with fixed-height crossfading status text, a hardware-snapped border,
- *     and a pre-cached avatar element.
- *   · ALL-NEW PROFESSIONAL IMAGERY — replaced every portrait and scene with
- *     curated, high-fashion / architectural / executive Unsplash photography.
- *     Right-sized texture resolutions (600px faces, 1400px scenes) for zero
- *     GPU upload stutter.
- *   · 60Hz → 240Hz NATIVE — uncapped frame-delta math across Lenis, camera
- *     damping, shader uniforms, and the chat auto-scroll spring.
+ * ⚡ v18.2 deltas (fix PC lag introduced by v18.1):
+ *   · Lenis is now gated on `Capacitor.isNativePlatform()`, NOT `mobile`.
+ *     The previous patch disabled Lenis whenever `useIsMobile()` returned
+ *     true — which also fires for touch laptops, narrow windows, and
+ *     DevTools emulation. That removed smooth wheel scroll on those PCs.
+ *   · On mobile browsers (Android Chrome) Lenis now runs with `autoRaf:
+ *     true` (own rAF loop), so scroll is decoupled from WebGL FPS without
+ *     losing the smoothing.
+ *   · On the native Android app, Lenis is still skipped entirely — native
+ *     compositor scroll is the correct behaviour there.
+ *   · Added a one-shot console.info() diagnostic and data-* attributes on
+ *     <main> so you can verify which path is active from DevTools.
  *
  * ROUTES PRESERVED   /login  /register  /downloads/orbital.apk
  */
@@ -78,36 +80,34 @@ const u = (id: string, w: number, q = 85) => {
   return `https://images.unsplash.com/photo-${id}?auto=format&fit=crop&crop=faces,entropy&w=${w}&q=${q}`;
 };
 
-// All-new professional studio & editorial portraits (Pexels + Unsplash mix)
 const FACE_IDS = {
-  ava:    "px:774909",                  // Warm smiling female founder, golden natural light
-  sienna: "1524504388940-b1c1722653e1", // Sunlit editorial model & creative director portrait
-  lyra:   "px:1036623",                 // Stylish modern professional woman, soft studio backdrop
-  nova:   "1534528741775-53994a69daeb", // High-contrast editorial headshot, direct eye contact
-  iris:   "px:733872",                  // Approachable executive woman in blazer, crisp smile
-  anita:  "px:1181686",                 // Confident tech lead with glasses, warm studio light
-  taylor: "1494790108377-be9c29b29330", // Vibrant, friendly creative professional headshot
-  emery:  "px:2379004",                 // Charismatic startup founder, warm genuine smile
-  john:   "1539571696357-5a69c17a67c6", // Sharp young product lead, modern editorial lighting
-  sam:    "px:1043474",                 // Tailored blazer executive portrait, confident presence
-  finn:   "px:1222271",                 // Friendly designer / architect, bright natural catchlight
-  rowan:  "px:1681010",                 // Modern creative director, warm approachable gaze
+  ava:    "px:774909",
+  sienna: "1524504388940-b1c1722653e1",
+  lyra:   "px:1036623",
+  nova:   "1534528741775-53994a69daeb",
+  iris:   "px:733872",
+  anita:  "px:1181686",
+  taylor: "1494790108377-be9c29b29330",
+  emery:  "px:2379004",
+  john:   "1539571696357-5a69c17a67c6",
+  sam:    "px:1043474",
+  finn:   "px:1222271",
+  rowan:  "px:1681010",
 } as const;
 
-// People-first chat, video huddle, and luxury social workspace scenes (Pexels + Unsplash mix)
 const SCENE_IDS = {
-  runway:    "px:3184291",                 // Attractive creative team laughing & talking in studio
-  milan:     "1522202176988-66273c2fd55f", // Young professionals chatting over laptops in warm light
-  nyfw:      "px:3182812",                 // Stylish executives conversing in modern glass atrium
-  group1:    "px:3184418",                 // High-energy design squad collaborating closely
-  manChat:   "px:842567",                  // Charismatic founder chatting over coffee in lounge
-  manCall:   "px:4050291",                 // Professional on live video call in sleek studio
-  tokyo:     "1600880292203-757bb62b4baf", // Two attractive co-founders smiling & chatting at desk
-  paris:     "px:1181396",                 // Engaging one-on-one conversation in sunlit atrium
-  aurora:    "1507679799987-c73779587ccf", // Sharp executive smiling in luxury lounge setting
-  milkyway:  "px:3184611",                 // Moody ambient lounge conversation between founders
-  mountains: "1517048676732-d65bc937f952", // Modern glass-room social huddle and strategy chat
-  ocean:     "px:3183150",                 // Creative roundtable session with engaged professionals
+  runway:    "px:3184291",
+  milan:     "1522202176988-66273c2fd55f",
+  nyfw:      "px:3182812",
+  group1:    "px:3184418",
+  manChat:   "px:842567",
+  manCall:   "px:4050291",
+  tokyo:     "1600880292203-757bb62b4baf",
+  paris:     "px:1181396",
+  aurora:    "1507679799987-c73779587ccf",
+  milkyway:  "px:3184611",
+  mountains: "1517048676732-d65bc937f952",
+  ocean:     "px:3183150",
 } as const;
 function toUrls<T extends Record<string, string>>(
   ids: T,
@@ -119,15 +119,14 @@ function toUrls<T extends Record<string, string>>(
   return out as { [K in keyof T]: string };
 }
 
-const FACE = toUrls(FACE_IDS, 800, 88);   // was 640
-const SCENE = toUrls(SCENE_IDS, 1600, 88); // was 1400
+const FACE = toUrls(FACE_IDS, 800, 88);
+const SCENE = toUrls(SCENE_IDS, 1600, 88);
 
 const GALLERY: string[] = [
   ...Object.values(FACE_IDS).map((id) => u(id, 1000, 88)),
   ...Object.values(SCENE_IDS).map((id) => u(id, 1800, 88)),
 ];
 
-// Preload & decode primary avatar immediately so it never flashes in the phone
 if (typeof window !== "undefined") {
   const preloadAvatar = new Image();
   preloadAvatar.decoding = "sync";
@@ -253,7 +252,7 @@ function useRefreshRate() {
 }
 
 /* ═══════════════════════════════════════════════════════════
-   SCROLL STORE — Synchronized High-Hz Loop (Zero Dual-rAF Jitter)
+   SCROLL STORE
    ═══════════════════════════════════════════════════════════ */
 
 type Store = {
@@ -288,26 +287,39 @@ let _fast = 0;
 let _slow = 0;
 
 let lenisInstance: Lenis | null = null;
+let lenisAutoRaf = false;
 let maxScrollCache = 1;
 
-function useSmoothScroll(enabled: boolean) {
+/**
+ * Lenis strategy:
+ *   Native app (Capacitor)   → no Lenis. Native compositor scroll.
+ *   Mobile browser           → Lenis with autoRaf:true (own loop). WebGL can't
+ *                              hitch the scroll.
+ *   Desktop browser          → Lenis with autoRaf:false, driven from useFrame
+ *                              so scroll & camera are locked to the same frame.
+ */
+function useSmoothScroll(
+  enabled: boolean,
+  skipLenis: boolean,
+  useAutoRaf: boolean,
+) {
   useEffect(() => {
-    if (!enabled) return;
-    // Driven manually inside R3F's useFrame (autoRaf: false) so scroll & 3D
-    // camera are 100% locked to the exact same frame timestamp at 60Hz–240Hz.
+    if (!enabled || skipLenis) return;
+    lenisAutoRaf = useAutoRaf;
     const lenis = new Lenis({
-      lerp: 0.14,
+      lerp: useAutoRaf ? 0.16 : 0.14,
       wheelMultiplier: 1,
-      touchMultiplier: 1.5,
+      touchMultiplier: useAutoRaf ? 1.8 : 1.5,
       smoothWheel: true,
-      autoRaf: false,
+      autoRaf: useAutoRaf,
     });
     lenisInstance = lenis;
 
-    // Fallback rAF only if WebGL canvas isn't mounted
+    // Fallback rAF only if the WebGL canvas isn't mounted AND Lenis isn't
+    // running its own loop.
     let fallbackRaf = 0;
     const tickFallback = (time: number) => {
-      if (!document.querySelector("canvas")) {
+      if (!useAutoRaf && !document.querySelector("canvas")) {
         lenis.raf(time);
       }
       fallbackRaf = requestAnimationFrame(tickFallback);
@@ -319,7 +331,7 @@ function useSmoothScroll(enabled: boolean) {
       lenis.destroy();
       lenisInstance = null;
     };
-  }, [enabled]);
+  }, [enabled, skipLenis, useAutoRaf]);
 }
 
 function ScrollDriver() {
@@ -373,10 +385,15 @@ function ScrollDriver() {
   }, []);
 
   useFrame((state, delta) => {
-    // 1. Step Lenis synchronously at the very start of the WebGL frame
-    if (lenisInstance) {
+    // 1. Step Lenis synchronously at the very start of the WebGL frame —
+    //    ONLY when Lenis is configured with autoRaf:false (desktop).
+    if (lenisInstance && !lenisAutoRaf) {
       lenisInstance.raf(performance.now());
+    }
+    if (lenisInstance) {
       store.raw = clamp01(lenisInstance.scroll / maxScrollCache);
+    } else {
+      store.raw = clamp01(window.scrollY / maxScrollCache);
     }
 
     // 2. True frame-rate independent sub-stepped damping for 60Hz–240Hz
@@ -497,7 +514,7 @@ function AdaptiveResolution({
 }
 
 /* ═══════════════════════════════════════════════════════════
-   THE PATH + O(1) PRECOMPUTED SPLINE LUT (Zero Binary Search)
+   THE PATH + O(1) PRECOMPUTED SPLINE LUT
    ═══════════════════════════════════════════════════════════ */
 
 const PATH = new THREE.CatmullRomCurve3(
@@ -515,8 +532,6 @@ const PATH = new THREE.CatmullRomCurve3(
 );
 PATH.arcLengthDivisions = 600;
 
-// Precompute 2048 arc-length-parameterized points & tangents so fast scrolling
-// never runs binary search on CatmullRomCurve3 during useFrame.
 const LUT_STEPS = 2048;
 const LUT_POS = new Float32Array((LUT_STEPS + 1) * 3);
 const LUT_TAN = new Float32Array((LUT_STEPS + 1) * 3);
@@ -598,7 +613,7 @@ const _T2 = new THREE.Vector3();
 const _L = new THREE.Vector3();
 const _R = new THREE.Vector3();
 
-function CameraRig() {
+function CameraRig({ mobile }: { mobile: boolean }) {
   const { camera } = useThree();
   const pos = useRef(new THREE.Vector3());
   const look = useRef(new THREE.Vector3());
@@ -656,15 +671,17 @@ function CameraRig() {
     cam.up.set(Math.sin(roll.current), Math.cos(roll.current), 0);
     cam.lookAt(look.current);
 
-    fov.current = damp(
-      fov.current,
-      FOV + Math.min(12, Math.abs(store.velocity) * 16),
-      8,
-      dt,
-    );
-    if (Math.abs(cam.fov - fov.current) > 0.01) {
-      cam.fov = fov.current;
-      cam.updateProjectionMatrix();
+    if (!mobile) {
+      fov.current = damp(
+        fov.current,
+        FOV + Math.min(12, Math.abs(store.velocity) * 16),
+        8,
+        dt,
+      );
+      if (Math.abs(cam.fov - fov.current) > 0.01) {
+        cam.fov = fov.current;
+        cam.updateProjectionMatrix();
+      }
     }
   }, -90);
 
@@ -795,6 +812,29 @@ const BG_BODY_LOW = /* glsl */ `
 const BG_FRAG_HIGH = BG_COMMON + BG_FBM_HIGH + BG_BODY_HIGH;
 const BG_FRAG_LOW = BG_COMMON + BG_FBM_LOW + BG_BODY_LOW;
 
+const BG_FRAG_MOBILE = /* glsl */ `
+  precision mediump float;
+  varying vec2 vUv;
+  uniform float uTime;
+  uniform float uScroll;
+  void main() {
+    vec3 obsidian = vec3(0.016, 0.018, 0.028);
+    vec3 ember    = vec3(0.784, 0.502, 0.235);
+    vec3 steel    = vec3(0.439, 0.588, 0.706);
+    vec3 accent   = mix(ember, steel, clamp(uScroll, 0.0, 1.0));
+
+    vec2 c = vUv - 0.5;
+    c.x *= 1.777;
+    float d = length(c);
+
+    float pulse = 0.85 + 0.15 * sin(uTime * 0.35);
+    vec3 col = obsidian;
+    col += accent * 0.10 * pulse * (1.0 - smoothstep(0.10, 0.85, d));
+    col *= 1.0 - smoothstep(0.55, 1.20, d) * 0.55;
+    gl_FragColor = vec4(col, 1.0);
+  }
+`;
+
 function Backdrop({ mobile }: { mobile: boolean }) {
   const { size } = useThree();
   const uniforms = useMemo(
@@ -815,9 +855,9 @@ function Backdrop({ mobile }: { mobile: boolean }) {
     <mesh frustumCulled={false} renderOrder={-20} matrixAutoUpdate={false}>
       <planeGeometry args={[2, 2]} />
       <shaderMaterial
-        key={mobile ? "bg-low" : "bg-high"}
+        key={mobile ? "bg-mob" : "bg-high"}
         vertexShader={BG_VERT}
-        fragmentShader={mobile ? BG_FRAG_LOW : BG_FRAG_HIGH}
+        fragmentShader={mobile ? BG_FRAG_MOBILE : BG_FRAG_HIGH}
         uniforms={uniforms}
         depthWrite={false}
         depthTest={false}
@@ -870,12 +910,12 @@ const THREAD_FRAG = /* glsl */ `
 
 function Thread({ mobile }: { mobile: boolean }) {
   const parts = useMemo(() => {
-    const mainTubular = mobile ? 600 : 900;
-    const mainRadial = mobile ? 10 : 14;
-    const N = mobile ? 320 : 480;
-    const strandTubular = mobile ? 900 : 1600;
-    const strandRadial = mobile ? 6 : 8;
-    const turns = mobile ? 36 : 40;
+    const mainTubular   = mobile ? 200 : 900;
+    const mainRadial    = mobile ? 5   : 14;
+    const N             = mobile ? 96  : 480;
+    const strandTubular = mobile ? 240 : 1600;
+    const strandRadial  = mobile ? 4   : 8;
+    const turns         = mobile ? 20  : 40;
     const strandRadius = 0.013;
 
     const main = new THREE.TubeGeometry(PATH, mainTubular, 0.03, mainRadial, false);
@@ -899,7 +939,7 @@ function Thread({ mobile }: { mobile: boolean }) {
         );
       }
       const curve = new THREE.CatmullRomCurve3(pts, false, "catmullrom", 0.5);
-      curve.arcLengthDivisions = mobile ? 1200 : 2000;
+      curve.arcLengthDivisions = mobile ? 600 : 2000;
       strands.push(
         new THREE.TubeGeometry(curve, strandTubular, strandRadius, strandRadial, false),
       );
@@ -985,7 +1025,7 @@ const DUST_FRAG = /* glsl */ `
 
 function Dust({ tier, mobile }: { tier: Tier; mobile: boolean }) {
   const { size, gl } = useThree();
-  const count = mobile ? 180 : tier === "low" ? 240 : tier === "mid" ? 420 : 650;
+  const count = mobile ? 70 : tier === "low" ? 240 : tier === "mid" ? 420 : 650;
   const geo = useMemo(() => {
     const rng = mulberry32(99);
     const pos = new Float32Array(count * 3);
@@ -1038,7 +1078,7 @@ function Dust({ tier, mobile }: { tier: Tier; mobile: boolean }) {
 }
 
 /* ═══════════════════════════════════════════════════════════
-   PHOTO CARDS — Shared PlaneGeometry + Staggered GPU Upload
+   PHOTO CARDS
    ═══════════════════════════════════════════════════════════ */
 
 const SHARED_CARD_GEO = new THREE.PlaneGeometry(1, 1);
@@ -1235,8 +1275,6 @@ function fallbackTexture(idx: number) {
   return t;
 }
 
-// Off-main-thread image decode + 1-per-frame GPU upload queue so texture uploads
-// never stall a 60Hz–240Hz scroll frame or trigger 24 separate React re-renders.
 function useGallery(wanted: number[]) {
   const [, bump] = useState(0);
   const ref = useRef<Record<number, THREE.Texture>>({});
@@ -1281,7 +1319,6 @@ function useGallery(wanted: number[]) {
       tex.magFilter = THREE.LinearFilter;
       tex.needsUpdate = true;
       uploadQueue.push({ idx, tex });
-      // Flush first 6 hero textures as soon as ready, then trickle the rest 1/frame
       if (Object.keys(store_).length + uploadQueue.length <= 6) {
         store_[idx] = tex;
       }
@@ -1431,15 +1468,12 @@ const PhotoCard = memo(function PhotoCard({
     const m = ref.current;
     if (!m) return;
 
-    // Fast distance check — fragment shader already fades to 0 at dcam >= 46.
-    // Skipping invisible cards saves ~65% of matrix & draw-call overhead during fast scroll.
     const camPos = state.camera.position;
     const cdx = spec.cx - camPos.x;
     const cdy = spec.cy - camPos.y;
     const cdz = spec.cz - camPos.z;
     const approxDistSq = cdx * cdx + cdy * cdy + cdz * cdz;
     if (approxDistSq > 3025) {
-      // > 55 units away from anchor center
       if (m.visible) m.visible = false;
       return;
     }
@@ -1479,7 +1513,7 @@ const PhotoCard = memo(function PhotoCard({
 
 function Gallery({ tier, mobile }: { tier: Tier; mobile: boolean }) {
   const specs = useMemo(() => {
-    if (mobile) return ALL_CARDS.filter((_, i) => i % 3 === 0);
+    if (mobile) return ALL_CARDS.filter((_, i) => i % 5 === 0);
     if (tier === "low") return ALL_CARDS.filter((_, i) => i % 2 === 0);
     return ALL_CARDS;
   }, [tier, mobile]);
@@ -2002,7 +2036,7 @@ function OrbitalWorld({
   return (
     <>
       <ScrollDriver />
-      <CameraRig />
+      <CameraRig mobile={mobile} />
       <color attach="background" args={[DEEP]} />
       <fog attach="fog" args={[DEEP, 8, 42]} />
       <Backdrop mobile={mobile} />
@@ -2018,7 +2052,7 @@ function OrbitalWorld({
 }
 
 /* ═══════════════════════════════════════════════════════════
-   PHONE MOCKUP — Subpixel-locked GPU compositor layers
+   PHONE MOCKUP
    ═══════════════════════════════════════════════════════════ */
 function PhoneMockup({
   children,
@@ -2038,7 +2072,6 @@ function PhoneMockup({
         overflowAnchor: "none",
       }}
     >
-      {/* ── OUTER TITANIUM SHELL (44px radius) ── */}
       <div
         className="absolute inset-0 rounded-[44px] sm:rounded-[52px]"
         style={{
@@ -2060,8 +2093,6 @@ function PhoneMockup({
                0 90px 190px -55px rgba(0,0,0,0.80)`,
         }}
       />
-
-      {/* ── INNER BEZEL (4px inset -> 40px/48px radius) ── */}
       <div
         className="absolute inset-[4px] rounded-[40px] sm:inset-[6px] sm:rounded-[46px]"
         style={{
@@ -2069,15 +2100,12 @@ function PhoneMockup({
           boxShadow: "inset 0 0 0 1px rgba(255,255,255,0.06)",
         }}
       />
-
-      {/* ── SCREEN VIEWPORT (8px inset -> 36px/42px concentric radius) ── */}
       <div
         className="absolute inset-[8px] overflow-hidden rounded-[36px] sm:inset-[10px] sm:rounded-[42px]"
         style={{
           background: "#08080B",
           transform: "translate3d(0,0,0)",
           backfaceVisibility: "hidden",
-          // Forces Android Chrome GPU to respect border-radius on 3D children
           WebkitMaskImage: "-webkit-radial-gradient(white, black)",
           isolation: "isolate",
           overflowAnchor: "none",
@@ -2085,8 +2113,6 @@ function PhoneMockup({
       >
         {children}
       </div>
-
-      {/* ── DYNAMIC ISLAND ── */}
       <div
         aria-hidden
         className="pointer-events-none absolute left-1/2 top-[16px] z-40 h-[24px] w-[88px] -translate-x-1/2 rounded-full bg-black sm:top-[20px] sm:h-[28px] sm:w-[104px]"
@@ -2104,8 +2130,6 @@ function PhoneMockup({
           }}
         />
       </div>
-
-      {/* ── HARDWARE BUTTONS ── */}
       <div
         className="absolute -right-[2.5px] top-[28%] h-[11%] w-[2.5px] rounded-r-[2px]"
         style={{ background: "linear-gradient(180deg, #45454D, #26262C)" }}
@@ -2118,8 +2142,6 @@ function PhoneMockup({
         className="absolute -left-[2.5px] top-[32%] h-[10%] w-[2.5px] rounded-l-[2px]"
         style={{ background: "linear-gradient(180deg, #45454D, #26262C)" }}
       />
-
-      {/* ── GLASS HIGHLIGHT ── */}
       <div
         className="pointer-events-none absolute inset-[8px] z-20 rounded-[36px] sm:inset-[10px] sm:rounded-[42px]"
         style={{
@@ -2135,8 +2157,9 @@ function PhoneMockup({
     </div>
   );
 }
+
 /* ═══════════════════════════════════════════════════════════
-   STATUS BAR — isolated layer, no collapse flicker.
+   STATUS BAR
    ═══════════════════════════════════════════════════════════ */
 
 const StatusBar = memo(function StatusBar() {
@@ -2257,7 +2280,7 @@ const CHAT_SCRIPT: ChatLine[] = RAW_CHAT_SCRIPT.map((l) => ({
 const CHAT_VISIBLE = 11;
 
 /* ═══════════════════════════════════════════════════════════
-   STABLE AVATAR — Prevents re-decoding or layout flash on bubble mount
+   STABLE AVATAR
    ═══════════════════════════════════════════════════════════ */
 
 const ThreadAvatar = memo(function ThreadAvatar({ className }: { className: string }) {
@@ -2321,7 +2344,7 @@ const ChatBubble = memo(function ChatBubble({ line }: { line: LiveChatLine }) {
 });
 
 /* ═══════════════════════════════════════════════════════════
-   TYPING INDICATOR — CSS keyframes, sits on the sender's side.
+   TYPING INDICATOR
    ═══════════════════════════════════════════════════════════ */
 
 const TypingIndicator = memo(function TypingIndicator({ from }: { from: ChatFrom }) {
@@ -2356,7 +2379,7 @@ const TypingIndicator = memo(function TypingIndicator({ from }: { from: ChatFrom
 });
 
 /* ═══════════════════════════════════════════════════════════
-   PHONE HEADER — Isolated GPU Layer (Fixes Line & Avatar Flicker)
+   PHONE HEADER
    ═══════════════════════════════════════════════════════════ */
 
 const PhoneHeader = memo(function PhoneHeader({ isAvaTyping }: { isAvaTyping: boolean }) {
@@ -2394,7 +2417,6 @@ const PhoneHeader = memo(function PhoneHeader({ isAvaTyping }: { isAvaTyping: bo
               Élise Laurent
             </p>
           </div>
-          {/* Fixed-height status container prevents subpixel vertical shift on text change */}
           <div className="relative mt-[1px] h-[14px] w-full overflow-hidden">
             <span
               className={`
@@ -2434,7 +2456,7 @@ const PhoneHeader = memo(function PhoneHeader({ isAvaTyping }: { isAvaTyping: bo
 });
 
 /* ═══════════════════════════════════════════════════════════
-   PANEL — the conversation, full screen.
+   PANEL
    ═══════════════════════════════════════════════════════════ */
 
 function PhoneChat() {
@@ -2444,7 +2466,6 @@ function PhoneChat() {
   const scrollRaf = useRef(0);
   const reduce = useReducedMotion();
 
-  /* ⚡ Conversation scheduler */
   useEffect(() => {
     if (reduce) {
       const now = new Date();
@@ -2493,7 +2514,6 @@ function PhoneChat() {
     };
   }, [reduce]);
 
-  /* ⚡ High-Hz rAF-damped scroll — adapts cleanly to 60Hz–240Hz */
   useEffect(() => {
     const el = listRef.current;
     if (!el) return;
@@ -2533,15 +2553,12 @@ function PhoneChat() {
         backfaceVisibility: "hidden",
       }}
     >
-      {/* ambient amber wash */}
       <div className="pointer-events-none absolute inset-0 z-0 bg-[radial-gradient(circle_at_50%_-8%,rgba(200,136,58,0.16),transparent_56%)]" />
 
       <StatusBar />
 
-      {/* ── Isolated GPU Header (zero flicker on line & avatar) ── */}
       <PhoneHeader isAvaTyping={typing === "ava"} />
 
-      {/* ── transcript ── */}
       <div className="relative min-h-0 flex-1">
         <div
           ref={listRef}
@@ -2570,16 +2587,12 @@ function PhoneChat() {
           </div>
         </div>
 
-        {/* soft top fade */}
         <div
           className="pointer-events-none absolute inset-x-0 top-0 z-20 h-4 bg-gradient-to-b from-[#08080B] to-transparent"
           style={{ transform: "translate3d(0,0,0)" }}
         />
       </div>
 
-      {/* ── composer ── */}
-   
-      {/* ── composer (rounded bottom so it never pokes out of the bezel on Android) ── */}
       <div
         className="relative z-20 shrink-0 rounded-b-[36px] border-t border-white/[0.07] bg-[#08080B] px-3 pb-5 pt-2 sm:rounded-b-[42px] sm:pb-6 sm:pt-2.5"
       >
@@ -2609,7 +2622,6 @@ function PhoneChat() {
         </div>
       </div>
 
-      {/* home indicator */}
       <div className="pointer-events-none absolute bottom-1.5 left-1/2 z-30 h-[3px] w-24 -translate-x-1/2 rounded-full bg-[#F0E4CC]/45" /></div>
   );
 }
@@ -3376,7 +3388,6 @@ function BeatArrival() {
         </div>
       </Reveal>
 
-      {/* 🔥 ONLY SHOW THIS ON THE WEB, HIDE IT INSIDE THE NATIVE APP */}
       {!Capacitor.isNativePlatform() && (
         <Reveal delay={0.3}>
           <div className="mt-8 flex flex-wrap justify-center gap-3">
@@ -3519,7 +3530,29 @@ export function Landing() {
   const tier = useDeviceTier();
   const mobile = useIsMobile();
   const hz = useRefreshRate();
-  useSmoothScroll(!reduce);
+
+  // ── Critical distinction ─────────────────────────────────
+  // `isNative`      → we are running inside the Capacitor Android/iOS shell.
+  //                    Only here do we drop Lenis and use native scroll.
+  // `mobile`        → device class (phone/tablet/touch laptop) used purely
+  //                    for the performance pass (cheap shaders, fewer cards).
+  //                    A touchscreen PC is still "mobile" here, so it gets
+  //                    the perf reductions but KEEPS Lenis (smooth wheel).
+  const isNative = Capacitor.isNativePlatform();
+
+  // Lenis strategy:
+  //   native app       → no Lenis (native compositor scroll)
+  //   mobile browser   → Lenis with autoRaf:true (own loop, decoupled)
+  //   desktop browser  → Lenis with autoRaf:false (WebGL-driven, perfectly synced)
+  useSmoothScroll(!reduce, isNative, mobile && !isNative);
+
+  useEffect(() => {
+    if (typeof console !== "undefined") {
+      console.info(
+        `[Orbital] mobile=${mobile} native=${isNative} tier=${tier} hz=${hz}`,
+      );
+    }
+  }, [mobile, isNative, tier, hz]);
 
   useEffect(() => {
     const h = (e: Event) => {
@@ -3535,12 +3568,11 @@ export function Landing() {
   }, []);
 
   const { maxDpr, minDpr } = useMemo(() => {
-    if (mobile) return { maxDpr: 1.15, minDpr: 0.85 };
+    if (mobile) return { maxDpr: 1.0, minDpr: 0.75 };
     const native =
       typeof window === "undefined"
         ? 1
         : Math.min(window.devicePixelRatio || 1, 2.0);
-    // Keep fill-rate squarely in the 120–240Hz sweet spot
     const headroom = hz >= 144 ? 0.92 : hz >= 120 ? 0.96 : 1;
     const tierCap = tier === "low" ? 1.25 : tier === "mid" ? 1.65 : 1.9;
     const hi = Math.max(1.25, Math.min(native, tierCap) * headroom);
@@ -3557,6 +3589,10 @@ export function Landing() {
         fontFamily:
           '"Plus Jakarta Sans", "SF Pro Text", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
       }}
+      data-mobile={mobile}
+      data-native={isNative}
+      data-tier={tier}
+      data-hz={hz}
     >
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:ital,wght@0,200..800;1,200..800&family=Instrument+Serif:ital@0;1&display=swap');
@@ -3604,7 +3640,6 @@ export function Landing() {
           }
         }
 
-        /* ⚡ Pure CSS GPU-composited float (prevents JS subpixel re-rasterization of children) */
         @keyframes orbital-phone-float {
           0%, 100% { transform: translate3d(0, 0px, 0); }
           50%      { transform: translate3d(0, -10px, 0); }
@@ -3616,7 +3651,6 @@ export function Landing() {
           transform: translate3d(0,0,0);
         }
 
-        /* ⚡ chat bubble entrances — pure CSS, GPU-composited */
         @keyframes orbital-bubble-in-me {
           from { opacity: 0; transform: translate3d(8px, 10px, 0) scale(0.94); }
           to   { opacity: 1; transform: translate3d(0, 0, 0) scale(1); }
@@ -3689,7 +3723,7 @@ export function Landing() {
             dpr={maxDpr}
             camera={{ position: [0, 0.05, 7.2], fov: FOV, near: 0.1, far: 260 }}
             gl={{
-              antialias: tier === "low",
+              antialias: mobile ? false : tier === "low",
               alpha: false,
               powerPreference: mobile ? "default" : "high-performance",
               stencil: false,
@@ -3712,12 +3746,14 @@ export function Landing() {
           >
             <Suspense fallback={null}>
               <OrbitalWorld tier={tier} hz={hz} mobile={mobile} />
-              <AdaptiveResolution
-                min={minDpr}
-                max={maxDpr}
-                targetFps={hz}
-                mobile={mobile}
-              />
+              {!mobile && (
+                <AdaptiveResolution
+                  min={minDpr}
+                  max={maxDpr}
+                  targetFps={hz}
+                  mobile={mobile}
+                />
+              )}
             </Suspense>
           </Canvas>
 
