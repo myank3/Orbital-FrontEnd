@@ -21,6 +21,7 @@ import ConnectionBanner from './components/ConnectionBanner';
 import { Capacitor } from '@capacitor/core';
 import { App as CapacitorApp } from '@capacitor/app';
 import { Preferences } from '@capacitor/preferences';
+import { Browser } from '@capacitor/browser';
 import { initPushNotifications } from './services/pushService';
 import { requestCallPermissions } from './services/permissions';
 
@@ -185,6 +186,44 @@ function NativeIntegration() {
 
     return () => clearTimeout(timer);
   }, [isAuthenticated]);
+
+  // 3. Handle Android Hardware Back Button
+  useEffect(() => {
+    if (!Capacitor.isNativePlatform()) return;
+
+    const backListener = CapacitorApp.addListener('backButton', ({ canGoBack }) => {
+      if (canGoBack && window.history.length > 1) {
+        window.history.back();
+      } else {
+        CapacitorApp.exitApp();
+      }
+    });
+
+    return () => {
+      backListener.then((listener) => listener.remove());
+    };
+  }, []);
+
+  // 4. Open external links in Chrome/Safari instead of inside the app
+  useEffect(() => {
+    if (!Capacitor.isNativePlatform()) return;
+
+    const handleClick = (e: MouseEvent) => {
+      const target = (e.target as HTMLElement).closest('a');
+      if (
+        target &&
+        target.href &&
+        target.href.startsWith('http') &&
+        !target.href.includes('orbitalhq.vercel.app')
+      ) {
+        e.preventDefault();
+        Browser.open({ url: target.href });
+      }
+    };
+
+    document.addEventListener('click', handleClick);
+    return () => document.removeEventListener('click', handleClick);
+  }, []);
 
   return null;
 }

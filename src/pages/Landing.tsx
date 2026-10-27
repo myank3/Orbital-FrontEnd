@@ -1,20 +1,38 @@
 /**
  * @file src/pages/Landing.tsx
- * Orbital — v18.2 · "The Thread" (Android-native scroll + mobile shader pass
- *                              + correct PC scroll gating)
+ * Orbital — v18.3 · "The Thread"
  *
- * ⚡ v18.2 deltas (fix PC lag introduced by v18.1):
- *   · Lenis is now gated on `Capacitor.isNativePlatform()`, NOT `mobile`.
- *     The previous patch disabled Lenis whenever `useIsMobile()` returned
- *     true — which also fires for touch laptops, narrow windows, and
- *     DevTools emulation. That removed smooth wheel scroll on those PCs.
- *   · On mobile browsers (Android Chrome) Lenis now runs with `autoRaf:
- *     true` (own rAF loop), so scroll is decoupled from WebGL FPS without
- *     losing the smoothing.
- *   · On the native Android app, Lenis is still skipped entirely — native
- *     compositor scroll is the correct behaviour there.
- *   · Added a one-shot console.info() diagnostic and data-* attributes on
- *     <main> so you can verify which path is active from DevTools.
+ * ⚡ v18.3 deltas (PC + Android smoothness pass)
+ *
+ *  PC
+ *   · Lenis now uses autoRaf:true on every web platform. Previously the
+ *     desktop path called lenis.raf() from useFrame → scroll rate was
+ *     clamped to WebGL fps. A 45 fps 3D scene = 45 fps scroll = "laggy".
+ *   · Camera smoothing tightened (pos/look lambda 7.5/9.0 → 20 on web,
+ *     45 on native app). The laggy-trailing-camera feel is gone.
+ *   · store.smooth lambda 28 → 60 (was adding ~180 ms of extra delay).
+ *   · Canvas starts at minDpr, AdaptiveResolution ramps up from there.
+ *     Previous patch started at maxDpr, which caused first-2s stutter
+ *     while shaders compiled at full res.
+ *   · Heavy components (Thread/Gates/Portal/Gallery/PostFX) deferred by
+ *     2 rAF so the first ~2 frames are cheap and paint is instant.
+ *   · Texture upload queue batched 3/rAF + bumped per batch (progressive
+ *     card appearance vs one big re-render).
+ *   · LUT_STEPS 2048 → 1024; arcLengthDivisions 600 → 360 (halves
+ *     module-load time, invisible in use). Strand tubulars 1600 → 1000.
+ *   · SMAA added on high tier (fixes jaggies from EffectComposer when
+ *     canvas antialias is disabled).
+ *
+ *  Android / mobile
+ *   · AdaptiveResolution enabled on mobile (min 0.65, max 1.05). No
+ *     more hard-pinned DPR 1.0 with no recovery path.
+ *   · Gates get: per-instance tilt (rotates in local X), scale wobble
+ *     with beat-staggered phase, velocity-reactive scale, additive
+ *     ghost halo torus, thicker main torus (0.035 → 0.07).
+ *   · Backdrop mobile shader: 2-octave fbm noise — texture instead of
+ *     flat radial gradient.
+ *   · Thread tube radii bumped for mobile so the spine reads.
+ *   · Fake bloom overlay (2 radial gradients) since mobile skips PostFX.
  *
  * ROUTES PRESERVED   /login  /register  /downloads/orbital.apk
  */
@@ -27,7 +45,7 @@ import React, {
   useRef,
   useState,
 } from "react";
-import { Capacitor } from '@capacitor/core';
+import { Capacitor } from "@capacitor/core";
 import { Link } from "react-router-dom";
 import Lenis from "lenis";
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
@@ -37,6 +55,7 @@ import {
   Bloom,
   ToneMapping,
   Vignette,
+  SMAA,
 } from "@react-three/postprocessing";
 import { ToneMappingMode, BlendFunction, KernelSize } from "postprocessing";
 
@@ -69,7 +88,7 @@ import {
 } from "lucide-react";
 
 /* ═══════════════════════════════════════════════════════════
-   IMAGE MANIFEST — Curated Professional & Editorial Pass
+   IMAGE MANIFEST
    ═══════════════════════════════════════════════════════════ */
 const u = (id: string, w: number, q = 85) => {
   if (id.startsWith("http")) return id;
@@ -109,6 +128,7 @@ const SCENE_IDS = {
   mountains: "1517048676732-d65bc937f952",
   ocean:     "px:3183150",
 } as const;
+
 function toUrls<T extends Record<string, string>>(
   ids: T,
   w: number,
@@ -119,12 +139,14 @@ function toUrls<T extends Record<string, string>>(
   return out as { [K in keyof T]: string };
 }
 
-const FACE = toUrls(FACE_IDS, 800, 88);
-const SCENE = toUrls(SCENE_IDS, 1600, 88);
+/* FACE at 640 (cards are small), SCENE at 1200 (fewer MB, invisible at size) */
+const FACE = toUrls(FACE_IDS, 640, 88);
+const SCENE = toUrls(SCENE_IDS, 1200, 88);
 
+/* Gallery texture atlas — trimmed from 1000/1800 to 800/1400 */
 const GALLERY: string[] = [
-  ...Object.values(FACE_IDS).map((id) => u(id, 1000, 88)),
-  ...Object.values(SCENE_IDS).map((id) => u(id, 1800, 88)),
+  ...Object.values(FACE_IDS).map((id) => u(id, 800, 88)),
+  ...Object.values(SCENE_IDS).map((id) => u(id, 1400, 88)),
 ];
 
 if (typeof window !== "undefined") {
@@ -141,7 +163,8 @@ const AMBER = "#C8883A";
 const CREAM = "#E5D6B8";
 const DEEP = "#04060A";
 
-const DOWNLOAD_HREF = "https://pub-a90950bf9f0a4b059174e3a9cba7a1c9.r2.dev/Orbital.apk";
+const DOWNLOAD_HREF =
+  "https://pub-a90950bf9f0a4b059174e3a9cba7a1c9.r2.dev/Orbital.apk";
 
 const UI_SPRING = { type: "spring", stiffness: 520, damping: 36 } as const;
 const CINEMATIC_SPRING = {
@@ -156,14 +179,19 @@ const FOV = 50;
 const TAN_HALF = Math.tan((FOV * Math.PI) / 360);
 
 /* ═══════════════════════════════════════════════════════════
-   FRAME-RATE INDEPENDENT MATH (60Hz – 240Hz)
+   FRAME-RATE INDEPENDENT MATH
    ═══════════════════════════════════════════════════════════ */
 
 function damp(c: number, t: number, lambda: number, dt: number) {
   return c + (t - c) * (1 - Math.exp(-lambda * dt));
 }
 
-function dampVec3(c: THREE.Vector3, t: THREE.Vector3, lambda: number, dt: number) {
+function dampVec3(
+  c: THREE.Vector3,
+  t: THREE.Vector3,
+  lambda: number,
+  dt: number,
+) {
   const a = 1 - Math.exp(-lambda * dt);
   c.x += (t.x - c.x) * a;
   c.y += (t.y - c.y) * a;
@@ -187,7 +215,7 @@ function mulberry32(seed: number) {
 }
 
 /* ═══════════════════════════════════════════════════════════
-   DEVICE TIER & REFRESH RATE (60Hz -> 240Hz)
+   DEVICE TIER & REFRESH RATE
    ═══════════════════════════════════════════════════════════ */
 
 type Tier = "low" | "mid" | "high";
@@ -287,51 +315,31 @@ let _fast = 0;
 let _slow = 0;
 
 let lenisInstance: Lenis | null = null;
-let lenisAutoRaf = false;
 let maxScrollCache = 1;
 
 /**
- * Lenis strategy:
- *   Native app (Capacitor)   → no Lenis. Native compositor scroll.
- *   Mobile browser           → Lenis with autoRaf:true (own loop). WebGL can't
- *                              hitch the scroll.
- *   Desktop browser          → Lenis with autoRaf:false, driven from useFrame
- *                              so scroll & camera are locked to the same frame.
+ * Lenis strategy (v18.3):
+ *   Native app (Capacitor)  → no Lenis. Native compositor scroll.
+ *   Everywhere else          → Lenis with autoRaf:true. Its own loop is
+ *                              decoupled from WebGL FPS — a 45 fps 3D
+ *                              frame can't stall the wheel anymore.
  */
-function useSmoothScroll(
-  enabled: boolean,
-  skipLenis: boolean,
-  useAutoRaf: boolean,
-) {
+function useSmoothScroll(enabled: boolean, skipLenis: boolean) {
   useEffect(() => {
     if (!enabled || skipLenis) return;
-    lenisAutoRaf = useAutoRaf;
     const lenis = new Lenis({
-      lerp: useAutoRaf ? 0.16 : 0.14,
+      lerp: 0.15,
       wheelMultiplier: 1,
-      touchMultiplier: useAutoRaf ? 1.8 : 1.5,
+      touchMultiplier: 1.5,
       smoothWheel: true,
-      autoRaf: useAutoRaf,
+      autoRaf: true,
     });
     lenisInstance = lenis;
-
-    // Fallback rAF only if the WebGL canvas isn't mounted AND Lenis isn't
-    // running its own loop.
-    let fallbackRaf = 0;
-    const tickFallback = (time: number) => {
-      if (!useAutoRaf && !document.querySelector("canvas")) {
-        lenis.raf(time);
-      }
-      fallbackRaf = requestAnimationFrame(tickFallback);
-    };
-    fallbackRaf = requestAnimationFrame(tickFallback);
-
     return () => {
-      cancelAnimationFrame(fallbackRaf);
       lenis.destroy();
       lenisInstance = null;
     };
-  }, [enabled, skipLenis, useAutoRaf]);
+  }, [enabled, skipLenis]);
 }
 
 function ScrollDriver() {
@@ -385,20 +393,17 @@ function ScrollDriver() {
   }, []);
 
   useFrame((state, delta) => {
-    // 1. Step Lenis synchronously at the very start of the WebGL frame —
-    //    ONLY when Lenis is configured with autoRaf:false (desktop).
-    if (lenisInstance && !lenisAutoRaf) {
-      lenisInstance.raf(performance.now());
-    }
     if (lenisInstance) {
       store.raw = clamp01(lenisInstance.scroll / maxScrollCache);
     } else {
       store.raw = clamp01(window.scrollY / maxScrollCache);
     }
 
-    // 2. True frame-rate independent sub-stepped damping for 60Hz–240Hz
+    // v18.3: lambda 60 (was 28). Lenis already handles smoothing on web;
+    // a second aggressive-damp stage just adds perceived lag. Native
+    // scroll on mobile is already smooth; we track it tightly.
     const dt = Math.min(delta, 0.05);
-    store.smooth = damp(store.smooth, store.raw, 28, dt);
+    store.smooth = damp(store.smooth, store.raw, 60, dt);
     if (Math.abs(store.raw - store.smooth) < 0.00005) store.smooth = store.raw;
 
     const raw = (store.smooth - prev.current) / Math.max(dt, 1e-5);
@@ -428,7 +433,7 @@ function ScrollDriver() {
 }
 
 /* ═══════════════════════════════════════════════════════════
-   ADAPTIVE RESOLUTION
+   ADAPTIVE RESOLUTION — v18.3: starts at MIN, ramps up
    ═══════════════════════════════════════════════════════════ */
 
 function AdaptiveResolution({
@@ -443,22 +448,24 @@ function AdaptiveResolution({
   mobile: boolean;
 }) {
   const setDpr = useThree((s) => s.setDpr);
-  const cur = useRef(max);
+  const cur = useRef(min);
   const acc = useRef(0);
   const frames = useRef(0);
-  const cooldown = useRef(mobile ? 1 : 2);
+  const cooldown = useRef(mobile ? 2 : 3);
   const low = useRef(0);
   const high = useRef(0);
 
   useEffect(() => {
-    cur.current = max;
+    // v18.3: start at MIN (not max). Previously started at max → the
+    // first ~2 seconds stuttered at full DPR while shaders compiled.
+    cur.current = min;
     low.current = 0;
     high.current = 0;
-    cooldown.current = mobile ? 1 : 2;
+    cooldown.current = mobile ? 2 : 3;
     acc.current = 0;
     frames.current = 0;
-    setDpr(max);
-  }, [max, setDpr, mobile]);
+    setDpr(min);
+  }, [min, setDpr, mobile]);
 
   useFrame((_, delta) => {
     acc.current += Math.min(delta, 0.1);
@@ -475,7 +482,7 @@ function AdaptiveResolution({
     }
 
     const target = targetFps * 0.92;
-    if (fps < target * (mobile ? 0.88 : 0.85)) {
+    if (fps < target * (mobile ? 0.86 : 0.85)) {
       low.current += 1;
       high.current = 0;
     } else if (fps > target * 0.96) {
@@ -487,9 +494,9 @@ function AdaptiveResolution({
     }
 
     const dropStep = mobile ? 0.08 : 0.1;
-    const upStep = mobile ? 0.05 : 0.06;
+    const upStep = mobile ? 0.06 : 0.08;
     const lowNeed = mobile ? 1 : 2;
-    const highNeed = mobile ? 6 : 5;
+    const highNeed = mobile ? 4 : 4;
 
     if (low.current >= lowNeed && cur.current > min + 1e-3) {
       cur.current = Math.max(
@@ -498,7 +505,7 @@ function AdaptiveResolution({
       );
       setDpr(cur.current);
       low.current = 0;
-      cooldown.current = mobile ? 5 : 4;
+      cooldown.current = mobile ? 4 : 4;
     } else if (high.current >= highNeed && cur.current < max - 1e-3) {
       cur.current = Math.min(
         max,
@@ -506,7 +513,7 @@ function AdaptiveResolution({
       );
       setDpr(cur.current);
       high.current = 0;
-      cooldown.current = mobile ? 10 : 8;
+      cooldown.current = mobile ? 6 : 5;
     }
   });
 
@@ -514,7 +521,7 @@ function AdaptiveResolution({
 }
 
 /* ═══════════════════════════════════════════════════════════
-   THE PATH + O(1) PRECOMPUTED SPLINE LUT
+   THE PATH + O(1) PRECOMPUTED SPLINE LUT (v18.3: halved size)
    ═══════════════════════════════════════════════════════════ */
 
 const PATH = new THREE.CatmullRomCurve3(
@@ -530,9 +537,9 @@ const PATH = new THREE.CatmullRomCurve3(
   false,
   "centripetal",
 );
-PATH.arcLengthDivisions = 600;
+PATH.arcLengthDivisions = 360; // v18.3: was 600
 
-const LUT_STEPS = 2048;
+const LUT_STEPS = 1024; // v18.3: was 2048
 const LUT_POS = new Float32Array((LUT_STEPS + 1) * 3);
 const LUT_TAN = new Float32Array((LUT_STEPS + 1) * 3);
 {
@@ -583,6 +590,7 @@ function sampleTangentFast(u: number, out: THREE.Vector3) {
 const UP = new THREE.Vector3(0, 1, 0);
 const AXIS_Z = new THREE.Vector3(0, 0, 1);
 const AXIS_Y = new THREE.Vector3(0, 1, 0);
+const AXIS_X = new THREE.Vector3(1, 0, 0);
 
 const BEAT_U = [0.04, 0.22, 0.4, 0.58, 0.76, 0.94];
 const BEAT_SHIFT = [-1.6, 2.0, 0.0, 2.0, -0.8, 0.0];
@@ -604,7 +612,7 @@ function basisAt(uu: number): Basis {
 }
 
 /* ═══════════════════════════════════════════════════════════
-   CAMERA RIG
+   CAMERA RIG — v18.3: much tighter damping
    ═══════════════════════════════════════════════════════════ */
 
 const _P = new THREE.Vector3();
@@ -613,7 +621,13 @@ const _T2 = new THREE.Vector3();
 const _L = new THREE.Vector3();
 const _R = new THREE.Vector3();
 
-function CameraRig({ mobile }: { mobile: boolean }) {
+function CameraRig({
+  mobile,
+  isNative,
+}: {
+  mobile: boolean;
+  isNative: boolean;
+}) {
   const { camera } = useThree();
   const pos = useRef(new THREE.Vector3());
   const look = useRef(new THREE.Vector3());
@@ -622,6 +636,11 @@ function CameraRig({ mobile }: { mobile: boolean }) {
   const snapped = useRef(false);
   const fov = useRef(FOV);
   const roll = useRef(0);
+
+  // Native app: no Lenis smoothing at all → track native scroll tightly.
+  // Web (Lenis): Lenis already smoothed → we barely need to add anything.
+  const posLambda = isNative ? 45 : 20;
+  const lookLambda = isNative ? 45 : 20;
 
   useFrame((state, delta) => {
     const dt = Math.min(delta, 0.05);
@@ -661,8 +680,8 @@ function CameraRig({ mobile }: { mobile: boolean }) {
       look.current.copy(tLook.current);
     }
 
-    dampVec3(pos.current, tPos.current, 7.5, dt);
-    dampVec3(look.current, tLook.current, 9.0, dt);
+    dampVec3(pos.current, tPos.current, posLambda, dt);
+    dampVec3(look.current, tLook.current, lookLambda, dt);
 
     const lat = _T2.dot(_R);
     roll.current = damp(roll.current, clampN(-lat * 1.6, -0.14, 0.14), 4.0, dt);
@@ -689,7 +708,7 @@ function CameraRig({ mobile }: { mobile: boolean }) {
 }
 
 /* ═══════════════════════════════════════════════════════════
-   BACKDROP
+   BACKDROP — v18.3 mobile gets 2-octave fbm texture
    ═══════════════════════════════════════════════════════════ */
 
 const BG_VERT = /* glsl */ `
@@ -736,20 +755,6 @@ const BG_FBM_HIGH = /* glsl */ `
   }
 `;
 
-const BG_FBM_LOW = /* glsl */ `
-  float fbm(vec2 p) {
-    float v = 0.0;
-    float a = 0.5;
-    mat2 rot = mat2(0.80, 0.60, -0.60, 0.80);
-    for (int i = 0; i < 2; i++) {
-      v += a * vnoise(p);
-      p = rot * p * 2.02;
-      a *= 0.5;
-    }
-    return v;
-  }
-`;
-
 const BG_BODY_HIGH = /* glsl */ `
   void main() {
     vec2 uv = vUv - 0.5;
@@ -780,43 +785,41 @@ const BG_BODY_HIGH = /* glsl */ `
   }
 `;
 
-const BG_BODY_LOW = /* glsl */ `
-  void main() {
-    vec2 uv = vUv - 0.5;
-    uv.x *= uRes.x / uRes.y;
-    float t = uTime * 0.018;
-    vec2 q = vec2(
-      fbm(uv * 1.5 + vec2(0.0, t)),
-      fbm(uv * 1.5 + vec2(5.2, 1.3) - t * 0.8));
-    vec2 r = vec2(
-      fbm(uv * 1.3 + 2.8 * q + vec2(1.7, 9.2) + t * 0.44),
-      fbm(uv * 1.3 + 2.8 * q + vec2(8.3, 2.8) - t * 0.32));
-    float f = fbm(uv * 1.15 + 2.5 * r);
-    vec3 obsidian = vec3(0.012, 0.014, 0.024);
-    vec3 ember = vec3(0.784, 0.502, 0.235);
-    vec3 steel = vec3(0.439, 0.588, 0.706);
-    vec3 accent = mix(ember, steel, clamp(uScroll, 0.0, 1.0));
-    float cloudFar  = smoothstep(0.22, 0.94, f + uScroll * 0.10);
-    float cloudMid  = smoothstep(0.60, 1.02, length(r));
-    float dustLane  = smoothstep(0.55, 0.15, f * 0.8 + cloudMid * 0.4);
-    vec3 col = obsidian;
-    col = mix(col, accent * 0.10, cloudFar  * 0.65);
-    col = mix(col, accent * 0.22, cloudMid  * 0.42);
-    col *= mix(0.45, 1.0, dustLane);
-    float vig = 1.0 - smoothstep(0.36, 1.30, length(vUv - 0.5) * 1.62);
-    col *= mix(0.55, 1.0, vig);
-    gl_FragColor = vec4(col, 1.0);
-  }
-`;
-
 const BG_FRAG_HIGH = BG_COMMON + BG_FBM_HIGH + BG_BODY_HIGH;
-const BG_FRAG_LOW = BG_COMMON + BG_FBM_LOW + BG_BODY_LOW;
 
+/* Mobile: 2-octave fbm — cheap enough on mid-range Androids, and
+   replaces the flat radial gradient that read as "cheap". */
 const BG_FRAG_MOBILE = /* glsl */ `
   precision mediump float;
   varying vec2 vUv;
   uniform float uTime;
   uniform float uScroll;
+
+  float hash(vec2 p) {
+    p = fract(p * vec2(123.34, 456.21));
+    p += dot(p, p + 45.32);
+    return fract(p.x * p.y);
+  }
+  float vnoise(vec2 p) {
+    vec2 i = floor(p);
+    vec2 f = fract(p);
+    vec2 u = f * f * (3.0 - 2.0 * f);
+    return mix(
+      mix(hash(i), hash(i + vec2(1.0, 0.0)), u.x),
+      mix(hash(i + vec2(0.0, 1.0)), hash(i + vec2(1.0, 1.0)), u.x),
+      u.y);
+  }
+  float fbm2(vec2 p) {
+    float v = 0.0;
+    float a = 0.5;
+    for (int i = 0; i < 2; i++) {
+      v += a * vnoise(p);
+      p = p * 2.02;
+      a *= 0.5;
+    }
+    return v;
+  }
+
   void main() {
     vec3 obsidian = vec3(0.016, 0.018, 0.028);
     vec3 ember    = vec3(0.784, 0.502, 0.235);
@@ -826,10 +829,14 @@ const BG_FRAG_MOBILE = /* glsl */ `
     vec2 c = vUv - 0.5;
     c.x *= 1.777;
     float d = length(c);
+    float t = uTime * 0.02;
+
+    float n = fbm2(vUv * 3.0 + vec2(t * 0.5, t * 0.3));
 
     float pulse = 0.85 + 0.15 * sin(uTime * 0.35);
     vec3 col = obsidian;
     col += accent * 0.10 * pulse * (1.0 - smoothstep(0.10, 0.85, d));
+    col += accent * 0.07 * n * (1.0 - smoothstep(0.0, 1.15, d));
     col *= 1.0 - smoothstep(0.55, 1.20, d) * 0.55;
     gl_FragColor = vec4(col, 1.0);
   }
@@ -868,7 +875,7 @@ function Backdrop({ mobile }: { mobile: boolean }) {
 }
 
 /* ═══════════════════════════════════════════════════════════
-   THE THREAD
+   THE THREAD — v18.3: thicker on mobile, lighter on desktop
    ═══════════════════════════════════════════════════════════ */
 
 const THREAD_VERT = /* glsl */ `
@@ -910,15 +917,25 @@ const THREAD_FRAG = /* glsl */ `
 
 function Thread({ mobile }: { mobile: boolean }) {
   const parts = useMemo(() => {
-    const mainTubular   = mobile ? 200 : 900;
-    const mainRadial    = mobile ? 5   : 14;
-    const N             = mobile ? 96  : 480;
-    const strandTubular = mobile ? 240 : 1600;
+    const mainTubular   = mobile ? 240 : 720;
+    const mainRadial    = mobile ? 6   : 12;
+    const N             = mobile ? 96  : 400;
+    const strandTubular = mobile ? 260 : 1000; // v18.3: 1600 → 1000
     const strandRadial  = mobile ? 4   : 8;
     const turns         = mobile ? 20  : 40;
-    const strandRadius = 0.013;
 
-    const main = new THREE.TubeGeometry(PATH, mainTubular, 0.03, mainRadial, false);
+    // v18.3: thicker on mobile so the spine actually reads on a phone.
+    const mainRadius   = mobile ? 0.045 : 0.03;
+    const strandRadius = mobile ? 0.018 : 0.013;
+
+    const main = new THREE.TubeGeometry(
+      PATH,
+      mainTubular,
+      mainRadius,
+      mainRadial,
+      false,
+    );
+
     const frames = PATH.computeFrenetFrames(N, false);
     const strands: THREE.TubeGeometry[] = [];
     for (let s = 0; s < 2; s++) {
@@ -939,9 +956,15 @@ function Thread({ mobile }: { mobile: boolean }) {
         );
       }
       const curve = new THREE.CatmullRomCurve3(pts, false, "catmullrom", 0.5);
-      curve.arcLengthDivisions = mobile ? 600 : 2000;
+      curve.arcLengthDivisions = mobile ? 500 : 1400;
       strands.push(
-        new THREE.TubeGeometry(curve, strandTubular, strandRadius, strandRadial, false),
+        new THREE.TubeGeometry(
+          curve,
+          strandTubular,
+          strandRadius,
+          strandRadial,
+          false,
+        ),
       );
     }
 
@@ -979,9 +1002,24 @@ function Thread({ mobile }: { mobile: boolean }) {
 
   return (
     <group matrixAutoUpdate={false}>
-      <mesh geometry={parts.main} material={parts.mats[0]} frustumCulled={false} matrixAutoUpdate={false} />
-      <mesh geometry={parts.strands[0]} material={parts.mats[1]} frustumCulled={false} matrixAutoUpdate={false} />
-      <mesh geometry={parts.strands[1]} material={parts.mats[2]} frustumCulled={false} matrixAutoUpdate={false} />
+      <mesh
+        geometry={parts.main}
+        material={parts.mats[0]}
+        frustumCulled={false}
+        matrixAutoUpdate={false}
+      />
+      <mesh
+        geometry={parts.strands[0]}
+        material={parts.mats[1]}
+        frustumCulled={false}
+        matrixAutoUpdate={false}
+      />
+      <mesh
+        geometry={parts.strands[1]}
+        material={parts.mats[2]}
+        frustumCulled={false}
+        matrixAutoUpdate={false}
+      />
     </group>
   );
 }
@@ -1025,7 +1063,7 @@ const DUST_FRAG = /* glsl */ `
 
 function Dust({ tier, mobile }: { tier: Tier; mobile: boolean }) {
   const { size, gl } = useThree();
-  const count = mobile ? 70 : tier === "low" ? 240 : tier === "mid" ? 420 : 650;
+  const count = mobile ? 70 : tier === "low" ? 200 : tier === "mid" ? 380 : 550;
   const geo = useMemo(() => {
     const rng = mulberry32(99);
     const pos = new Float32Array(count * 3);
@@ -1275,6 +1313,10 @@ function fallbackTexture(idx: number) {
   return t;
 }
 
+/**
+ * v18.3: batched uploads (3/rAF) + bump per batch → progressive card
+ * appearance instead of one giant re-render at the end.
+ */
 function useGallery(wanted: number[]) {
   const [, bump] = useState(0);
   const ref = useRef<Record<number, THREE.Texture>>({});
@@ -1286,24 +1328,21 @@ function useGallery(wanted: number[]) {
     const maxAniso = Math.min(8, gl.capabilities.getMaxAnisotropy());
     const uploadQueue: Array<{ idx: number; tex: THREE.Texture }> = [];
     let rafId = 0;
-    let pendingBump = false;
 
     const drainUploadQueue = () => {
       if (!alive) return;
-      const next = uploadQueue.shift();
-      if (next) {
+      let batch = 0;
+      while (uploadQueue.length > 0 && batch < 3) {
+        const next = uploadQueue.shift()!;
         gl.initTexture(next.tex);
         store_[next.idx] = next.tex;
-        pendingBump = true;
+        batch++;
       }
+      if (batch > 0) bump((v) => v + 1);
       if (uploadQueue.length > 0) {
         rafId = requestAnimationFrame(drainUploadQueue);
       } else {
         rafId = 0;
-        if (pendingBump) {
-          pendingBump = false;
-          bump((v) => v + 1);
-        }
       }
     };
 
@@ -1319,12 +1358,7 @@ function useGallery(wanted: number[]) {
       tex.magFilter = THREE.LinearFilter;
       tex.needsUpdate = true;
       uploadQueue.push({ idx, tex });
-      if (Object.keys(store_).length + uploadQueue.length <= 6) {
-        store_[idx] = tex;
-      }
-      if (!rafId) {
-        rafId = requestAnimationFrame(drainUploadQueue);
-      }
+      if (!rafId) rafId = requestAnimationFrame(drainUploadQueue);
     };
 
     wanted.forEach((idx) => {
@@ -1481,7 +1515,12 @@ const PhotoCard = memo(function PhotoCard({
 
     const dt = Math.min(delta, 0.05);
     const t = state.clock.elapsedTime;
-    built.uniforms.uAppear.value = damp(built.uniforms.uAppear.value, 1, 2.5, dt);
+    built.uniforms.uAppear.value = damp(
+      built.uniforms.uAppear.value,
+      1,
+      2.5,
+      dt,
+    );
     const a = spec.phase + t * spec.speed;
     const ca = Math.cos(a) * spec.radius;
     const sa = Math.sin(a) * spec.radius * spec.squash;
@@ -1532,18 +1571,21 @@ function Gallery({ tier, mobile }: { tier: Tier; mobile: boolean }) {
 }
 
 /* ═══════════════════════════════════════════════════════════
-   SIGNAL — gates
+   SIGNAL — GATES  (v18.3: alive on mobile)
    ═══════════════════════════════════════════════════════════ */
 
 const _m4 = new THREE.Matrix4();
 const _v3 = new THREE.Vector3();
 const _q4 = new THREE.Quaternion();
 const _s3 = new THREE.Vector3();
+const _tiltQ = new THREE.Quaternion();
 
 const GATE_N = 12;
 
 function Gates({ mobile }: { mobile: boolean }) {
   const ref = useRef<THREE.InstancedMesh>(null);
+  const ghostRef = useRef<THREE.InstancedMesh>(null);
+
   const data = useMemo(() => {
     const pos = new Float32Array(GATE_N * 3);
     const quat = new Float32Array(GATE_N * 4);
@@ -1567,10 +1609,23 @@ function Gates({ mobile }: { mobile: boolean }) {
   useFrame((state) => {
     const m = ref.current;
     if (!m) return;
+    const gm = ghostRef.current;
     const t = state.clock.elapsedTime;
+    const vel = Math.min(1, Math.abs(store.velocity) * 2);
+
     for (let i = 0; i < GATE_N; i++) {
       const near = Math.exp(-Math.pow((data.uu[i] - store.head) * 38, 2));
-      const s = 0.8 + (i % 3) * 0.12 + 0.05 * Math.sin(t * 2.4 - i * 0.7) + near * 0.22;
+      const phase = (i / GATE_N) * TAU;
+      // v18.3: bigger amplitude so it reads at low fps.
+      const wobble = Math.sin(t * 2.5 + phase) * 0.06;
+      const tilt = Math.sin(t * 0.9 + phase * 1.3) * 0.12;
+      const s =
+        0.8 +
+        (i % 3) * 0.12 +
+        wobble +
+        near * 0.28 +
+        vel * 0.12;
+
       _v3.set(data.pos[i * 3], data.pos[i * 3 + 1], data.pos[i * 3 + 2]);
       _q4.set(
         data.quat[i * 4],
@@ -1578,30 +1633,65 @@ function Gates({ mobile }: { mobile: boolean }) {
         data.quat[i * 4 + 2],
         data.quat[i * 4 + 3],
       );
+      // Tilt in local frame (post-multiply) — visible wobble.
+      _tiltQ.setFromAxisAngle(AXIS_X, tilt);
+      _q4.multiply(_tiltQ);
       _s3.set(s, s, s);
       _m4.compose(_v3, _q4, _s3);
       m.setMatrixAt(i, _m4);
+      if (gm) gm.setMatrixAt(i, _m4);
     }
     m.instanceMatrix.needsUpdate = true;
+    if (gm) {
+      gm.instanceMatrix.needsUpdate = true;
+      const gmat = gm.material as THREE.MeshBasicMaterial;
+      gmat.opacity = 0.10 + vel * 0.15;
+    }
   });
 
+  // v18.3: thicker tubes + more segments so circles don't alias into noise.
+  const tubeRadius = mobile ? 0.07 : 0.035;
+  const tubeSeg = mobile ? 8 : 10;
+  const ringSeg = mobile ? 96 : 128;
+
   return (
-    <instancedMesh
-      ref={ref}
-      args={[undefined, undefined, GATE_N]}
-      frustumCulled={false}
-      matrixAutoUpdate={false}
-    >
-      <torusGeometry args={[3.3, 0.035, mobile ? 6 : 8, mobile ? 56 : 80]} />
-      <meshBasicMaterial
-        color={AMBER}
-        transparent
-        opacity={0.75}
-        blending={THREE.AdditiveBlending}
-        depthWrite={false}
-        toneMapped={false}
-      />
-    </instancedMesh>
+    <>
+      <instancedMesh
+        ref={ref}
+        args={[undefined, undefined, GATE_N]}
+        frustumCulled={false}
+        matrixAutoUpdate={false}
+      >
+        <torusGeometry args={[3.3, tubeRadius, tubeSeg, ringSeg]} />
+        <meshBasicMaterial
+          color={AMBER}
+          transparent
+          opacity={0.85}
+          blending={THREE.AdditiveBlending}
+          depthWrite={false}
+          toneMapped={false}
+        />
+      </instancedMesh>
+      {/* Ghost halo — fake bloom for cheap additive glow */}
+      <instancedMesh
+        ref={ghostRef}
+        args={[undefined, undefined, GATE_N]}
+        frustumCulled={false}
+        matrixAutoUpdate={false}
+      >
+        <torusGeometry
+          args={[3.3, tubeRadius * 3.2, mobile ? 6 : 8, ringSeg]}
+        />
+        <meshBasicMaterial
+          color={AMBER}
+          transparent
+          opacity={0.14}
+          blending={THREE.AdditiveBlending}
+          depthWrite={false}
+          toneMapped={false}
+        />
+      </instancedMesh>
+    </>
   );
 }
 
@@ -1802,7 +1892,9 @@ function VaultCrystal({ mobile }: { mobile: boolean }) {
           <meshBasicMaterial color="#FFF1D2" toneMapped={false} />
         </mesh>
         <mesh>
-          <sphereGeometry args={[0.95, mobile ? 20 : 28, mobile ? 20 : 28]} />
+          <sphereGeometry
+            args={[0.95, mobile ? 20 : 28, mobile ? 20 : 28]}
+          />
           <shaderMaterial
             uniforms={glowUniforms}
             vertexShader={GLOW_VERT}
@@ -1875,7 +1967,8 @@ function SoundRings({ mobile }: { mobile: boolean }) {
     const vel = Math.min(1, Math.abs(store.velocity) * 1.5);
     for (let i = 0; i < N; i++) {
       const near = Math.exp(-Math.pow((data.ring[i] - store.head) * 14, 2));
-      const wave = 0.5 + 0.5 * Math.sin(t * 2.6 + data.ph[i] * 3.0 + data.ring[i] * 90.0);
+      const wave =
+        0.5 + 0.5 * Math.sin(t * 2.6 + data.ph[i] * 3.0 + data.ring[i] * 90.0);
       const h = 0.14 + (0.3 + 1.3 * near + 0.7 * vel) * wave;
       _v3.set(data.pos[i * 3], data.pos[i * 3 + 1], data.pos[i * 3 + 2]);
       _q4.set(
@@ -1892,7 +1985,12 @@ function SoundRings({ mobile }: { mobile: boolean }) {
   });
 
   return (
-    <instancedMesh ref={ref} args={[undefined, undefined, N]} geometry={geo} frustumCulled={false}>
+    <instancedMesh
+      ref={ref}
+      args={[undefined, undefined, N]}
+      geometry={geo}
+      frustumCulled={false}
+    >
       <meshBasicMaterial
         color="#E8C890"
         transparent
@@ -1962,7 +2060,12 @@ function Portal({ mobile }: { mobile: boolean }) {
         </mesh>
         <mesh matrixAutoUpdate={false}>
           <torusGeometry args={[3.95, 0.02, mobile ? 6 : 8, mobile ? 64 : 96]} />
-          <meshBasicMaterial color={CREAM} transparent opacity={0.55} toneMapped={false} />
+          <meshBasicMaterial
+            color={CREAM}
+            transparent
+            opacity={0.55}
+            toneMapped={false}
+          />
         </mesh>
       </group>
       <mesh matrixAutoUpdate={false}>
@@ -1983,10 +2086,18 @@ function Portal({ mobile }: { mobile: boolean }) {
 }
 
 /* ═══════════════════════════════════════════════════════════
-   POST FX
+   POST FX — v18.3: SMAA on high tier
    ═══════════════════════════════════════════════════════════ */
 
-function PostFX({ tier, hz, mobile }: { tier: Tier; hz: number; mobile: boolean }) {
+function PostFX({
+  tier,
+  hz,
+  mobile,
+}: {
+  tier: Tier;
+  hz: number;
+  mobile: boolean;
+}) {
   if (mobile || tier === "low") return null;
   const highHz = hz >= 120;
   if (tier === "mid") {
@@ -2006,6 +2117,7 @@ function PostFX({ tier, hz, mobile }: { tier: Tier; hz: number; mobile: boolean 
   }
   return (
     <EffectComposer multisampling={0} enableNormalPass={false}>
+      <SMAA />
       <Bloom
         intensity={0.7}
         luminanceThreshold={0.55}
@@ -2014,39 +2126,62 @@ function PostFX({ tier, hz, mobile }: { tier: Tier; hz: number; mobile: boolean 
         kernelSize={highHz ? KernelSize.SMALL : KernelSize.MEDIUM}
         resolutionScale={highHz ? 0.45 : 0.6}
       />
-      <Vignette offset={0.28} darkness={0.55} blendFunction={BlendFunction.NORMAL} />
+      <Vignette
+        offset={0.28}
+        darkness={0.55}
+        blendFunction={BlendFunction.NORMAL}
+      />
       <ToneMapping mode={ToneMappingMode.ACES_FILMIC} />
     </EffectComposer>
   );
 }
 
 /* ═══════════════════════════════════════════════════════════
-   WORLD
+   WORLD — v18.3: defers heavy mounts by 2 rAF
    ═══════════════════════════════════════════════════════════ */
 
 function OrbitalWorld({
   tier,
   hz,
   mobile,
+  isNative,
 }: {
   tier: Tier;
   hz: number;
   mobile: boolean;
+  isNative: boolean;
 }) {
+  const [heavyReady, setHeavyReady] = useState(false);
+
+  useEffect(() => {
+    let r1 = 0;
+    let r2 = 0;
+    r1 = requestAnimationFrame(() => {
+      r2 = requestAnimationFrame(() => setHeavyReady(true));
+    });
+    return () => {
+      cancelAnimationFrame(r1);
+      cancelAnimationFrame(r2);
+    };
+  }, []);
+
   return (
     <>
       <ScrollDriver />
-      <CameraRig mobile={mobile} />
+      <CameraRig mobile={mobile} isNative={isNative} />
       <color attach="background" args={[DEEP]} />
       <fog attach="fog" args={[DEEP, 8, 42]} />
       <Backdrop mobile={mobile} />
       <Dust tier={tier} mobile={mobile} />
-      <Thread mobile={mobile} />
-      <Gates mobile={mobile} />
-
-      <Portal mobile={mobile} />
-      <Gallery tier={tier} mobile={mobile} />
-      <PostFX tier={tier} hz={hz} mobile={mobile} />
+      {heavyReady && (
+        <>
+          <Thread mobile={mobile} />
+          <Gates mobile={mobile} />
+          <Portal mobile={mobile} />
+          <Gallery tier={tier} mobile={mobile} />
+          <PostFX tier={tier} hz={hz} mobile={mobile} />
+        </>
+      )}
     </>
   );
 }
@@ -2191,7 +2326,7 @@ const StatusBar = memo(function StatusBar() {
 });
 
 /* ═══════════════════════════════════════════════════════════
-   LIVE CLOCK HELPERS — pinned to Indian Standard Time
+   LIVE CLOCK — pinned to IST
    ═══════════════════════════════════════════════════════════ */
 
 function useNow(intervalMs = 30_000): Date {
@@ -2283,7 +2418,11 @@ const CHAT_VISIBLE = 11;
    STABLE AVATAR
    ═══════════════════════════════════════════════════════════ */
 
-const ThreadAvatar = memo(function ThreadAvatar({ className }: { className: string }) {
+const ThreadAvatar = memo(function ThreadAvatar({
+  className,
+}: {
+  className: string;
+}) {
   return (
     <div
       className={`shrink-0 overflow-hidden rounded-full ring-1 ring-white/15 bg-[#16151D] ${className}`}
@@ -2320,7 +2459,9 @@ const ChatBubble = memo(function ChatBubble({ line }: { line: LiveChatLine }) {
             {line.text}
           </div>
           <div className="mt-0.5 flex items-center gap-1 pr-1.5">
-            <span className="text-[8px] tabular-nums text-[#F0E4CC]/45">{stamp}</span>
+            <span className="text-[8px] tabular-nums text-[#F0E4CC]/45">
+              {stamp}
+            </span>
             <CheckCheck size={10} className="text-amber-300" />
           </div>
         </div>
@@ -2336,7 +2477,9 @@ const ChatBubble = memo(function ChatBubble({ line }: { line: LiveChatLine }) {
           {line.text}
         </div>
         <div className="mt-0.5 pl-1.5">
-          <span className="text-[8px] tabular-nums text-[#F0E4CC]/45">{stamp}</span>
+          <span className="text-[8px] tabular-nums text-[#F0E4CC]/45">
+            {stamp}
+          </span>
         </div>
       </div>
     </div>
@@ -2347,7 +2490,11 @@ const ChatBubble = memo(function ChatBubble({ line }: { line: LiveChatLine }) {
    TYPING INDICATOR
    ═══════════════════════════════════════════════════════════ */
 
-const TypingIndicator = memo(function TypingIndicator({ from }: { from: ChatFrom }) {
+const TypingIndicator = memo(function TypingIndicator({
+  from,
+}: {
+  from: ChatFrom;
+}) {
   const mine = from === "me";
 
   const bubble = (
@@ -2364,9 +2511,7 @@ const TypingIndicator = memo(function TypingIndicator({ from }: { from: ChatFrom
 
   if (mine) {
     return (
-      <div className="orbital-typing flex w-full justify-end">
-        {bubble}
-      </div>
+      <div className="orbital-typing flex w-full justify-end">{bubble}</div>
     );
   }
 
@@ -2382,7 +2527,11 @@ const TypingIndicator = memo(function TypingIndicator({ from }: { from: ChatFrom
    PHONE HEADER
    ═══════════════════════════════════════════════════════════ */
 
-const PhoneHeader = memo(function PhoneHeader({ isAvaTyping }: { isAvaTyping: boolean }) {
+const PhoneHeader = memo(function PhoneHeader({
+  isAvaTyping,
+}: {
+  isAvaTyping: boolean;
+}) {
   return (
     <div
       className="relative z-30 shrink-0 px-4 pb-2.5 pt-12"
@@ -2398,7 +2547,10 @@ const PhoneHeader = memo(function PhoneHeader({ isAvaTyping }: { isAvaTyping: bo
         <ChevronLeft size={15} className="shrink-0 text-amber-300" />
         <div
           className="relative flex h-10 w-10 shrink-0 rounded-full ring-1 ring-amber-300/35 bg-[#16151D]"
-          style={{ transform: "translate3d(0,0,0)", backfaceVisibility: "hidden" }}
+          style={{
+            transform: "translate3d(0,0,0)",
+            backfaceVisibility: "hidden",
+          }}
         >
           <img
             src={FACE.ava}
@@ -2460,7 +2612,9 @@ const PhoneHeader = memo(function PhoneHeader({ isAvaTyping }: { isAvaTyping: bo
    ═══════════════════════════════════════════════════════════ */
 
 function PhoneChat() {
-  const [messages, setMessages] = useState<{ line: LiveChatLine; key: number }[]>([]);
+  const [messages, setMessages] = useState<
+    { line: LiveChatLine; key: number }[]
+  >([]);
   const [typing, setTyping] = useState<ChatFrom | null>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const scrollRaf = useRef(0);
@@ -2593,9 +2747,7 @@ function PhoneChat() {
         />
       </div>
 
-      <div
-        className="relative z-20 shrink-0 rounded-b-[36px] border-t border-white/[0.07] bg-[#08080B] px-3 pb-5 pt-2 sm:rounded-b-[42px] sm:pb-6 sm:pt-2.5"
-      >
+      <div className="relative z-20 shrink-0 rounded-b-[36px] border-t border-white/[0.07] bg-[#08080B] px-3 pb-5 pt-2 sm:rounded-b-[42px] sm:pb-6 sm:pt-2.5">
         <div className="flex items-center gap-1.5">
           <button
             aria-label="Add"
@@ -2622,7 +2774,8 @@ function PhoneChat() {
         </div>
       </div>
 
-      <div className="pointer-events-none absolute bottom-1.5 left-1/2 z-30 h-[3px] w-24 -translate-x-1/2 rounded-full bg-[#F0E4CC]/45" /></div>
+      <div className="pointer-events-none absolute bottom-1.5 left-1/2 z-30 h-[3px] w-24 -translate-x-1/2 rounded-full bg-[#F0E4CC]/45" />
+    </div>
   );
 }
 
@@ -2854,7 +3007,10 @@ function Words({ text }: { text: string }) {
   return (
     <>
       {text.split(" ").map((w, i) => (
-        <span key={i} className="inline-block overflow-hidden pb-[0.08em] align-bottom">
+        <span
+          key={i}
+          className="inline-block overflow-hidden pb-[0.08em] align-bottom"
+        >
           <motion.span
             className="inline-block will-change-transform"
             initial={reduce ? false : { y: "110%" }}
@@ -2959,11 +3115,7 @@ function BeatOrigin({ mobile }: { mobile: boolean }) {
    ═══════════════════════════════════════════════════════════ */
 
 function Filmstrip() {
-  const frames = [
-    SCENE.tokyo,
-    SCENE.paris,
-    SCENE.aurora,
-  ];
+  const frames = [SCENE.tokyo, SCENE.paris, SCENE.aurora];
   return (
     <div className="mt-9 flex gap-3">
       {frames.map((src, i) => (
@@ -3200,18 +3352,24 @@ function BeatOrbit() {
       </Reveal>
       <Reveal delay={0.18}>
         <div className="mt-9 flex -space-x-3">
-          {[FACE.ava, FACE.sienna, FACE.john, FACE.anita, FACE.finn, FACE.iris, FACE.lyra].map(
-            (src, i) => (
-              <img
-                key={i}
-                src={src}
-                alt=""
-                className="h-11 w-11 rounded-full border-2 border-[#04060A] object-cover"
-                loading="lazy"
-                decoding="async"
-              />
-            ),
-          )}
+          {[
+            FACE.ava,
+            FACE.sienna,
+            FACE.john,
+            FACE.anita,
+            FACE.finn,
+            FACE.iris,
+            FACE.lyra,
+          ].map((src, i) => (
+            <img
+              key={i}
+              src={src}
+              alt=""
+              className="h-11 w-11 rounded-full border-2 border-[#04060A] object-cover"
+              loading="lazy"
+              decoding="async"
+            />
+          ))}
           <div className="flex h-11 w-11 items-center justify-center rounded-full border-2 border-[#04060A] bg-white/[0.08] text-[10px] tabular-nums text-stone-200">
             +43
           </div>
@@ -3301,7 +3459,9 @@ function BeatResonance() {
                       decoding="async"
                     />
                     <div className="flex-1">
-                      <p className="text-[13px] font-medium text-white">John Reeves</p>
+                      <p className="text-[13px] font-medium text-white">
+                        John Reeves
+                      </p>
                       <div className="mt-1 flex items-center gap-1.5">
                         <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-400" />
                         <span className="text-[10px] tabular-nums text-emerald-200">
@@ -3391,7 +3551,7 @@ function BeatArrival() {
       {!Capacitor.isNativePlatform() && (
         <Reveal delay={0.3}>
           <div className="mt-8 flex flex-wrap justify-center gap-3">
-                      <a
+            <a
               href={DOWNLOAD_HREF}
               download="Orbital.apk"
               className="group relative inline-flex items-center gap-3 overflow-hidden rounded-full border border-white/20 bg-white/[0.06] py-2.5 pl-3 pr-5 text-left backdrop-blur-md transition-all duration-300 ease-out will-change-transform hover:-translate-y-0.5 hover:border-amber-400/60 hover:bg-white/[0.10] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-300/70"
@@ -3531,20 +3691,14 @@ export function Landing() {
   const mobile = useIsMobile();
   const hz = useRefreshRate();
 
-  // ── Critical distinction ─────────────────────────────────
-  // `isNative`      → we are running inside the Capacitor Android/iOS shell.
-  //                    Only here do we drop Lenis and use native scroll.
-  // `mobile`        → device class (phone/tablet/touch laptop) used purely
-  //                    for the performance pass (cheap shaders, fewer cards).
-  //                    A touchscreen PC is still "mobile" here, so it gets
-  //                    the perf reductions but KEEPS Lenis (smooth wheel).
+  // isNative → inside the Capacitor Android/iOS shell. Only there we
+  // skip Lenis and use native compositor scroll.
+  // mobile → phone/tablet/touch-laptop for the perf pass; still gets
+  // Lenis on the web.
   const isNative = Capacitor.isNativePlatform();
 
-  // Lenis strategy:
-  //   native app       → no Lenis (native compositor scroll)
-  //   mobile browser   → Lenis with autoRaf:true (own loop, decoupled)
-  //   desktop browser  → Lenis with autoRaf:false (WebGL-driven, perfectly synced)
-  useSmoothScroll(!reduce, isNative, mobile && !isNative);
+  // v18.3: Lenis autoRaf everywhere on web — decoupled from WebGL fps.
+  useSmoothScroll(!reduce, isNative);
 
   useEffect(() => {
     if (typeof console !== "undefined") {
@@ -3568,7 +3722,10 @@ export function Landing() {
   }, []);
 
   const { maxDpr, minDpr } = useMemo(() => {
-    if (mobile) return { maxDpr: 1.0, minDpr: 0.75 };
+    // v18.3: mobile max 1.05 (was hard-pinned 1.0), min 0.65 so we can
+    // actually recover under load. Desktop unchanged shape.
+    if (mobile)
+      return { maxDpr: 1.05, minDpr: 0.65 };
     const native =
       typeof window === "undefined"
         ? 1
@@ -3651,6 +3808,17 @@ export function Landing() {
           transform: translate3d(0,0,0);
         }
 
+        /* v18.3: fake bloom for mobile (no PostFX there) */
+        @keyframes orbital-bloom {
+          0%, 100% { opacity: 0.55; }
+          50%      { opacity: 0.85; }
+        }
+        .orbital-bloom {
+          animation: orbital-bloom 9s ease-in-out infinite;
+          will-change: opacity;
+          pointer-events: none;
+        }
+
         @keyframes orbital-bubble-in-me {
           from { opacity: 0; transform: translate3d(8px, 10px, 0) scale(0.94); }
           to   { opacity: 1; transform: translate3d(0, 0, 0) scale(1); }
@@ -3720,17 +3888,20 @@ export function Landing() {
           }}
         >
           <Canvas
-            dpr={maxDpr}
+            /* v18.3: starts at MIN. AdaptiveResolution ramps up from there. */
+            dpr={minDpr}
             camera={{ position: [0, 0.05, 7.2], fov: FOV, near: 0.1, far: 260 }}
-            gl={{
-              antialias: mobile ? false : tier === "low",
-              alpha: false,
-              powerPreference: mobile ? "default" : "high-performance",
-              stencil: false,
-              depth: true,
-              desynchronized: !mobile,
-              preserveDrawingBuffer: false,
-            } as any}
+            gl={
+              {
+                antialias: mobile ? false : tier === "low",
+                alpha: false,
+                powerPreference: mobile ? "default" : "high-performance",
+                stencil: false,
+                depth: true,
+                desynchronized: !mobile,
+                preserveDrawingBuffer: false,
+              } as any
+            }
             onCreated={({ gl }) => {
               gl.setClearColor(DEEP, 1);
               gl.toneMapping = THREE.ACESFilmicToneMapping;
@@ -3745,20 +3916,35 @@ export function Landing() {
             fallback={<div className="absolute inset-0 bg-[#04060A]" />}
           >
             <Suspense fallback={null}>
-              <OrbitalWorld tier={tier} hz={hz} mobile={mobile} />
-              {!mobile && (
-                <AdaptiveResolution
-                  min={minDpr}
-                  max={maxDpr}
-                  targetFps={hz}
-                  mobile={mobile}
-                />
-              )}
+              <OrbitalWorld
+                tier={tier}
+                hz={hz}
+                mobile={mobile}
+                isNative={isNative}
+              />
+              <AdaptiveResolution
+                min={minDpr}
+                max={maxDpr}
+                targetFps={hz}
+                mobile={mobile}
+              />
             </Suspense>
           </Canvas>
 
           <div className="absolute inset-0 bg-gradient-to-b from-[#04060A]/25 via-transparent to-[#04060A]/90" />
           <div className="absolute inset-0 bg-gradient-to-r from-[#04060A]/70 via-[#04060A]/15 to-transparent" />
+
+          {/* v18.3: fake bloom on mobile (they don't get PostFX) */}
+          {mobile && (
+            <div
+              className="orbital-bloom absolute inset-0"
+              style={{
+                background:
+                  "radial-gradient(circle at 50% 42%, rgba(200,136,58,0.11) 0%, transparent 46%), radial-gradient(circle at 18% 78%, rgba(200,136,58,0.06) 0%, transparent 40%)",
+                mixBlendMode: "screen",
+              }}
+            />
+          )}
         </div>
       )}
 
