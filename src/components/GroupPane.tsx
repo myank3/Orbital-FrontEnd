@@ -185,8 +185,9 @@ const REACT_RE = /^\[react:(-?\d+):([^:\]]+)(?::(add|remove))?\]$/;
 const REPLY_RE = /^\[reply:(-?\d+)\]/;
 const DEL_RE = /^\[del:(-?\d+)\]$/;
 const CLIENT_ID_RE = /^\[client:([^\]]+)\]/;
+const STICKER_PREFIX = '[sticker]';
 
-interface DecodedMessage { body: string; replyToId: number | null; clientId: string | null; isReaction: false; isDelete: false; }
+interface DecodedMessage { body: string; replyToId: number | null; clientId: string | null; sticker: boolean; isReaction: false; isDelete: false; }
 interface DecodedReaction { isReaction: true; messageId: number; emoji: string; action: 'add' | 'remove'; }
 interface DecodedDelete { isReaction: false; isDelete: true; messageId: number; }
 type Decoded = DecodedMessage | DecodedReaction | DecodedDelete;
@@ -206,10 +207,15 @@ function decodeIncoming(text: string): Decoded {
 
   let body = text;
   let clientId: string | null = null;
+  let sticker = false;
   const cid = body.match(CLIENT_ID_RE);
   if (cid) {
     clientId = cid[1];
     body = body.slice(cid[0].length);
+  }
+  if (body.startsWith(STICKER_PREFIX)) {
+    sticker = true;
+    body = body.slice(STICKER_PREFIX.length);
   }
 
   let replyToId: number | null = null;
@@ -218,7 +224,7 @@ function decodeIncoming(text: string): Decoded {
     replyToId = parseInt(reply[1], 10);
     body = body.slice(reply[0].length);
   }
-  return { body, replyToId, clientId, isReaction: false, isDelete: false };
+  return { body, replyToId, clientId, sticker, isReaction: false, isDelete: false };
 }
 
 function encodeReaction(messageId: number, emoji: string, action: 'add' | 'remove' = 'add') {
@@ -229,6 +235,7 @@ function encodeReply(replyToId: number, text: string) { return `[reply:${replyTo
 type ExtendedGroupMessageDto = GroupMessageDto & {
   replyToId?: number | null;
   clientId?: string | null;
+  sticker?: boolean;
 };
 
 function mergeIncomingGroup(prev: ExtendedGroupMessageDto[], local: ExtendedGroupMessageDto): ExtendedGroupMessageDto[] {
@@ -996,6 +1003,7 @@ const GroupMessageItem = React.memo(function GroupMessageItem({
 }: GroupMessageItemProps): React.JSX.Element {
   const hasMedia = Boolean(message.mediaUrl);
   const isVoice = message.mediaType === MediaType.Audio && !!message.mediaUrl;
+  const isSticker = (message as ExtendedGroupMessageDto).sticker === true;
   const canAct = typeof message.id === 'number' && message.id > 0;
 
   const innerRef = useRef<HTMLDivElement | null>(null);
@@ -1128,8 +1136,14 @@ const GroupMessageItem = React.memo(function GroupMessageItem({
           {isVoice && <VoiceBubble url={message.mediaUrl as string} isMe={isMe} />}
 
           {hasMedia && !isVoice && (
-            <div className="mb-2 -mx-1">
-              {message.mediaType === MediaType.Image && (<img src={message.mediaUrl ?? undefined} alt="Attachment" className="rounded-xl max-h-72 w-auto object-cover" loading="lazy" decoding="async" />)}
+            <div className={isSticker ? '' : 'mb-2 -mx-1'}>
+              {message.mediaType === MediaType.Image && (
+                isSticker ? (
+                  <img src={message.mediaUrl ?? undefined} alt="" className="w-[120px] h-[120px] object-contain select-none" loading="lazy" decoding="async" />
+                ) : (
+                  <img src={message.mediaUrl ?? undefined} alt="Attachment" className="rounded-xl max-h-72 w-auto object-cover" loading="lazy" decoding="async" />
+                )
+              )}
               {message.mediaType === MediaType.Video && (<LazyGroupVideo src={message.mediaUrl} />)}
               {message.mediaType === MediaType.File && (
                 <a href={message.mediaUrl ?? undefined} target="_blank" rel="noreferrer" download
@@ -1181,6 +1195,7 @@ const GroupMessageItem = React.memo(function GroupMessageItem({
   prev.message.sentAt === next.message.sentAt &&
   prev.message.senderDisplayName === next.message.senderDisplayName &&
   prev.message.senderAvatarUrl === next.message.senderAvatarUrl &&
+  (prev.message as ExtendedGroupMessageDto).sticker === (next.message as ExtendedGroupMessageDto).sticker &&
   prev.grouped === next.grouped &&
   prev.isLastOfGroup === next.isLastOfGroup &&
   prev.highlighted === next.highlighted &&
@@ -1566,10 +1581,13 @@ interface GroupComposerProps {
   onSendText: (text: string, replyId: number | null) => Promise<void>;
   onSendFile: (file: File) => Promise<void>;
   onSendVoice: (blob: Blob, durationMs: number) => Promise<void>;
+  onSendGif: (url: string) => void;
+  onSendSticker: (url: string) => void;
 }
 
 const GroupComposer = React.memo(function GroupComposer({
   groupId, targetName, replyTo, onCancelReply, onSendText, onSendFile, onSendVoice,
+  onSendGif, onSendSticker,
 }: GroupComposerProps) {
   const { onType, stop: stopTyping } = useGroupTypingEmitter(groupId);
   const [text, setText] = useState('');
@@ -1700,8 +1718,12 @@ const GroupComposer = React.memo(function GroupComposer({
 
         {panel === 'emoji' && !voiceOpen && (
           <div className={`relative ${PANEL_HEIGHT} border-t border-white/[0.06] overflow-hidden`}>
-            <EmojiPanel onPickEmoji={(emoji: string) => { setText((prev) => prev + emoji); onType(); }}
-              onSendGif={() => {}} onSendSticker={() => {}} onClose={() => setPanel('none')} />
+            <EmojiPanel
+              onPickEmoji={(emoji: string) => { setText((prev) => prev + emoji); onType(); }}
+              onSendGif={(url) => { setPanel('none'); onSendGif(url); }}
+              onSendSticker={(url) => { setPanel('none'); onSendSticker(url); }}
+              onClose={() => setPanel('none')}
+            />
           </div>
         )}
         {panel === 'attach' && !voiceOpen && (
@@ -2877,7 +2899,7 @@ export default function GroupPane(): React.JSX.Element {
           const d = decodeIncoming(m.content ?? '');
           if (d.isReaction) { reactionEvents.push({ messageId: d.messageId, emoji: d.emoji, action: d.action, userId: m.senderId }); continue; }
           if (d.isDelete) { deleteEvents.push(d.messageId); continue; }
-          visible.push({ ...m, content: d.body, replyToId: d.replyToId, clientId: d.clientId });
+          visible.push({ ...m, content: d.body, replyToId: d.replyToId, clientId: d.clientId, sticker: d.sticker });
         }
         const deletedSet = new Set(deleteEvents);
         const filtered = visible.filter((m) => !deletedSet.has(Number(m.id)));
@@ -2918,7 +2940,7 @@ export default function GroupPane(): React.JSX.Element {
           const d = decodeIncoming(m.content ?? '');
           if (d.isReaction) { reactionEvents.push({ messageId: d.messageId, emoji: d.emoji, action: d.action, userId: m.senderId }); continue; }
           if (d.isDelete) { deleteEvents.push(d.messageId); continue; }
-          visible.push({ ...m, content: d.body, replyToId: d.replyToId, clientId: d.clientId });
+          visible.push({ ...m, content: d.body, replyToId: d.replyToId, clientId: d.clientId, sticker: d.sticker });
         }
         const deletedSet = new Set(deleteEvents);
         const filtered = visible.filter((m) => !deletedSet.has(Number(m.id)));
@@ -2965,6 +2987,7 @@ export default function GroupPane(): React.JSX.Element {
         content: d.body,
         replyToId: d.replyToId,
         clientId: d.clientId,
+        sticker: d.sticker,
       };
 
       startTransition(() => setMessages((prev) => mergeIncomingGroup(prev as ExtendedGroupMessageDto[], decorated) as GroupMessageDto[]));
@@ -3084,6 +3107,33 @@ export default function GroupPane(): React.JSX.Element {
     } catch (err) {
       setMessages((prev) => prev.filter((m) => m.id !== (tempId as unknown as number)));
       URL.revokeObjectURL(blobUrl);
+      throw err;
+    }
+  }, [activeGroupId, user?.id, user?.displayName, user?.avatarUrl]);
+
+  const handleSendExternalUrl = useCallback(async (url: string, sticker = false) => {
+    if (!activeGroupId || !user?.id) return;
+    stickRef.current = true;
+    const clientId = `tmp-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const tempId = -Date.now();
+    const payload = sticker ? `[client:${clientId}][sticker]` : `[client:${clientId}]`;
+
+    startTransition(() => setMessages((prev) => [...prev, {
+      id: tempId as unknown as number, groupId: activeGroupId, senderId: user.id,
+      senderDisplayName: user.displayName ?? '', senderAvatarUrl: user.avatarUrl ?? undefined,
+      content: '', mediaUrl: url, mediaType: MediaType.Image,
+      sentAt: new Date().toISOString(),
+      clientId, sticker,
+    } as ExtendedGroupMessageDto as GroupMessageDto]));
+
+    try {
+      await signalRService.sendGroupMessage({
+        groupId: activeGroupId, content: payload,
+        mediaUrl: url, mediaType: MediaType.Image,
+      });
+      safePlaySend();
+    } catch (err) {
+      setMessages((prev) => prev.filter((m) => m.id !== (tempId as unknown as number)));
       throw err;
     }
   }, [activeGroupId, user?.id, user?.displayName, user?.avatarUrl]);
@@ -3758,7 +3808,9 @@ export default function GroupPane(): React.JSX.Element {
 
             <GroupComposer key={activeGroupId} groupId={activeGroupId} targetName={activeGroup.name}
               replyTo={replyTo} onCancelReply={handleCancelReply}
-              onSendText={handleSendText} onSendFile={handleSendFile} onSendVoice={handleSendVoice} />
+              onSendText={handleSendText} onSendFile={handleSendFile} onSendVoice={handleSendVoice}
+              onSendGif={(url) => { void handleSendExternalUrl(url).catch(() => {}); }}
+              onSendSticker={(url) => { void handleSendExternalUrl(url, true).catch(() => {}); }} />
           </>
         ) : (
           <div className="h-full flex flex-col items-center justify-center text-center gap-3 p-6">
