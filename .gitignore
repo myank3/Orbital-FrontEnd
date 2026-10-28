@@ -12,3 +12,10 @@ android/.gradle/
 android/local.properties
 *.keystore
 *.jks
+
+# Android Keys
+android/keystore.properties
+*.jks
+
+# Kotlin Cache
+android/.kotlin/

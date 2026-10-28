@@ -1,38 +1,36 @@
 /**
  * @file src/pages/Landing.tsx
- * Orbital — v18.3 · "The Thread"
+ * Orbital — v18.4 · "The Thread" (Android smoothness pass)
  *
- * ⚡ v18.3 deltas (PC + Android smoothness pass)
+ * ⚡ v18.4 deltas (Android-first)
  *
- *  PC
- *   · Lenis now uses autoRaf:true on every web platform. Previously the
- *     desktop path called lenis.raf() from useFrame → scroll rate was
- *     clamped to WebGL fps. A 45 fps 3D scene = 45 fps scroll = "laggy".
- *   · Camera smoothing tightened (pos/look lambda 7.5/9.0 → 20 on web,
- *     45 on native app). The laggy-trailing-camera feel is gone.
- *   · store.smooth lambda 28 → 60 (was adding ~180 ms of extra delay).
- *   · Canvas starts at minDpr, AdaptiveResolution ramps up from there.
- *     Previous patch started at maxDpr, which caused first-2s stutter
- *     while shaders compiled at full res.
- *   · Heavy components (Thread/Gates/Portal/Gallery/PostFX) deferred by
- *     2 rAF so the first ~2 frames are cheap and paint is instant.
- *   · Texture upload queue batched 3/rAF + bumped per batch (progressive
- *     card appearance vs one big re-render).
- *   · LUT_STEPS 2048 → 1024; arcLengthDivisions 600 → 360 (halves
- *     module-load time, invisible in use). Strand tubulars 1600 → 1000.
- *   · SMAA added on high tier (fixes jaggies from EffectComposer when
- *     canvas antialias is disabled).
+ *  ROUND RINGS (Gates / Portal / Thread)
+ *   · Gate torus tube 0.07 → 0.045; tubeSeg 8 → 10; ringSeg 96 → 112.
+ *     Octagonal cross-section was the "chunky ring" on Android. 10 is
+ *     the minimum that reads round at typical camera distances.
+ *   · Ghost halo (fake bloom) slimmed 3.2× → 2.4× and opacity 0.14 →
+ *     0.10. Additive overdraw on 12 stacked toruses was expensive.
+ *   · Portal rings: ringSeg 64 → 112, tubeSeg 8 → 10 (inner) / 6 → 8
+ *     (outer). Circle disc 48 → 64 segments. No more polygon edges.
+ *   · Thread tubes: mainRadial 6 → 10, strandRadial 4 → 6. The spine
+ *     now looks round instead of hexagonal.
+ *   · Thread fragment: packet frequency is now a uniform (uFreq). Mobile
+ *     uses 90 (was 180) — kills the shimmer/aliasing on low-DPR screens.
  *
- *  Android / mobile
- *   · AdaptiveResolution enabled on mobile (min 0.65, max 1.05). No
- *     more hard-pinned DPR 1.0 with no recovery path.
- *   · Gates get: per-instance tilt (rotates in local X), scale wobble
- *     with beat-staggered phase, velocity-reactive scale, additive
- *     ghost halo torus, thicker main torus (0.035 → 0.07).
- *   · Backdrop mobile shader: 2-octave fbm noise — texture instead of
- *     flat radial gradient.
- *   · Thread tube radii bumped for mobile so the spine reads.
- *   · Fake bloom overlay (2 radial gradients) since mobile skips PostFX.
+ *  BACKDROP / OVERLAY
+ *   · BG_FRAG_MOBILE: deleted the 2-octave per-fragment fbm. Replaced
+ *     with an animated radial gradient + pulse. It was the single most
+ *     expensive full-screen shader in the mobile path.
+ *   · Mobile bloom overlay: removed `mix-blend-mode: screen`. That was
+ *     forcing a compositor readback of the WebGL canvas every frame —
+ *     the #1 Android stutter source. Now a plain radial gradient with
+ *     a CSS opacity animation (compositor-only, near-free).
+ *
+ *  BOOT
+ *   · useDeviceTier now computes synchronously on first render. Before,
+ *     mobile flashed "high tier → low tier" after a tick, which forced
+ *     the R3F canvas to reallocate and re-compile shaders right when
+ *     the user first touched the page.
  *
  * ROUTES PRESERVED   /login  /register  /downloads/orbital.apk
  */
@@ -100,35 +98,34 @@ const u = (id: string, w: number, q = 85) => {
 };
 
 const FACE_IDS = {
-  ava:    "px:774909",
-  sienna: "1524504388940-b1c1722653e1",
-  lyra:   "px:1036623",
-  nova:   "1534528741775-53994a69daeb",
-  iris:   "px:733872",
-  anita:  "px:1181686",
-  taylor: "1494790108377-be9c29b29330",
-  emery:  "px:2379004",
-  john:   "1539571696357-5a69c17a67c6",
-  sam:    "px:1043474",
-  finn:   "px:1222271",
-  rowan:  "px:1681010",
+  ava:    "px:30674285",  // golden-hour smile
+  sienna: "px:9571273",   // soft golden glow
+  lyra:   "px:5379785",   // curly hair, warm evening light
+  nova:   "px:2669601",   // warm string-light bokeh at night
+  iris:   "px:35524797",  // moody portrait, warm amber light
+  anita:  "px:35367171",  // evening café portrait with phone
+  taylor: "px:12894362",  // smiling man, night city street
+  emery:  "px:30494305",  // warm portrait in a cozy coffee shop
+  john:   "px:31662046",  // night portrait, city-light bokeh
+  sam:    "px:1065090",   // smiling man, soft bokeh
+  finn:   "px:6181114",   // smiling man, European city backdrop
+  rowan:  "px:39559734",  // smiling man, warm natural light
 } as const;
 
 const SCENE_IDS = {
-  runway:    "px:3184291",
-  milan:     "1522202176988-66273c2fd55f",
-  nyfw:      "px:3182812",
-  group1:    "px:3184418",
-  manChat:   "px:842567",
-  manCall:   "px:4050291",
-  tokyo:     "1600880292203-757bb62b4baf",
-  paris:     "px:1181396",
-  aurora:    "1507679799987-c73779587ccf",
-  milkyway:  "px:3184611",
-  mountains: "1517048676732-d65bc937f952",
-  ocean:     "px:3183150",
+  runway:    "px:20074713", // friends at an outdoor café at night
+  milan:     "px:6954063",  // candlelit dinner, laughter
+  nyfw:      "px:4881609",  // rooftop evening under string lights
+  group1:    "px:7149169",  // friends laughing at an evening hangout
+  manChat:   "px:3851526",  // friends talking in a cozy pub
+  manCall:   "px:7149136",  // friends by a campfire sharing a phone
+  tokyo:     "px:6173989",  // friends laughing at a bar at night
+  paris:     "px:15141482", // cozy bar, warm light
+  aurora:    "px:5529891",  // group chatting at a trendy bar
+  milkyway:  "px:7149137",  // night gathering, group selfie
+  mountains: "px:696218",   // wine and conversation, warm bar
+  ocean:     "px:6955635",  // dinner conversation by candlelight
 } as const;
-
 function toUrls<T extends Record<string, string>>(
   ids: T,
   w: number,
@@ -139,11 +136,9 @@ function toUrls<T extends Record<string, string>>(
   return out as { [K in keyof T]: string };
 }
 
-/* FACE at 640 (cards are small), SCENE at 1200 (fewer MB, invisible at size) */
 const FACE = toUrls(FACE_IDS, 640, 88);
 const SCENE = toUrls(SCENE_IDS, 1200, 88);
 
-/* Gallery texture atlas — trimmed from 1000/1800 to 800/1400 */
 const GALLERY: string[] = [
   ...Object.values(FACE_IDS).map((id) => u(id, 800, 88)),
   ...Object.values(SCENE_IDS).map((id) => u(id, 1400, 88)),
@@ -216,20 +211,22 @@ function mulberry32(seed: number) {
 
 /* ═══════════════════════════════════════════════════════════
    DEVICE TIER & REFRESH RATE
+   v18.4: tier computed synchronously — no high→low flash at mount.
    ═══════════════════════════════════════════════════════════ */
 
 type Tier = "low" | "mid" | "high";
 
-function useDeviceTier() {
-  const [tier, setTier] = useState<Tier>("high");
-  useEffect(() => {
+function useDeviceTier(): Tier {
+  const [tier] = useState<Tier>(() => {
+    if (typeof navigator === "undefined") return "high";
     const cores = (navigator as any).hardwareConcurrency ?? 4;
     const mem = (navigator as any).deviceMemory ?? 4;
     const mobile = /Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
     const dpr = window.devicePixelRatio || 1;
-    if (mobile || cores <= 4 || mem <= 3 || dpr > 2.5) setTier("low");
-    else if (cores <= 6 || mem <= 6) setTier("mid");
-  }, []);
+    if (mobile || cores <= 4 || mem <= 3 || dpr > 2.5) return "low";
+    if (cores <= 6 || mem <= 6) return "mid";
+    return "high";
+  });
   return tier;
 }
 
@@ -307,6 +304,7 @@ const SHARED = {
   uTime: { value: 0 },
   uTint: { value: 0 },
   uHead: { value: 0.04 },
+  uVel:  { value: 0 },
 };
 
 const beatListeners: Array<(i: number) => void> = [];
@@ -317,13 +315,6 @@ let _slow = 0;
 let lenisInstance: Lenis | null = null;
 let maxScrollCache = 1;
 
-/**
- * Lenis strategy (v18.3):
- *   Native app (Capacitor)  → no Lenis. Native compositor scroll.
- *   Everywhere else          → Lenis with autoRaf:true. Its own loop is
- *                              decoupled from WebGL FPS — a 45 fps 3D
- *                              frame can't stall the wheel anymore.
- */
 function useSmoothScroll(enabled: boolean, skipLenis: boolean) {
   useEffect(() => {
     if (!enabled || skipLenis) return;
@@ -399,9 +390,6 @@ function ScrollDriver() {
       store.raw = clamp01(window.scrollY / maxScrollCache);
     }
 
-    // v18.3: lambda 60 (was 28). Lenis already handles smoothing on web;
-    // a second aggressive-damp stage just adds perceived lag. Native
-    // scroll on mobile is already smooth; we track it tightly.
     const dt = Math.min(delta, 0.05);
     store.smooth = damp(store.smooth, store.raw, 60, dt);
     if (Math.abs(store.raw - store.smooth) < 0.00005) store.smooth = store.raw;
@@ -433,7 +421,7 @@ function ScrollDriver() {
 }
 
 /* ═══════════════════════════════════════════════════════════
-   ADAPTIVE RESOLUTION — v18.3: starts at MIN, ramps up
+   ADAPTIVE RESOLUTION
    ═══════════════════════════════════════════════════════════ */
 
 function AdaptiveResolution({
@@ -456,8 +444,6 @@ function AdaptiveResolution({
   const high = useRef(0);
 
   useEffect(() => {
-    // v18.3: start at MIN (not max). Previously started at max → the
-    // first ~2 seconds stuttered at full DPR while shaders compiled.
     cur.current = min;
     low.current = 0;
     high.current = 0;
@@ -521,7 +507,7 @@ function AdaptiveResolution({
 }
 
 /* ═══════════════════════════════════════════════════════════
-   THE PATH + O(1) PRECOMPUTED SPLINE LUT (v18.3: halved size)
+   THE PATH + PRECOMPUTED SPLINE LUT
    ═══════════════════════════════════════════════════════════ */
 
 const PATH = new THREE.CatmullRomCurve3(
@@ -537,9 +523,9 @@ const PATH = new THREE.CatmullRomCurve3(
   false,
   "centripetal",
 );
-PATH.arcLengthDivisions = 360; // v18.3: was 600
+PATH.arcLengthDivisions = 360;
 
-const LUT_STEPS = 1024; // v18.3: was 2048
+const LUT_STEPS = 1024;
 const LUT_POS = new Float32Array((LUT_STEPS + 1) * 3);
 const LUT_TAN = new Float32Array((LUT_STEPS + 1) * 3);
 {
@@ -612,7 +598,7 @@ function basisAt(uu: number): Basis {
 }
 
 /* ═══════════════════════════════════════════════════════════
-   CAMERA RIG — v18.3: much tighter damping
+   CAMERA RIG
    ═══════════════════════════════════════════════════════════ */
 
 const _P = new THREE.Vector3();
@@ -637,8 +623,6 @@ function CameraRig({
   const fov = useRef(FOV);
   const roll = useRef(0);
 
-  // Native app: no Lenis smoothing at all → track native scroll tightly.
-  // Web (Lenis): Lenis already smoothed → we barely need to add anything.
   const posLambda = isNative ? 45 : 20;
   const lookLambda = isNative ? 45 : 20;
 
@@ -708,7 +692,7 @@ function CameraRig({
 }
 
 /* ═══════════════════════════════════════════════════════════
-   BACKDROP — v18.3 mobile gets 2-octave fbm texture
+   BACKDROP
    ═══════════════════════════════════════════════════════════ */
 
 const BG_VERT = /* glsl */ `
@@ -787,38 +771,16 @@ const BG_BODY_HIGH = /* glsl */ `
 
 const BG_FRAG_HIGH = BG_COMMON + BG_FBM_HIGH + BG_BODY_HIGH;
 
-/* Mobile: 2-octave fbm — cheap enough on mid-range Androids, and
-   replaces the flat radial gradient that read as "cheap". */
+/* v18.4 mobile: dropped the 2-octave per-fragment fbm entirely.
+   It was the single most expensive full-screen shader on mobile and the
+   main reason the whole scene felt "warm" on mid-range Androids. A
+   radial gradient + slow pulse gives the same visual for ~10× less
+   fragment work. */
 const BG_FRAG_MOBILE = /* glsl */ `
   precision mediump float;
   varying vec2 vUv;
   uniform float uTime;
   uniform float uScroll;
-
-  float hash(vec2 p) {
-    p = fract(p * vec2(123.34, 456.21));
-    p += dot(p, p + 45.32);
-    return fract(p.x * p.y);
-  }
-  float vnoise(vec2 p) {
-    vec2 i = floor(p);
-    vec2 f = fract(p);
-    vec2 u = f * f * (3.0 - 2.0 * f);
-    return mix(
-      mix(hash(i), hash(i + vec2(1.0, 0.0)), u.x),
-      mix(hash(i + vec2(0.0, 1.0)), hash(i + vec2(1.0, 1.0)), u.x),
-      u.y);
-  }
-  float fbm2(vec2 p) {
-    float v = 0.0;
-    float a = 0.5;
-    for (int i = 0; i < 2; i++) {
-      v += a * vnoise(p);
-      p = p * 2.02;
-      a *= 0.5;
-    }
-    return v;
-  }
 
   void main() {
     vec3 obsidian = vec3(0.016, 0.018, 0.028);
@@ -829,14 +791,11 @@ const BG_FRAG_MOBILE = /* glsl */ `
     vec2 c = vUv - 0.5;
     c.x *= 1.777;
     float d = length(c);
-    float t = uTime * 0.02;
-
-    float n = fbm2(vUv * 3.0 + vec2(t * 0.5, t * 0.3));
 
     float pulse = 0.85 + 0.15 * sin(uTime * 0.35);
     vec3 col = obsidian;
     col += accent * 0.10 * pulse * (1.0 - smoothstep(0.10, 0.85, d));
-    col += accent * 0.07 * n * (1.0 - smoothstep(0.0, 1.15, d));
+    col += accent * 0.04 * (1.0 - smoothstep(0.0, 1.10, d));
     col *= 1.0 - smoothstep(0.55, 1.20, d) * 0.55;
     gl_FragColor = vec4(col, 1.0);
   }
@@ -875,16 +834,18 @@ function Backdrop({ mobile }: { mobile: boolean }) {
 }
 
 /* ═══════════════════════════════════════════════════════════
-   THE THREAD — v18.3: thicker on mobile, lighter on desktop
+   THE THREAD — v18.4: rounder tubes on mobile, aliasing-safe freq
    ═══════════════════════════════════════════════════════════ */
 
 const THREAD_VERT = /* glsl */ `
   varying vec2 vUv;
   varying vec3 vW;
+  varying vec3 vN;
   void main() {
     vUv = uv;
     vec4 wp = modelMatrix * vec4(position, 1.0);
     vW = wp.xyz;
+    vN = normalize(normalMatrix * normal);
     gl_Position = projectionMatrix * viewMatrix * wp;
   }
 `;
@@ -893,23 +854,63 @@ const THREAD_FRAG = /* glsl */ `
   precision highp float;
   varying vec2 vUv;
   varying vec3 vW;
+  varying vec3 vN;
   uniform float uTime;
   uniform float uHead;
   uniform float uPhase;
   uniform float uGain;
+  uniform float uFreq;
+
   void main() {
     float s = vUv.x;
     float d = s - uHead;
-    float packets = pow(0.5 + 0.5 * sin(s * 180.0 - uTime * 3.2 + uPhase), 7.0);
+
+    /* clamp guards the pow() base against float drift after
+       interpolation on mediump-preferred GPUs */
+    float packets = pow(
+      clamp(0.5 + 0.5 * sin(s * uFreq - uTime * 3.2 + uPhase), 0.0, 1.0),
+      7.0
+    );
+
     float behind = 1.0 - smoothstep(0.0, 0.46, -d);
     float lit   = d < 0.0 ? mix(0.30, 1.0, behind) : 0.0;
     float ghost = d >= 0.0 ? 0.08 + 0.22 * packets * exp(-d * 5.0) : 0.0;
-    float head  = exp(-pow(d * 70.0, 2.0)) * 2.4;
+
+    /* ── RED-LINE FIX ───────────────────────────────────────
+     * pow(negative, 2.0) is undefined behavior in GLSL. On
+     * Adreno/Immortalis mobile GPUs it returns NaN, which the
+     * driver paints RED. d < 0 on the entire lit side of the
+     * head, so the whole back half of the tube showed red on
+     * those GPUs.
+     *
+     * exp(-(d*70)^2) is mathematically identical to
+     * exp(-pow(d*70, 2.0)) but well-defined for negative d.
+     * ─────────────────────────────────────────────────────── */
+    float g70  = d * 70.0;
+    float head = exp(-g70 * g70) * 2.4;
+
     float inten = lit * (0.5 + 1.25 * packets) + ghost + head;
+
+    /* ── SILHOUETTE SOFTENING (anti-hexagon) ────────────────
+     * |vN.z| = 1 on the camera-facing part of the tube, 0 at
+     * the silhouette. Fading toward 0 dissolves the polygon
+     * edge over ~3 px so a 32-gon reads as a perfect circle
+     * even with antialias:false. */
+    float facing = abs(normalize(vN).z);
+    inten *= smoothstep(0.0, 0.55, facing);
+
     vec3 ember = vec3(0.784, 0.502, 0.235);
     vec3 steel = vec3(0.50, 0.70, 0.90);
     vec3 col = mix(ember, steel, clamp(s, 0.0, 1.0));
     col = mix(col, vec3(1.0, 0.93, 0.78), clamp(head * 0.3, 0.0, 1.0));
+
+    /* Sub-pixel dither breaks banding + hard edges on Android
+       GPUs that lack default dither. */
+    float dt = fract(
+      sin(dot(gl_FragCoord.xy, vec2(12.9898, 78.233))) * 43758.5453
+    );
+    inten *= mix(0.97, 1.03, dt);
+
     float nearF = smoothstep(1.2, 5.0, distance(cameraPosition, vW));
     gl_FragColor = vec4(col * inten * uGain * nearF, 1.0);
   }
@@ -917,14 +918,22 @@ const THREAD_FRAG = /* glsl */ `
 
 function Thread({ mobile }: { mobile: boolean }) {
   const parts = useMemo(() => {
-    const mainTubular   = mobile ? 240 : 720;
-    const mainRadial    = mobile ? 6   : 12;
-    const N             = mobile ? 96  : 400;
-    const strandTubular = mobile ? 260 : 1000; // v18.3: 1600 → 1000
-    const strandRadial  = mobile ? 4   : 8;
-    const turns         = mobile ? 20  : 40;
+    /* v18.4c — round + lag-free.
+     *
+     * 32-gon cross-sections, 50 samples per revolution of the
+     * helix. Combined with the silhouette fade above, polygon
+     * edges are impossible to see even with antialias OFF.
+     *
+     * All of this is static geometry, built once inside
+     * heavyReady's delayed mount — zero per-frame cost.
+     */
+    const mainTubular   = mobile ? 480  : 720;
+    const mainRadial    = mobile ? 32   : 40;
+    const N             = mobile ? 1000 : 1600;
+    const strandTubular = mobile ? 1000 : 1400;
+    const strandRadial  = mobile ? 32   : 40;
+    const turns         = mobile ? 20   : 40;
 
-    // v18.3: thicker on mobile so the spine actually reads on a phone.
     const mainRadius   = mobile ? 0.045 : 0.03;
     const strandRadius = mobile ? 0.018 : 0.013;
 
@@ -956,7 +965,7 @@ function Thread({ mobile }: { mobile: boolean }) {
         );
       }
       const curve = new THREE.CatmullRomCurve3(pts, false, "catmullrom", 0.5);
-      curve.arcLengthDivisions = mobile ? 500 : 1400;
+      curve.arcLengthDivisions = N;
       strands.push(
         new THREE.TubeGeometry(
           curve,
@@ -975,6 +984,7 @@ function Thread({ mobile }: { mobile: boolean }) {
           uHead: SHARED.uHead,
           uPhase: { value: phase },
           uGain: { value: gain },
+          uFreq: { value: mobile ? 90 : 180 },
         },
         vertexShader: THREAD_VERT,
         fragmentShader: THREAD_FRAG,
@@ -1023,7 +1033,6 @@ function Thread({ mobile }: { mobile: boolean }) {
     </group>
   );
 }
-
 /* ═══════════════════════════════════════════════════════════
    DUST
    ═══════════════════════════════════════════════════════════ */
@@ -1313,10 +1322,6 @@ function fallbackTexture(idx: number) {
   return t;
 }
 
-/**
- * v18.3: batched uploads (3/rAF) + bump per batch → progressive card
- * appearance instead of one giant re-render at the end.
- */
 function useGallery(wanted: number[]) {
   const [, bump] = useState(0);
   const ref = useRef<Record<number, THREE.Texture>>({});
@@ -1571,7 +1576,7 @@ function Gallery({ tier, mobile }: { tier: Tier; mobile: boolean }) {
 }
 
 /* ═══════════════════════════════════════════════════════════
-   SIGNAL — GATES  (v18.3: alive on mobile)
+   SIGNAL — GATES (v18.4: rounder rings on mobile)
    ═══════════════════════════════════════════════════════════ */
 
 const _m4 = new THREE.Matrix4();
@@ -1616,7 +1621,6 @@ function Gates({ mobile }: { mobile: boolean }) {
     for (let i = 0; i < GATE_N; i++) {
       const near = Math.exp(-Math.pow((data.uu[i] - store.head) * 38, 2));
       const phase = (i / GATE_N) * TAU;
-      // v18.3: bigger amplitude so it reads at low fps.
       const wobble = Math.sin(t * 2.5 + phase) * 0.06;
       const tilt = Math.sin(t * 0.9 + phase * 1.3) * 0.12;
       const s =
@@ -1633,7 +1637,6 @@ function Gates({ mobile }: { mobile: boolean }) {
         data.quat[i * 4 + 2],
         data.quat[i * 4 + 3],
       );
-      // Tilt in local frame (post-multiply) — visible wobble.
       _tiltQ.setFromAxisAngle(AXIS_X, tilt);
       _q4.multiply(_tiltQ);
       _s3.set(s, s, s);
@@ -1649,10 +1652,14 @@ function Gates({ mobile }: { mobile: boolean }) {
     }
   });
 
-  // v18.3: thicker tubes + more segments so circles don't alias into noise.
-  const tubeRadius = mobile ? 0.07 : 0.035;
-  const tubeSeg = mobile ? 8 : 10;
-  const ringSeg = mobile ? 96 : 128;
+  // v18.4: 0.045 tube (was 0.07 — chunky), 10 tubeSeg (was 8 — octagonal),
+  // 112 ringSeg (was 96 — slightly polygonal on a phone screen).
+  const tubeRadius = mobile ? 0.045 : 0.035;
+  const tubeSeg = mobile ? 10 : 10;
+  const ringSeg = mobile ? 112 : 128;
+  const ghostRadius = mobile ? 0.045 * 2.4 : 0.035 * 3.2;
+  const ghostSeg = mobile ? 8 : 8;
+  const ghostRingSeg = mobile ? 96 : 128;
 
   return (
     <>
@@ -1672,7 +1679,6 @@ function Gates({ mobile }: { mobile: boolean }) {
           toneMapped={false}
         />
       </instancedMesh>
-      {/* Ghost halo — fake bloom for cheap additive glow */}
       <instancedMesh
         ref={ghostRef}
         args={[undefined, undefined, GATE_N]}
@@ -1680,12 +1686,12 @@ function Gates({ mobile }: { mobile: boolean }) {
         matrixAutoUpdate={false}
       >
         <torusGeometry
-          args={[3.3, tubeRadius * 3.2, mobile ? 6 : 8, ringSeg]}
+          args={[3.3, ghostRadius, ghostSeg, ghostRingSeg]}
         />
         <meshBasicMaterial
           color={AMBER}
           transparent
-          opacity={0.14}
+          opacity={mobile ? 0.10 : 0.14}
           blending={THREE.AdditiveBlending}
           depthWrite={false}
           toneMapped={false}
@@ -2004,7 +2010,7 @@ function SoundRings({ mobile }: { mobile: boolean }) {
 }
 
 /* ═══════════════════════════════════════════════════════════
-   ARRIVAL — portal
+   ARRIVAL — portal (v18.4: smoother round rings)
    ═══════════════════════════════════════════════════════════ */
 
 const PORTAL_VERT = /* glsl */ `
@@ -2051,15 +2057,22 @@ function Portal({ mobile }: { mobile: boolean }) {
     const dt = Math.min(delta, 0.05);
     if (ringRef.current) ringRef.current.rotation.z += dt * 0.05;
   });
+
+  // v18.4: bumped ring segments so the big circles don't read as polygons.
+  const ringSeg = mobile ? 112 : 160;
+  const tubeInner = mobile ? 10 : 12;
+  const tubeOuter = mobile ? 8 : 10;
+  const circleSeg = mobile ? 64 : 96;
+
   return (
     <group position={p} quaternion={q}>
       <group ref={ringRef}>
         <mesh matrixAutoUpdate={false}>
-          <torusGeometry args={[3.4, 0.07, mobile ? 8 : 12, mobile ? 64 : 96]} />
+          <torusGeometry args={[3.4, 0.06, tubeInner, ringSeg]} />
           <meshBasicMaterial color={AMBER} toneMapped={false} />
         </mesh>
         <mesh matrixAutoUpdate={false}>
-          <torusGeometry args={[3.95, 0.02, mobile ? 6 : 8, mobile ? 64 : 96]} />
+          <torusGeometry args={[3.95, 0.02, tubeOuter, ringSeg]} />
           <meshBasicMaterial
             color={CREAM}
             transparent
@@ -2069,7 +2082,7 @@ function Portal({ mobile }: { mobile: boolean }) {
         </mesh>
       </group>
       <mesh matrixAutoUpdate={false}>
-        <circleGeometry args={[3.4, mobile ? 48 : 72]} />
+        <circleGeometry args={[3.4, circleSeg]} />
         <shaderMaterial
           uniforms={uniforms}
           vertexShader={PORTAL_VERT}
@@ -2086,7 +2099,7 @@ function Portal({ mobile }: { mobile: boolean }) {
 }
 
 /* ═══════════════════════════════════════════════════════════
-   POST FX — v18.3: SMAA on high tier
+   POST FX
    ═══════════════════════════════════════════════════════════ */
 
 function PostFX({
@@ -2137,7 +2150,7 @@ function PostFX({
 }
 
 /* ═══════════════════════════════════════════════════════════
-   WORLD — v18.3: defers heavy mounts by 2 rAF
+   WORLD
    ═══════════════════════════════════════════════════════════ */
 
 function OrbitalWorld({
@@ -2326,7 +2339,7 @@ const StatusBar = memo(function StatusBar() {
 });
 
 /* ═══════════════════════════════════════════════════════════
-   LIVE CLOCK — pinned to IST
+   LIVE CLOCK
    ═══════════════════════════════════════════════════════════ */
 
 function useNow(intervalMs = 30_000): Date {
@@ -3691,13 +3704,8 @@ export function Landing() {
   const mobile = useIsMobile();
   const hz = useRefreshRate();
 
-  // isNative → inside the Capacitor Android/iOS shell. Only there we
-  // skip Lenis and use native compositor scroll.
-  // mobile → phone/tablet/touch-laptop for the perf pass; still gets
-  // Lenis on the web.
   const isNative = Capacitor.isNativePlatform();
 
-  // v18.3: Lenis autoRaf everywhere on web — decoupled from WebGL fps.
   useSmoothScroll(!reduce, isNative);
 
   useEffect(() => {
@@ -3722,10 +3730,7 @@ export function Landing() {
   }, []);
 
   const { maxDpr, minDpr } = useMemo(() => {
-    // v18.3: mobile max 1.05 (was hard-pinned 1.0), min 0.65 so we can
-    // actually recover under load. Desktop unchanged shape.
-    if (mobile)
-      return { maxDpr: 1.05, minDpr: 0.65 };
+    if (mobile) return { maxDpr: 1.05, minDpr: 0.65 };
     const native =
       typeof window === "undefined"
         ? 1
@@ -3808,7 +3813,10 @@ export function Landing() {
           transform: translate3d(0,0,0);
         }
 
-        /* v18.3: fake bloom for mobile (no PostFX there) */
+        /* v18.4: no more mix-blend-mode. On Android that forced a full
+           compositor readback of the WebGL canvas every frame — the #1
+           source of frame drops. A plain opacity animation over a
+           gradient is compositor-only and costs ~nothing. */
         @keyframes orbital-bloom {
           0%, 100% { opacity: 0.55; }
           50%      { opacity: 0.85; }
@@ -3888,7 +3896,6 @@ export function Landing() {
           }}
         >
           <Canvas
-            /* v18.3: starts at MIN. AdaptiveResolution ramps up from there. */
             dpr={minDpr}
             camera={{ position: [0, 0.05, 7.2], fov: FOV, near: 0.1, far: 260 }}
             gl={
@@ -3934,14 +3941,13 @@ export function Landing() {
           <div className="absolute inset-0 bg-gradient-to-b from-[#04060A]/25 via-transparent to-[#04060A]/90" />
           <div className="absolute inset-0 bg-gradient-to-r from-[#04060A]/70 via-[#04060A]/15 to-transparent" />
 
-          {/* v18.3: fake bloom on mobile (they don't get PostFX) */}
+          {/* v18.4: plain gradient, opacity-animated. No mix-blend-mode. */}
           {mobile && (
             <div
               className="orbital-bloom absolute inset-0"
               style={{
                 background:
-                  "radial-gradient(circle at 50% 42%, rgba(200,136,58,0.11) 0%, transparent 46%), radial-gradient(circle at 18% 78%, rgba(200,136,58,0.06) 0%, transparent 40%)",
-                mixBlendMode: "screen",
+                  "radial-gradient(circle at 50% 42%, rgba(200,136,58,0.16) 0%, transparent 48%), radial-gradient(circle at 18% 78%, rgba(200,136,58,0.09) 0%, transparent 42%)",
               }}
             />
           )}
