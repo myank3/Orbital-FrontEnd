@@ -19,3 +19,5 @@ android/keystore.properties
 
 # Kotlin Cache
 android/.kotlin/
+
+**/google-services.json
