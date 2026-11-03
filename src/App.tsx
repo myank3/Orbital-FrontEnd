@@ -12,6 +12,7 @@ import {
   useNavigate,
 } from 'react-router-dom';
 import { Toaster } from 'sonner';
+import { Analytics } from '@vercel/analytics/react';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { CallProvider } from './context/CallContext';
 import { ScrollToTop } from './components/ScrollToTop';
@@ -291,6 +292,7 @@ export default function App() {
               },
             }}
           />
+          <Analytics />
         </CallProvider>
       </AuthProvider>
     </BrowserRouter>
