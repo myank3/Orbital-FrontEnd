@@ -3861,7 +3861,6 @@ export function DirectMessagePane(): React.JSX.Element {
           const resolvedName =
             sig.senderName ||
             senderFriend?.displayName ||
-            senderFriend?.email?.split('@')[0] ||
             payload.senderId.slice(0, 8);
           setDockSession({
             transferId: sig.transferId,
