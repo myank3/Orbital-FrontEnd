@@ -3749,9 +3749,9 @@ export function DirectMessagePane(): React.JSX.Element {
 
     const LANE_COUNT = 4;
     const lanes = Array.from({ length: LANE_COUNT }, (_, idx) => {
-      const ch = pc.createDataChannel(`orbital-dock-lane-${idx}`, { ordered: false });
+      const ch = pc.createDataChannel(`orbital-dock-lane-${idx}`, { ordered: true });
       ch.binaryType = 'arraybuffer';
-      ch.bufferedAmountLowThreshold = 262144;
+      ch.bufferedAmountLowThreshold = 65536;
       return ch;
     });
     const dc = lanes[0];
@@ -3783,8 +3783,8 @@ export function DirectMessagePane(): React.JSX.Element {
       if (!f || !reader) return;
 
       setDockSession((prev) => (prev ? { ...prev, status: 'transferring' } : null));
-      const FRAME = 65520;
-      const HIGH_WATER = 1048576;
+      const FRAME = 16376;
+      const HIGH_WATER = 131072;
       let offset = 0;
       let lastTick = performance.now();
       let lastNetBytes = 0;
