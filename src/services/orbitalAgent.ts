@@ -658,6 +658,7 @@ function similarityScore(a: string, b: string): number {
 }
 
 function scoreFriendMatch(q: string, f: FriendDto): number {
+  if (q === f.userId.toLowerCase()) return 1.05;
   const firstName = f.displayName.split(/\s+/)[0] ?? '';
   return Math.max(
     similarityScore(q, f.displayName),
@@ -681,30 +682,42 @@ function findMatchingFriends(query: string, friends: FriendDto[]): FriendDto[] {
   return (tied.length > 1 ? tied : scored.slice(0, 1)).map((x) => x.friend);
 }
 
+function formatFriendChip(
+  f: FriendDto,
+  promptText: string,
+  forceHandle = false,
+): AgentQuickAction {
+  const online = presenceStore.isOnline(f.userId) || Boolean(f.isOnline);
+  const rawHandle = (f.fullHandle || f.handle || '').trim();
+  const handleText = rawHandle ? `@${rawHandle.replace(/^@/, '')}` : `#${f.userId.slice(0, 4)}`;
+  return {
+    label: forceHandle ? `${f.displayName} (${handleText})` : f.displayName,
+    subtitle: `${handleText} · ${online ? 'Online' : 'Offline'}`,
+    avatarUrl: f.avatarUrl,
+    prompt: promptText,
+  };
+}
+
 function buildFriendDisambiguationResult(
   matches: FriendDto[],
-  actionVerb: 'call' | 'message',
+  actionVerb: 'call' | 'message' | 'schedule',
   extraBody?: string,
 ): AgentResult {
   const chips: AgentQuickAction[] = matches.slice(0, 5).map((f) => {
-    const online = presenceStore.isOnline(f.userId) || Boolean(f.isOnline);
-    const handleText = f.fullHandle || (f.handle ? `@${f.handle.replace(/^@/, '')}` : '');
+    const uniqueIdentifier = (f.fullHandle || f.handle || f.userId).trim();
     const promptText =
       actionVerb === 'call'
-        ? `call ${f.fullHandle || f.displayName}`
-        : extraBody
-          ? `message ${f.fullHandle || f.displayName} ${extraBody}`
-          : `message ${f.fullHandle || f.displayName}`;
-    return {
-      label: f.displayName,
-      subtitle: `${handleText ? `${handleText} · ` : ''}${online ? 'Online' : 'Offline'}`,
-      avatarUrl: f.avatarUrl,
-      prompt: promptText,
-    };
+        ? `call ${uniqueIdentifier}`
+        : actionVerb === 'schedule'
+          ? `schedule a message to ${uniqueIdentifier}`
+          : extraBody
+            ? `message ${uniqueIdentifier} ${extraBody}`
+            : `message ${uniqueIdentifier}`;
+    return formatFriendChip(f, promptText, true);
   });
 
   return {
-    reply: `Found ${matches.length} people named "${matches[0].displayName.split(' ')[0]}". Who do you want to ${actionVerb}?`,
+    reply: `Found ${matches.length} people named "${matches[0].displayName.split(' ')[0]}". Which one?`,
     quickActions: chips,
     pendingContext: null,
     actionTaken: false,
@@ -850,42 +863,41 @@ async function tryZeroTokenIntent(
   const lower = cleaned.toLowerCase();
   const displayUser = handlers.userName?.trim() || 'there';
 
-  // 0A. Greeting by username
-  if (/^(?:hi|hello|hey|yo|namaste|good\s+(?:morning|afternoon|evening))$/i.test(lower)) {
-    return {
-      reply: `Hey ${displayUser}! How can I help you in Orbital today?`,
-      quickActions: [
-        { label: 'Who is online', prompt: 'who is online' },
-        { label: 'Send a message', prefill: 'message ' },
-        { label: 'Watch a movie', prompt: 'I want to watch a movie' },
-      ],
-      pendingContext: null,
-      actionTaken: false,
-    };
+  // 1. Global cancel ("cancel", "cancel it", "cancel schedule message", "nevermind", "stop")
+  if (/^(?:cancel|clear|delete|remove)\s+(?:all\s+)?(?:schedul(?:e|ed)\s+)?(?:messages?|msgs?|tasks?|schedules?)$/i.test(lower)) {
+    saveScheduledMessages(handlers.currentUserId, []);
+    pendingScheduleDraft = null;
+    pendingMessageTarget = null;
+    return { reply: 'Cancelled all scheduled messages.', pendingContext: null, actionTaken: true };
   }
 
-  // 0B. Watch a movie / cinema intent (avoid hard refusal on movie requests)
-  if (/\b(?:watch\s+(?:a\s+)?movie|watch\s+film|cinema|chalachitra)\b/i.test(lower)) {
-    return {
-      reply: `Hey ${displayUser}, movie playback isn't built into the chat thread directly—want to open Media or jump to Chalachitra?`,
-      quickActions: [
-        { label: 'Open Media', path: '/app/notifications' },
-        { label: 'Open Orbit', path: '/app/orbit' },
-        { label: 'Open Chalachitra', path: 'https://orbitalhq.vercel.app' },
-      ],
-      pendingContext: null,
-      actionTaken: false,
-    };
+  if (/^(?:cancel(?:\s+(?:it|that|this))?|nevermind|stop|forget\s+it)$/i.test(lower)) {
+    if (pendingScheduleDraft || pendingMessageTarget) {
+      pendingScheduleDraft = null;
+      pendingMessageTarget = null;
+      return { reply: 'Cancelled.', pendingContext: null, actionTaken: false };
+    }
+    const scheduled = getScheduledMessagesForUser(handlers.currentUserId);
+    if (scheduled.length > 0) {
+      const last = scheduled[scheduled.length - 1];
+      cancelScheduledMessageById(handlers.currentUserId, last.id);
+      return {
+        reply: `Cancelled scheduled message "${last.message}" to ${last.targetName}.`,
+        pendingContext: null,
+        actionTaken: true,
+      };
+    }
+    return { reply: 'Nothing active to cancel right now.', pendingContext: null, actionTaken: false };
   }
 
-  // 1. Open Media (/app/notifications)
+  // 2. Open Media (/app/notifications)
   if (/^(?:show\s+(?:me\s+)?|take\s+me\s+to\s+|open\s+|go\s+to\s+)?media(?:\s+(?:gallery|files|photos|tab|page))?$/i.test(lower)) {
     handlers.navigate('/app/notifications');
     return { reply: 'Opened Media.', pendingContext: null, actionTaken: true };
   }
 
-  // 2. List or cancel scheduled messages
-  if (/^(?:show|list|view|my)\s+(?:scheduled\s+)?(?:messages|msgs|tasks|schedules)$/i.test(lower)) {
+  // 3. List scheduled messages
+  if (/^(?:show|list|view|my)\s+(?:schedul(?:e|ed)\s+)?(?:messages?|msgs?|tasks?|schedules?)$/i.test(lower)) {
     const list = getScheduledMessagesForUser(handlers.currentUserId);
     if (list.length === 0) {
       return { reply: 'No scheduled messages right now.', pendingContext: null, actionTaken: false };
@@ -903,12 +915,6 @@ async function tryZeroTokenIntent(
     };
   }
 
-  if (/^(?:cancel|clear|delete|remove)\s+(?:all\s+)?(?:scheduled\s+)?(?:messages|msgs|tasks|schedules)$/i.test(lower)) {
-    saveScheduledMessages(handlers.currentUserId, []);
-    pendingScheduleDraft = null;
-    return { reply: 'Cancelled all scheduled messages.', pendingContext: null, actionTaken: true };
-  }
-
   // 3. Multi-turn message scheduling ("schedule a message" -> who -> what -> when)
   if (pendingScheduleDraft) {
     if (/^(?:cancel|nevermind|stop|forget it)$/i.test(lower)) {
@@ -917,12 +923,26 @@ async function tryZeroTokenIntent(
     }
 
     if (pendingScheduleDraft.step === 'awaiting_who') {
-      const friend = matchFriend(cleaned, friends);
+      const friendMatches = findMatchingFriends(cleaned, friends);
+      const friend = friendMatches[0];
       const group = matchGroup(cleaned, groups);
+      if (friendMatches.length > 1 && !group) {
+        pendingScheduleDraft = null;
+        return buildFriendDisambiguationResult(friendMatches, 'schedule');
+      }
       if (!friend && !group) {
+        const nameCounts = new Map<string, number>();
+        for (const f of friends) {
+          const key = f.displayName.trim().toLowerCase();
+          nameCounts.set(key, (nameCounts.get(key) ?? 0) + 1);
+        }
         return {
           reply: 'Who do you want to send the scheduled message to?',
-          quickActions: friends.slice(0, 3).map((f) => ({ label: f.displayName.split(' ')[0], prompt: f.displayName })),
+          quickActions: friends.slice(0, 4).map((f) => {
+            const isDup = (nameCounts.get(f.displayName.trim().toLowerCase()) ?? 0) > 1;
+            const uid = (f.fullHandle || f.handle || f.userId).trim();
+            return formatFriendChip(f, uid, isDup);
+          }),
           pendingContext: 'Scheduling · Pick recipient',
           actionTaken: false,
         };
@@ -940,6 +960,12 @@ async function tryZeroTokenIntent(
     }
 
     if (pendingScheduleDraft.step === 'awaiting_body' && pendingScheduleDraft.target) {
+      if (/^(?:(?:make\s+a\s+)?(?:call|video\s+call|audio\s+call|voice\s+call)|(?:sch?edule|send)\s+(?:a\s+)?(?:message|msg|text|dm))\b/i.test(lower)) {
+        pendingScheduleDraft = null;
+      }
+    }
+
+    if (pendingScheduleDraft && pendingScheduleDraft.step === 'awaiting_body' && pendingScheduleDraft.target) {
       const msgBody = cleaned.replace(/^(?:send|say|tell|saying)\s+/i, '').trim();
       if (!msgBody) {
         const label =
@@ -1023,9 +1049,18 @@ async function tryZeroTokenIntent(
   if (/^(?:sch?edule|add|set|create)\s+(?:a\s+)?(?:new\s+)?(?:message|msg|task)$/i.test(lower)) {
     pendingMessageTarget = null;
     pendingScheduleDraft = { step: 'awaiting_who' };
+    const nameCounts = new Map<string, number>();
+    for (const f of friends) {
+      const key = f.displayName.trim().toLowerCase();
+      nameCounts.set(key, (nameCounts.get(key) ?? 0) + 1);
+    }
     return {
       reply: 'Who do you want to schedule a message to?',
-      quickActions: friends.slice(0, 3).map((f) => ({ label: f.displayName.split(' ')[0], prompt: f.displayName })),
+      quickActions: friends.slice(0, 4).map((f) => {
+        const isDup = (nameCounts.get(f.displayName.trim().toLowerCase()) ?? 0) > 1;
+        const uid = (f.fullHandle || f.handle || f.userId).trim();
+        return formatFriendChip(f, uid, isDup);
+      }),
       pendingContext: 'Scheduling · Pick recipient',
       actionTaken: false,
     };
@@ -1088,7 +1123,7 @@ async function tryZeroTokenIntent(
   if (
     pendingMessageTarget &&
     !/^(cancel|nevermind|stop|forget it)$/i.test(lower) &&
-    !/^(call|video call|open|go to|settings|who is online|online|pulse)\b/i.test(lower)
+    !/^(call|video call|open|go to|settings|who is online|online|pulse|sch?edule\s+(?:a\s+)?message|send\s+(?:a\s+)?message)\b/i.test(lower)
   ) {
     const target = pendingMessageTarget;
     const label = target.kind === 'group' ? `#${target.name}` : target.name;
@@ -1179,12 +1214,47 @@ async function tryZeroTokenIntent(
     if (lastTargetByUser) {
       return askForMessageBody(lastTargetByUser);
     }
-    const chips: AgentQuickAction[] = friends
-      .slice(0, 3)
-      .map((f) => ({ label: f.displayName.split(' ')[0], prompt: `message ${f.displayName}` }));
+    const nameCounts = new Map<string, number>();
+    for (const f of friends) {
+      const key = f.displayName.trim().toLowerCase();
+      nameCounts.set(key, (nameCounts.get(key) ?? 0) + 1);
+    }
+    const chips: AgentQuickAction[] = friends.slice(0, 4).map((f) => {
+      const isDup = (nameCounts.get(f.displayName.trim().toLowerCase()) ?? 0) > 1;
+      const uid = (f.fullHandle || f.handle || f.userId).trim();
+      return formatFriendChip(f, `message ${uid}`, isDup);
+    });
     return {
       reply: 'Who should I send a message to?',
       quickActions: chips,
+      pendingContext: null,
+      actionTaken: false,
+    };
+  }
+
+  // 9B. Standalone greeting (only when NOT in the middle of writing/scheduling a message)
+  if (/^(?:hi|hello|hey|yo|namaste|good\s+(?:morning|afternoon|evening))$/i.test(lower)) {
+    return {
+      reply: `Hey ${displayUser}! How can I help you in Orbital today?`,
+      quickActions: [
+        { label: 'Who is online', prompt: 'who is online' },
+        { label: 'Send a message', prefill: 'message ' },
+        { label: 'Watch a movie', prompt: 'I want to watch a movie' },
+      ],
+      pendingContext: null,
+      actionTaken: false,
+    };
+  }
+
+  // 9C. Watch a movie / cinema intent
+  if (/\b(?:watch\s+(?:a\s+)?movie|watch\s+film|cinema|chalachitra)\b/i.test(lower)) {
+    return {
+      reply: `Hey ${displayUser}, want to open Media or jump to Chalachitra to watch together?`,
+      quickActions: [
+        { label: 'Open Media', path: '/app/notifications' },
+        { label: 'Open Orbit', path: '/app/orbit' },
+        { label: 'Open Chalachitra', path: 'https://orbitalhq.vercel.app' },
+      ],
       pendingContext: null,
       actionTaken: false,
     };
@@ -1361,8 +1431,12 @@ async function tryZeroTokenIntent(
       return { reply: `${sent}: "${body}"`, pendingContext: null, actionTaken: true };
     }
 
-    const wholeFriend = matchFriend(rest, friends);
+    const wholeFriendMatches = findMatchingFriends(rest, friends);
+    const wholeFriend = wholeFriendMatches[0];
     const wholeGroup = matchGroup(rest, groups);
+    if (wholeFriendMatches.length > 1 && !wholeGroup) {
+      return buildFriendDisambiguationResult(wholeFriendMatches, 'message');
+    }
     if (wholeFriend && !wholeGroup) {
       return askForMessageBody({ kind: 'dm', id: wholeFriend.userId, name: wholeFriend.displayName });
     }
