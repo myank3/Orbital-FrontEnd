@@ -3751,7 +3751,7 @@ export function DirectMessagePane(): React.JSX.Element {
     const lanes = Array.from({ length: LANE_COUNT }, (_, idx) => {
       const ch = pc.createDataChannel(`orbital-dock-lane-${idx}`, { ordered: true });
       ch.binaryType = 'arraybuffer';
-      ch.bufferedAmountLowThreshold = 1048576;
+      ch.bufferedAmountLowThreshold = 131072;
       return ch;
     });
     const dc = lanes[0];
@@ -3783,11 +3783,25 @@ export function DirectMessagePane(): React.JSX.Element {
       if (!f || !reader) return;
 
       setDockSession((prev) => (prev ? { ...prev, status: 'transferring' } : null));
-      const FRAME = 65536;
-      const HIGH_WATER = 2097152;
+      const FRAME = 32768;
+      const HIGH_WATER = 262144;
       let offset = 0;
       let lastTick = performance.now();
-      let lastBytes = 0;
+      let lastNetBytes = 0;
+
+      const getBufferedTotal = () =>
+        activeLanes.reduce((sum, ch) => sum + (ch.readyState === 'open' ? ch.bufferedAmount : 0), 0);
+
+      const updateRealProgress = (force = false) => {
+        const now = performance.now();
+        if (!force && now - lastTick < 150) return;
+        const netSent = Math.max(0, Math.min(f.size, offset - getBufferedTotal()));
+        const dt = Math.max(0.001, (now - lastTick) / 1000);
+        const bps = Math.max(0, (netSent - lastNetBytes) / dt);
+        lastTick = now;
+        lastNetBytes = netSent;
+        setDockSession((prev) => (prev ? { ...prev, transferred: netSent, speedBps: bps } : null));
+      };
 
       const pickLowestBufferLane = (): RTCDataChannel | null => {
         let best: RTCDataChannel | null = null;
@@ -3814,7 +3828,7 @@ export function DirectMessagePane(): React.JSX.Element {
                 lane.removeEventListener('bufferedamountlow', finish);
                 resolve();
               };
-              const timer = window.setTimeout(finish, 120);
+              const timer = window.setTimeout(finish, 80);
               lane.addEventListener('bufferedamountlow', finish);
             });
           }
@@ -3826,14 +3840,7 @@ export function DirectMessagePane(): React.JSX.Element {
           lane.send(pkt);
           pos = end;
           offset += sliceLen;
-        }
-        const now = performance.now();
-        if (now - lastTick >= 150 || offset >= f.size) {
-          const dt = Math.max(0.001, (now - lastTick) / 1000);
-          const bps = (offset - lastBytes) / dt;
-          lastTick = now;
-          lastBytes = offset;
-          setDockSession((prev) => (prev ? { ...prev, transferred: Math.min(offset, f.size), speedBps: bps } : null));
+          updateRealProgress(false);
         }
       };
 
@@ -3851,13 +3858,12 @@ export function DirectMessagePane(): React.JSX.Element {
           await sendView(value);
         }
 
-        const drainDeadline = performance.now() + 30000;
-        while (
-          activeLanes.some((ch) => ch.readyState === 'open' && ch.bufferedAmount > 0) &&
-          performance.now() < drainDeadline
-        ) {
-          await new Promise<void>((r) => window.setTimeout(r, 50));
+        const drainDeadline = performance.now() + 60000;
+        while (getBufferedTotal() > 0 && performance.now() < drainDeadline) {
+          updateRealProgress(false);
+          await new Promise<void>((r) => window.setTimeout(r, 80));
         }
+        updateRealProgress(true);
         if (dc.readyState === 'open') {
           dc.send('__DOCK_EOF__');
         }
