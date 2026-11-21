@@ -441,8 +441,11 @@ function InterstellarDockIcon({ className = 'w-6 h-6', spinning = false }: { cla
   );
 }
 
+const DOCK_STORAGE_KEY = 'orbital_dock_incoming_v1';
+
 type DockSignal =
   | { type: 'dock-offer'; transferId: string; fileName: string; fileSize: number; fileType: string; sdp: string }
+  | { type: 'dock-reoffer'; transferId: string }
   | { type: 'dock-answer'; transferId: string; sdp: string }
   | { type: 'dock-ice'; transferId: string; candidate: RTCIceCandidateInit }
   | { type: 'dock-cancel'; transferId: string };
@@ -3385,7 +3388,16 @@ export function DirectMessagePane(): React.JSX.Element {
   const [targetUser, setTargetUser] = useState<UserProfileDto | null>(null);
 
   // Orbital Docking: Ultra-Fast Zero-RAM / Zero-Server P2P Airlock
-  const [dockSession, setDockSession] = useState<DockSession | null>(null);
+  const [dockSession, setDockSession] = useState<DockSession | null>(() => {
+    try {
+      const raw = sessionStorage.getItem(DOCK_STORAGE_KEY);
+      if (!raw) return null;
+      const saved = JSON.parse(raw) as DockSession;
+      return saved && saved.status === 'incoming' ? saved : null;
+    } catch {
+      return null;
+    }
+  });
   const dockInputRef = useRef<HTMLInputElement | null>(null);
   const dockPcRef = useRef<RTCPeerConnection | null>(null);
   const dockDcRef = useRef<RTCDataChannel | null>(null);
@@ -3399,6 +3411,7 @@ export function DirectMessagePane(): React.JSX.Element {
   friendsLookupRef.current = friends;
 
   const cleanupDock = useCallback(() => {
+    try { sessionStorage.removeItem(DOCK_STORAGE_KEY); } catch {}
     try { dockDcRef.current?.close(); } catch {}
     try { dockPcRef.current?.close(); } catch {}
     dockDcRef.current = null;
@@ -3408,7 +3421,46 @@ export function DirectMessagePane(): React.JSX.Element {
     dockIceQueueRef.current = [];
   }, []);
 
+  useEffect(() => {
+    try {
+      if (dockSession && dockSession.status === 'incoming') {
+        sessionStorage.setItem(DOCK_STORAGE_KEY, JSON.stringify(dockSession));
+      } else {
+        sessionStorage.removeItem(DOCK_STORAGE_KEY);
+      }
+    } catch {}
+  }, [dockSession]);
+
+  // If receiver refreshed while an incoming offer was active, ask sender for a fresh SDP offer
+  useEffect(() => {
+    if (dockSession?.status === 'incoming' && !dockPendingOfferRef.current) {
+      void sendDockSignal(dockSession.peerId, {
+        type: 'dock-reoffer',
+        transferId: dockSession.transferId,
+      });
+    }
+  }, [dockSession, sendDockSignal]);
+
   useEffect(() => () => cleanupDock(), [cleanupDock]);
+
+  useEffect(() => {
+    if (dockSession?.direction !== 'send' || dockSession.status !== 'offering') return;
+    const timer = window.setInterval(() => {
+      const cur = dockSessionRef.current;
+      const localSdp = dockPcRef.current?.localDescription?.sdp;
+      if (cur && cur.direction === 'send' && cur.status === 'offering' && localSdp) {
+        void sendDockSignal(cur.peerId, {
+          type: 'dock-offer',
+          transferId: cur.transferId,
+          fileName: cur.fileName,
+          fileSize: cur.fileSize,
+          fileType: cur.fileType,
+          sdp: localSdp,
+        });
+      }
+    }, 3000);
+    return () => window.clearInterval(timer);
+  }, [dockSession?.direction, dockSession?.status, sendDockSignal]);
 
   const sendDockSignal = useCallback(async (targetId: string, sig: DockSignal) => {
     try {
@@ -3579,7 +3631,14 @@ export function DirectMessagePane(): React.JSX.Element {
 
   const acceptDockReceive = useCallback(async () => {
     const pending = dockPendingOfferRef.current;
-    if (!pending) return;
+    if (!pending) {
+      const cur = dockSessionRef.current;
+      if (cur && cur.status === 'incoming') {
+        void sendDockSignal(cur.peerId, { type: 'dock-reoffer', transferId: cur.transferId });
+        toast.info('Re-syncing airlock with sender — tap Dock & Save again in 1s.');
+      }
+      return;
+    }
 
     let writable: { write: (data: ArrayBuffer) => Promise<void>; close: () => Promise<void> } | null = null;
     if (typeof window !== 'undefined' && 'showSaveFilePicker' in window) {
@@ -3760,6 +3819,19 @@ export function DirectMessagePane(): React.JSX.Element {
           }
           dockIceQueueRef.current = [];
           setDockSession((prev) => (prev ? { ...prev, status: 'connecting' } : null));
+        } else if (sig.type === 'dock-reoffer') {
+          const cur = dockSessionRef.current;
+          const localSdp = dockPcRef.current?.localDescription?.sdp;
+          if (cur && cur.direction === 'send' && cur.status === 'offering' && localSdp) {
+            void sendDockSignal(payload.senderId, {
+              type: 'dock-offer',
+              transferId: cur.transferId,
+              fileName: cur.fileName,
+              fileSize: cur.fileSize,
+              fileType: cur.fileType,
+              sdp: localSdp,
+            });
+          }
         } else if (sig.type === 'dock-cancel') {
           cleanupDock();
           setDockSession(null);
