@@ -3747,9 +3747,14 @@ export function DirectMessagePane(): React.JSX.Element {
       }
     };
 
-    const dc = pc.createDataChannel('orbital-docking-airlock', { ordered: true });
-    dc.binaryType = 'arraybuffer';
-    dc.bufferedAmountLowThreshold = isNativeAndroidApk() ? 524288 : 1048576;
+    const LANE_COUNT = 4;
+    const lanes = Array.from({ length: LANE_COUNT }, (_, idx) => {
+      const ch = pc.createDataChannel(`orbital-dock-lane-${idx}`, { ordered: true });
+      ch.binaryType = 'arraybuffer';
+      ch.bufferedAmountLowThreshold = 1048576;
+      return ch;
+    });
+    const dc = lanes[0];
     dockDcRef.current = dc;
 
     setDockSession({
@@ -3769,47 +3774,58 @@ export function DirectMessagePane(): React.JSX.Element {
     dc.onopen = async () => {
       if (startedSend) return;
       startedSend = true;
+      await new Promise<void>((r) => window.setTimeout(r, 200));
+      const activeLanes = lanes.filter((c) => c.readyState === 'open');
+      if (activeLanes.length === 0) return;
+
       const f = dockSendFileRef.current;
-      const nativeAndroid = isNativeAndroidApk();
       const reader = dockStreamReaderRef.current;
-      if (!f || (!nativeAndroid && !reader)) return;
+      if (!f || !reader) return;
 
       setDockSession((prev) => (prev ? { ...prev, status: 'transferring' } : null));
-      const FRAME = nativeAndroid ? 16384 : 65536;
-      const HIGH_WATER = nativeAndroid ? 1048576 : 4194304;
+      const FRAME = 65536;
+      const HIGH_WATER = 2097152;
       let offset = 0;
       let lastTick = performance.now();
       let lastBytes = 0;
-      let framesSinceYield = 0;
+
+      const pickLowestBufferLane = (): RTCDataChannel | null => {
+        let best: RTCDataChannel | null = null;
+        for (const ch of activeLanes) {
+          if (ch.readyState === 'open' && (!best || ch.bufferedAmount < best.bufferedAmount)) {
+            best = ch;
+          }
+        }
+        return best;
+      };
 
       const sendView = async (blockView: Uint8Array) => {
         let pos = 0;
         while (pos < blockView.byteLength) {
-          if (dc.readyState !== 'open') return;
-          if (dc.bufferedAmount > HIGH_WATER) {
+          const lane = pickLowestBufferLane();
+          if (!lane) return;
+          if (lane.bufferedAmount > HIGH_WATER) {
             await new Promise<void>((resolve) => {
               let doneWait = false;
               const finish = () => {
                 if (doneWait) return;
                 doneWait = true;
                 window.clearTimeout(timer);
-                dc.removeEventListener('bufferedamountlow', finish);
+                lane.removeEventListener('bufferedamountlow', finish);
                 resolve();
               };
-              const timer = window.setTimeout(finish, 150);
-              dc.addEventListener('bufferedamountlow', finish);
+              const timer = window.setTimeout(finish, 120);
+              lane.addEventListener('bufferedamountlow', finish);
             });
           }
           const end = Math.min(pos + FRAME, blockView.byteLength);
           const sliceLen = end - pos;
-          dc.send(new Uint8Array(blockView.subarray(pos, end)));
+          const pkt = new Uint8Array(8 + sliceLen);
+          new DataView(pkt.buffer).setFloat64(0, offset, true);
+          pkt.set(blockView.subarray(pos, end), 8);
+          lane.send(pkt);
           pos = end;
           offset += sliceLen;
-          framesSinceYield++;
-          if (nativeAndroid && framesSinceYield >= 32) {
-            framesSinceYield = 0;
-            await yieldMicrotaskAndroid();
-          }
         }
         const now = performance.now();
         if (now - lastTick >= 150 || offset >= f.size) {
@@ -3828,29 +3844,19 @@ export function DirectMessagePane(): React.JSX.Element {
           await sendView(firstView);
         }
 
-        if (nativeAndroid) {
-          const SLICE_BLOCK = 1048576; // 1 MB direct file.slice reads bypass Android content:// stream hangs
-          while (offset < f.size) {
-            if (dc.readyState !== 'open') return;
-            const nextEnd = Math.min(offset + SLICE_BLOCK, f.size);
-            const buf = await f.slice(offset, nextEnd).arrayBuffer();
-            if (buf.byteLength === 0) break;
-            await sendView(new Uint8Array(buf));
-          }
-        } else if (reader) {
-          while (offset < f.size) {
-            if (dc.readyState !== 'open') return;
-            const { done, value } = await reader.read();
-            if (done || !value) break;
-            await sendView(value);
-          }
+        while (offset < f.size) {
+          if (!pickLowestBufferLane()) return;
+          const { done, value } = await reader.read();
+          if (done || !value) break;
+          await sendView(value);
         }
 
-        if (nativeAndroid) {
-          const drainDeadline = performance.now() + 30000;
-          while (dc.readyState === 'open' && dc.bufferedAmount > 0 && performance.now() < drainDeadline) {
-            await new Promise<void>((r) => window.setTimeout(r, 80));
-          }
+        const drainDeadline = performance.now() + 30000;
+        while (
+          activeLanes.some((ch) => ch.readyState === 'open' && ch.bufferedAmount > 0) &&
+          performance.now() < drainDeadline
+        ) {
+          await new Promise<void>((r) => window.setTimeout(r, 50));
         }
         if (dc.readyState === 'open') {
           dc.send('__DOCK_EOF__');
@@ -3860,12 +3866,11 @@ export function DirectMessagePane(): React.JSX.Element {
         setTimeout(() => {
           cleanupDock();
           setDockSession((prev) => (prev?.transferId === transferId ? null : prev));
-        }, nativeAndroid ? 8000 : 2200);
+        }, 2200);
       } catch (err) {
         setDockSession((prev) => (prev ? { ...prev, status: 'error', error: String(err) } : null));
       }
     };
-
     const offer = await pc.createOffer();
     await pc.setLocalDescription(offer);
     await sendDockSignal(userId, {
@@ -3944,9 +3949,13 @@ export function DirectMessagePane(): React.JSX.Element {
           rxDisconnectTimer = window.setTimeout(() => {
             if (rxEofReceived) return;
             if (pc.iceConnectionState === 'disconnected' || pc.iceConnectionState === 'failed') {
+              if (!rxIceRestarted && typeof pc.restartIce === 'function') {
+                rxIceRestarted = true;
+                try { pc.restartIce(); return; } catch {}
+              }
               setDockSession((prev) =>
                 prev && prev.status !== 'done'
-                  ? { ...prev, status: 'error', error: 'Carrier CGNAT blocked P2P — connect both to same Wi-Fi or retry' }
+                  ? { ...prev, status: 'error', error: `ICE ${pc.iceConnectionState} on receiver — retry` }
                   : prev
               );
             }
@@ -3963,23 +3972,19 @@ export function DirectMessagePane(): React.JSX.Element {
         }
         setDockSession((prev) =>
           prev && prev.status !== 'done'
-            ? {
-                ...prev,
-                status: 'error',
-                error: `ICE failed (relay=${rxRelayCount}${rxTurnErr ? `, ${rxTurnErr}` : ''}) — retry`,
-              }
+            ? { ...prev, status: 'error', error: 'ICE failed on receiver — retry' }
             : prev
         );
       }
     };
 
-    const fallbackChunks: ArrayBuffer[] = [];
-    let writeBatch: ArrayBuffer[] = [];
-    let writeBatchBytes = 0;
+    const fallbackChunks: Array<{ offset: number; data: Uint8Array }> = [];
     let received = 0;
     let lastTick = performance.now();
     let lastBytes = 0;
     let writeChain = Promise.resolve();
+    let rxFinalized = false;
+    let rxFullBytesTimer: number | null = null;
 
     const triggerDownload = async (blobOrFile: Blob): Promise<string> => {
       const savedLoc = await saveReceivedDockFile(blobOrFile, pending.fileName);
@@ -3992,24 +3997,43 @@ export function DirectMessagePane(): React.JSX.Element {
       return savedLoc;
     };
 
-    const flushBatch = () => {
-      if (!writable || writeBatch.length === 0) return;
-      const batchToWrite = writeBatch;
-      writeBatch = [];
-      writeBatchBytes = 0;
-      const merged = new Blob(batchToWrite);
+    const finalizeReceive = () => {
+      if (rxFinalized) return;
+      rxFinalized = true;
+      rxEofReceived = true;
+      if (rxFullBytesTimer) {
+        window.clearTimeout(rxFullBytesTimer);
+        rxFullBytesTimer = null;
+      }
+      if (rxDisconnectTimer) {
+        window.clearTimeout(rxDisconnectTimer);
+        rxDisconnectTimer = null;
+      }
       writeChain = writeChain.then(async () => {
-        if (!writable) {
-          fallbackChunks.push(await merged.arrayBuffer());
-          return;
-        }
         try {
-          const buf = await merged.arrayBuffer();
-          await writable.write(buf);
-        } catch {
-          try { await writable.close(); } catch {}
-          writable = null;
-          fallbackChunks.push(await merged.arrayBuffer());
+          let savedPath = pending.fileName;
+          if (writable && opfsRoot && opfsTempName) {
+            await writable.close();
+            const savedHandle = await opfsRoot.getFileHandle(opfsTempName);
+            const diskFile = await savedHandle.getFile();
+            savedPath = await triggerDownload(diskFile);
+          } else {
+            fallbackChunks.sort((a, b) => a.offset - b.offset);
+            const orderedParts = fallbackChunks.map((c) => c.data.buffer as ArrayBuffer);
+            fallbackChunks.length = 0;
+            const blob = new Blob(orderedParts, { type: pending.fileType });
+            savedPath = await triggerDownload(blob);
+          }
+          setDockSession((prev) => (prev ? { ...prev, status: 'done', transferred: pending.fileSize, speedBps: 0 } : null));
+          toast.success(`Saved to ${savedPath}`);
+          setTimeout(() => {
+            cleanupDock();
+            setDockSession((prev) => (prev?.transferId === pending.transferId ? null : prev));
+          }, 3000);
+        } catch (saveErr) {
+          const msg = saveErr instanceof Error ? saveErr.message : String(saveErr);
+          setDockSession((prev) => (prev ? { ...prev, status: 'error', error: msg } : null));
+          toast.error(msg);
         }
       });
     };
@@ -4017,48 +4041,45 @@ export function DirectMessagePane(): React.JSX.Element {
     pc.ondatachannel = (ev) => {
       const dc = ev.channel;
       dc.binaryType = 'arraybuffer';
-      dockDcRef.current = dc;
+      if (!dockDcRef.current || dc.label === 'orbital-dock-lane-0') {
+        dockDcRef.current = dc;
+      }
       setDockSession((prev) => (prev ? { ...prev, status: 'transferring' } : null));
 
       dc.onmessage = (msgEv) => {
         if (typeof msgEv.data === 'string' && msgEv.data === '__DOCK_EOF__') {
-          rxEofReceived = true;
-          if (rxDisconnectTimer) {
-            window.clearTimeout(rxDisconnectTimer);
-            rxDisconnectTimer = null;
-          }
-          flushBatch();
-          writeChain = writeChain.then(async () => {
-            let savedPath = pending.fileName;
-            if (writable && opfsRoot && opfsTempName) {
-              await writable.close();
-              const savedHandle = await opfsRoot.getFileHandle(opfsTempName);
-              const diskFile = await savedHandle.getFile();
-              savedPath = await triggerDownload(diskFile);
-            } else {
-              const blob = new Blob(fallbackChunks, { type: pending.fileType });
-              fallbackChunks.length = 0;
-              savedPath = await triggerDownload(blob);
-            }
-            setDockSession((prev) => (prev ? { ...prev, status: 'done', transferred: pending.fileSize, speedBps: 0 } : null));
-            toast.success(`Saved to ${savedPath}`);
-            setTimeout(() => {
-              cleanupDock();
-              setDockSession((prev) => (prev?.transferId === pending.transferId ? null : prev));
-            }, 2500);
-          });
+          finalizeReceive();
           return;
         }
 
-        if (msgEv.data instanceof ArrayBuffer) {
-          const chunk = msgEv.data;
-          received += chunk.byteLength;
+        if (msgEv.data instanceof ArrayBuffer && msgEv.data.byteLength > 8) {
+          const pktOffset = new DataView(msgEv.data).getFloat64(0, true);
+          const payload = new Uint8Array(msgEv.data, 8);
+          received += payload.byteLength;
+
           if (writable) {
-            writeBatch.push(chunk);
-            writeBatchBytes += chunk.byteLength;
-            if (writeBatchBytes >= 2097152) flushBatch();
+            const wRef = writable as unknown as {
+              write: (params: { type: 'write'; position: number; data: Uint8Array }) => Promise<void>;
+            };
+            writeChain = writeChain.then(async () => {
+              if (!writable) {
+                fallbackChunks.push({ offset: pktOffset, data: payload });
+                return;
+              }
+              try {
+                await wRef.write({ type: 'write', position: pktOffset, data: payload });
+              } catch {
+                try { await writable.close(); } catch {}
+                writable = null;
+                fallbackChunks.push({ offset: pktOffset, data: payload });
+              }
+            });
           } else {
-            fallbackChunks.push(chunk);
+            fallbackChunks.push({ offset: pktOffset, data: payload });
+          }
+
+          if (pending.fileSize > 0 && received >= pending.fileSize && !rxFullBytesTimer && !rxFinalized) {
+            rxFullBytesTimer = window.setTimeout(() => finalizeReceive(), 350);
           }
 
           const now = performance.now();
@@ -4072,14 +4093,6 @@ export function DirectMessagePane(): React.JSX.Element {
         }
       };
     };
-
-    setDockSession((prev) => (prev ? { ...prev, status: 'connecting' } : null));
-    await pc.setRemoteDescription({ type: 'offer', sdp: pending.sdp });
-    for (const c of dockIceQueueRef.current) {
-      if (!isBlockedCarrierSrflxOnAndroid(c.candidate)) { try { await pc.addIceCandidate(c); } catch {} }
-    }
-    dockIceQueueRef.current = [];
-
     const answer = await pc.createAnswer();
     await pc.setLocalDescription(answer);
     await sendDockSignal(pending.senderId, {
