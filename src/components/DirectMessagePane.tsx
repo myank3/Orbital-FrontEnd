@@ -3507,7 +3507,13 @@ export function DirectMessagePane(): React.JSX.Element {
       try {
         while (offset < f.size) {
           if (dc.readyState !== 'open') return;
-          const blockBuf = await f.slice(offset, offset + DISK_BLOCK).arrayBuffer();
+          let blockBuf: ArrayBuffer;
+          try {
+            blockBuf = await f.slice(offset, offset + DISK_BLOCK).arrayBuffer();
+          } catch {
+            await new Promise((r) => setTimeout(r, 150));
+            blockBuf = await f.slice(offset, offset + DISK_BLOCK).arrayBuffer();
+          }
           const blockView = new Uint8Array(blockBuf);
           let pos = 0;
 
@@ -3602,8 +3608,19 @@ export function DirectMessagePane(): React.JSX.Element {
       writeBatchBytes = 0;
       const merged = new Blob(batchToWrite);
       writeChain = writeChain.then(async () => {
-        const buf = await merged.arrayBuffer();
-        await writable!.write(buf);
+        if (!writable) {
+          fallbackChunks.push(await merged.arrayBuffer());
+          return;
+        }
+        try {
+          const buf = await merged.arrayBuffer();
+          await writable.write(buf);
+        } catch {
+          // Windows Defender / SmartScreen locked the .crswap file — switch seamlessly to Blob download
+          try { await writable.close(); } catch {}
+          writable = null;
+          fallbackChunks.push(await merged.arrayBuffer());
+        }
       });
     };
 
