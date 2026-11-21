@@ -4,7 +4,7 @@
  */
 
 import React, { useEffect, useState, useCallback, useMemo } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { motion, AnimatePresence } from 'motion/react';
 import { ArrowLeft, Film, Newspaper, RefreshCw } from 'lucide-react';
 
@@ -581,9 +581,22 @@ function Viewer({
 
 export default function SignalsPage() {
   const navigate = useNavigate();
-  const [activeSignal, setActiveSignal] = useState<ActiveSignal>(null);
-  const [isLoading, setIsLoading] = useState(false);
+  const [searchParams, setSearchParams] = useSearchParams();
+  const initialChannel = searchParams.get('channel');
+  const validInitial: ActiveSignal =
+    initialChannel === 'movies' || initialChannel === 'news' ? initialChannel : null;
+  const [activeSignal, setActiveSignal] = useState<ActiveSignal>(validInitial);
+  const [isLoading, setIsLoading] = useState(Boolean(validInitial));
   const [reloadKey, setReloadKey] = useState(0);
+
+  useEffect(() => {
+    const ch = searchParams.get('channel');
+    if (ch === 'movies' || ch === 'news') {
+      setIsLoading(true);
+      setReloadKey(0);
+      setActiveSignal(ch);
+    }
+  }, [searchParams]);
 
   const [isWebView, setIsWebView] = useState(false);
   const [isMobile, setIsMobile] = useState(false);
@@ -672,6 +685,9 @@ export default function SignalsPage() {
   const close = () => {
     setActiveSignal(null);
     setIsLoading(false);
+    if (searchParams.has('channel')) {
+      setSearchParams({}, { replace: true });
+    }
   };
   const reload = () => {
     setIsLoading(true);

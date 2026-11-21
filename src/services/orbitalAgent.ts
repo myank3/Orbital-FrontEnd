@@ -1298,14 +1298,33 @@ async function tryZeroTokenIntent(
     };
   }
 
-  // 9C. Watch a movie / Chalachitra intent (handles both "chalachitra" and "chalchitra")
+  // 9C. Direct Chalachitra / Signals Channel launch ("open chalachitra", "open chalchitra", "open signals")
+  if (/^(?:open|launch|start|go\s+to|tune\s+(?:in\s+)?to)\s+chala?chitra$/i.test(lower)) {
+    handlers.navigate('/app/signals?channel=movies');
+    return {
+      reply: 'Opening Chalachitra in Signals.',
+      pendingContext: null,
+      actionTaken: true,
+    };
+  }
+
+  if (/^(?:open|launch|start|go\s+to)\s+(?:signals|satellite)$/i.test(lower)) {
+    handlers.navigate('/app/signals');
+    return {
+      reply: 'Opening Signals.',
+      pendingContext: null,
+      actionTaken: true,
+    };
+  }
+
+  // 9D. Watch a movie / cinema intent
   if (/\b(?:watch\s+(?:a\s+)?movie|watch\s+film|cinema|chala?chitra)\b/i.test(lower)) {
     return {
-      reply: `Want to open Media or jump to Chalachitra to watch together?`,
+      reply: `Hey ${displayUser}, want to open Chalachitra in Signals or check Media?`,
       quickActions: [
+        { label: 'Open Chalachitra', path: '/app/signals?channel=movies' },
+        { label: 'Open Signals', path: '/app/signals' },
         { label: 'Open Media', path: '/app/notifications' },
-        { label: 'Open Orbit', path: '/app/orbit' },
-        { label: 'Open Chalachitra', path: 'https://orbitalhq.vercel.app' },
       ],
       pendingContext: null,
       actionTaken: false,
