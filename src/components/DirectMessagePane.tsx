@@ -4222,32 +4222,60 @@ export function DirectMessagePane(): React.JSX.Element {
         window.clearTimeout(rxDisconnectTimer);
         rxDisconnectTimer = null;
       }
-      sendRxCtrl({ t: 'done', bytes: received });
+      const lowerName = pending.fileName.toLowerCase();
+      const mimeType =
+        pending.fileType && pending.fileType !== 'application/octet-stream'
+          ? pending.fileType
+          : lowerName.endsWith('.jpg') || lowerName.endsWith('.jpeg')
+          ? 'image/jpeg'
+          : lowerName.endsWith('.png')
+          ? 'image/png'
+          : lowerName.endsWith('.mp4')
+          ? 'video/mp4'
+          : pending.fileType || 'application/octet-stream';
 
       void (async () => {
         try {
           let savedPath = pending.fileName;
+          let closedCleanly = false;
           if (useSyncWorker && diskWorker) {
-            await new Promise<void>((resolve) => {
-              const t = window.setTimeout(resolve, 4000);
-              workerCloseResolver = () => {
+            closedCleanly = await new Promise<boolean>((resolve) => {
+              let done = false;
+              const finish = (ok: boolean) => {
+                if (done) return;
+                done = true;
                 window.clearTimeout(t);
-                resolve();
+                workerCloseResolver = null;
+                resolve(ok);
               };
+              const t = window.setTimeout(() => finish(false), 5000);
+              workerCloseResolver = () => finish(true);
               diskWorker?.postMessage({ type: 'close' });
             });
             cleanupWorker();
+          }
+
+          let wroteFromOpfs = false;
+          if (closedCleanly) {
             const root = await navigator.storage.getDirectory();
             const savedHandle = await root.getFileHandle(opfsTempName);
             const diskFile = await savedHandle.getFile();
-            savedPath = await triggerDownload(diskFile);
-          } else {
+            const minBytes = pending.fileSize > 0 ? pending.fileSize : 1;
+            if (diskFile.size >= minBytes) {
+              fallbackChunks.length = 0;
+              const outBlob = diskFile.type ? diskFile : new Blob([diskFile], { type: mimeType });
+              savedPath = await triggerDownload(outBlob);
+              wroteFromOpfs = true;
+            }
+          }
+          if (!wroteFromOpfs) {
             fallbackChunks.sort((a, b) => a.offset - b.offset);
             const orderedParts = fallbackChunks.map((c) => c.data);
             fallbackChunks.length = 0;
-            const blob = new Blob(orderedParts, { type: pending.fileType });
+            const blob = new Blob(orderedParts, { type: mimeType });
             savedPath = await triggerDownload(blob);
           }
+          sendRxCtrl({ t: 'done', bytes: received });
           setDockSession((prev) => (prev ? { ...prev, status: 'done', transferred: pending.fileSize, speedBps: 0 } : null));
           toast.success(`Saved to ${savedPath}`);
           setTimeout(() => {
@@ -4288,11 +4316,10 @@ export function DirectMessagePane(): React.JSX.Element {
           received += payloadLen;
 
           if (useSyncWorker && diskWorker) {
-            // Zero-copy transfer directly to background OPFS SyncAccessHandle Worker
-            diskWorker.postMessage({ type: 'write', offset: pktOffset, buffer: msgEv.data }, [msgEv.data]);
-          } else {
-            fallbackChunks.push({ offset: pktOffset, data: msgEv.data.slice(8) });
+            const workerBuf = msgEv.data.slice(0);
+            diskWorker.postMessage({ type: 'write', offset: pktOffset, buffer: workerBuf }, [workerBuf]);
           }
+          fallbackChunks.push({ offset: pktOffset, data: msgEv.data.slice(8) });
 
           const now = performance.now();
           if (received - lastAckedSent >= 262144 || now - lastAckTime >= 100) {
