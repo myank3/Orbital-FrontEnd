@@ -1,3 +1,5 @@
+import { signalRService } from '../services/signalr';
+import { toast } from 'sonner';
 import { Capacitor } from '@capacitor/core';
 /**
  * @license
@@ -316,6 +318,9 @@ function isChatDetailRoute(pathname: string): boolean {
 /* AppShell                                                   */
 /* ────────────────────────────────────────────────────────── */
 
+const APP_DOCK_SESSION_ID = 'orbital-dock-v1';
+const APP_DOCK_PREFIX = '__ORBITAL_DOCK__:';
+
 function AppShell(): React.JSX.Element {
   const navigate = useNavigate();
   const location = useLocation();
@@ -341,6 +346,82 @@ function AppShell(): React.JSX.Element {
   const [headerHidden, setHeaderHidden] = useState(false);
 
   const headerHiddenRef = useRef(false);
+
+  const shownDockOffersRef = useRef<Set<string>>(new Set());
+
+  useEffect(() => {
+    const unsub = signalRService.onCallSignal((payload) => {
+      if (payload.sessionId !== APP_DOCK_SESSION_ID) return;
+      if (!payload.senderId || payload.senderId === user?.id) return;
+
+      const data = payload.signalData as { sdp?: string } | undefined;
+      const raw = data?.sdp ?? '';
+      if (!raw.startsWith(APP_DOCK_PREFIX)) return;
+
+      try {
+        const sig = JSON.parse(raw.slice(APP_DOCK_PREFIX.length)) as {
+          type?: string;
+          transferId?: string;
+          fileName?: string;
+          senderName?: string;
+        };
+        if (!sig.transferId) return;
+
+        const toastId = `dock-${sig.transferId}`;
+
+        if (sig.type === 'dock-cancel') {
+          toast.dismiss(toastId);
+          return;
+        }
+
+        if (sig.type !== 'dock-offer') return;
+        if (shownDockOffersRef.current.has(sig.transferId)) return;
+        shownDockOffersRef.current.add(sig.transferId);
+
+        const label = sig.senderName || payload.senderId.slice(0, 8);
+        const fileLabel = sig.fileName ? ` · ${sig.fileName}` : '';
+        const targetDmPath = `/app/dm/${encodeURIComponent(payload.senderId)}`;
+
+        toast.custom(
+          () => (
+            <div className="flex items-center gap-3 rounded-full border border-white/15 bg-zinc-950/90 px-3.5 py-2 text-xs text-zinc-100 shadow-xl backdrop-blur-xl">
+              <span className="h-2 w-2 shrink-0 rounded-full bg-sky-400" />
+              <span className="max-w-[190px] truncate font-medium">
+                {label} is docking{fileLabel}
+              </span>
+              <div className="flex items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => {
+                    toast.dismiss(toastId);
+                    navigate(targetDmPath);
+                  }}
+                  className="rounded-full bg-sky-500 px-2.5 py-1 text-[11px] font-semibold text-white transition hover:bg-sky-400"
+                >
+                  Take me to DM
+                </button>
+                <button
+                  type="button"
+                  onClick={() => toast.dismiss(toastId)}
+                  className="rounded-full bg-white/10 px-2 py-1 text-[11px] font-medium text-zinc-300 transition hover:bg-white/20"
+                >
+                  Close
+                </button>
+              </div>
+            </div>
+          ),
+          {
+            id: toastId,
+            duration: 1800,
+          }
+        );
+      } catch {
+        // Ignore malformed dock signals
+      }
+    });
+
+    return () => unsub();
+  }, [navigate, user?.id]);
   headerHiddenRef.current = headerHidden;
 
   const drawerOpenRef = useRef(false);
