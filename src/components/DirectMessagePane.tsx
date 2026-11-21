@@ -3411,6 +3411,12 @@ export function DirectMessagePane(): React.JSX.Element {
   const friendsLookupRef = useRef<FriendDto[]>([]);
   friendsLookupRef.current = friends;
 
+  const isNativeAndroidApk = (): boolean => {
+    if (typeof window === 'undefined') return false;
+    const cap = (window as unknown as { Capacitor?: { isNativePlatform?: () => boolean; getPlatform?: () => string } }).Capacitor;
+    return Boolean(cap?.isNativePlatform?.() && cap?.getPlatform?.() === 'android');
+  };
+
   const getDockIceConfig = useCallback(async (): Promise<RTCConfiguration> => {
     const baseServers: RTCIceServer[] = [
       { urls: 'stun:stun.l.google.com:19302' },
@@ -3418,13 +3424,13 @@ export function DirectMessagePane(): React.JSX.Element {
       { urls: 'stun:stun.cloudflare.com:3478' },
       {
         urls: [
-          'turn:a.relay.metered.ca:80',
-          'turn:a.relay.metered.ca:80?transport=tcp',
-          'turn:a.relay.metered.ca:443',
-          'turns:a.relay.metered.ca:443?transport=tcp',
+          'turn:global.relay.metered.ca:80',
+          'turn:global.relay.metered.ca:80?transport=tcp',
+          'turn:global.relay.metered.ca:443',
+          'turns:global.relay.metered.ca:443?transport=tcp',
         ],
-        username: 'e8dd65b92f6dde4312b1786d',
-        credential: '3G+8V/1mH+6f9Z0q',
+        username: '314b509605be09e502e550bd',
+        credential: 'x53QpqdPM1wUJnAa',
       },
       {
         urls: [
@@ -3438,7 +3444,7 @@ export function DirectMessagePane(): React.JSX.Element {
     try {
       const ctrl = new AbortController();
       const t = window.setTimeout(() => ctrl.abort(), 1800);
-      const res = await fetch('https://orbital.metered.live/api/v1/turn/credentials?apiKey=e8dd65b92f6dde4312b1786d', {
+      const res = await fetch('https://orbital.metered.live/api/v1/turn/credentials?apiKey=314b509605be09e502e550bd', {
         signal: ctrl.signal,
       });
       window.clearTimeout(t);
