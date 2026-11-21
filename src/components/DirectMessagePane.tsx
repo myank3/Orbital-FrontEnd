@@ -4461,24 +4461,7 @@ export function DirectMessagePane(): React.JSX.Element {
             transferred: 0,
             speedBps: 0,
           });
-          toast(
-            <div className="flex items-center gap-2 text-xs font-medium tracking-tight text-zinc-100">
-              <span className="h-2 w-2 rounded-full bg-sky-400 animate-pulse" />
-              <span className="truncate max-w-[220px]">{resolvedName} · {sig.fileName}</span>
-            </div>,
-            {
-              id: `dock-${sig.transferId}`,
-              duration: 1800,
-              style: {
-                background: 'rgba(15, 18, 25, 0.88)',
-                backdropFilter: 'blur(12px)',
-                border: '1px solid rgba(148, 163, 184, 0.22)',
-                borderRadius: '999px',
-                padding: '8px 14px',
-                boxShadow: '0 8px 24px rgba(0, 0, 0, 0.35)',
-              },
-            }
-          );        } else if (sig.type === 'dock-answer' && dockPcRef.current) {
+        } else if (sig.type === 'dock-answer' && dockPcRef.current) {
           await dockPcRef.current.setRemoteDescription({ type: 'answer', sdp: sig.sdp });
           for (const c of dockIceQueueRef.current) {
             if (!isBlockedCarrierSrflxOnAndroid(c.candidate)) { try { await dockPcRef.current.addIceCandidate(c); } catch {} }

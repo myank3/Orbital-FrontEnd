@@ -384,35 +384,48 @@ function AppShell(): React.JSX.Element {
 
         toast.custom(
           () => (
-            <div className="flex items-center gap-3 rounded-full border border-white/15 bg-zinc-950/90 px-3.5 py-2 text-xs text-zinc-100 shadow-xl backdrop-blur-xl">
-              <span className="h-2 w-2 shrink-0 rounded-full bg-sky-400" />
-              <span className="max-w-[190px] truncate font-medium">
-                {label} is docking{fileLabel}
-              </span>
-              <div className="flex items-center gap-1.5">
+            <div className="pointer-events-auto flex w-[min(92vw,390px)] items-center justify-between gap-3 rounded-2xl border border-sky-400/25 bg-zinc-950/92 px-3.5 py-2.5 text-zinc-100 shadow-2xl shadow-black/50 backdrop-blur-xl">
+              <div className="flex min-w-0 items-center gap-3">
+                <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-sky-500/15 text-sky-400 ring-1 ring-sky-400/30">
+                  <i className="fa-solid fa-satellite-dish text-xs" aria-hidden="true" />
+                </div>
+                <div className="min-w-0">
+                  <div className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wider text-sky-400">
+                    <span>Incoming Dock</span>
+                  </div>
+                  <p className="truncate text-xs font-medium text-zinc-100">
+                    {label}
+                    {fileLabel ? <span className="text-zinc-400">{fileLabel}</span> : null}
+                  </p>
+                </div>
+              </div>
+              <div className="flex shrink-0 items-center gap-1.5">
                 <button
                   type="button"
                   onClick={() => {
                     toast.dismiss(toastId);
                     navigate(targetDmPath);
                   }}
-                  className="rounded-full bg-sky-500 px-2.5 py-1 text-[11px] font-semibold text-white transition hover:bg-sky-400"
+                  className="inline-flex items-center gap-1.5 rounded-xl bg-sky-500 px-2.5 py-1.5 text-[11px] font-semibold text-white shadow-sm transition hover:bg-sky-400 active:scale-[0.98]"
                 >
-                  Take me to DM
+                  <span>Take me to DM</span>
+                  <i className="fa-solid fa-arrow-right text-[10px]" aria-hidden="true" />
                 </button>
                 <button
                   type="button"
                   onClick={() => toast.dismiss(toastId)}
-                  className="rounded-full bg-white/10 px-2 py-1 text-[11px] font-medium text-zinc-300 transition hover:bg-white/20"
+                  aria-label="Close dock notification"
+                  className="inline-flex items-center gap-1 rounded-xl border border-white/10 bg-white/5 px-2 py-1.5 text-[11px] font-medium text-zinc-300 transition hover:bg-white/15 hover:text-white active:scale-[0.98]"
                 >
-                  Close
+                  <i className="fa-solid fa-xmark text-[11px]" aria-hidden="true" />
+                  <span>Close</span>
                 </button>
               </div>
             </div>
           ),
           {
             id: toastId,
-            duration: 1800,
+            duration: 7000,
           }
         );
       } catch {
