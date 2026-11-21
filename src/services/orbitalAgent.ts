@@ -106,6 +106,7 @@ const AGENT_TOOLS: FunctionDeclaration[] = [
 
 export interface AgentContextHandlers {
   currentUserId: string;
+  userName?: string;
   activePath: string;
   viaVoice?: boolean;
   navigate: (path: string) => void;
@@ -115,6 +116,8 @@ export interface AgentContextHandlers {
 
 export interface AgentQuickAction {
   label: string;
+  subtitle?: string;
+  avatarUrl?: string;
   path?: string;
   prefill?: string;
   prompt?: string;
@@ -654,22 +657,62 @@ function similarityScore(a: string, b: string): number {
   return (2 * matches) / (s1.length + s2.length - 2);
 }
 
-function matchFriend(query: string, friends: FriendDto[]): FriendDto | undefined {
+function scoreFriendMatch(q: string, f: FriendDto): number {
+  const firstName = f.displayName.split(/\s+/)[0] ?? '';
+  return Math.max(
+    similarityScore(q, f.displayName),
+    similarityScore(q, firstName),
+    similarityScore(q, f.handle),
+    similarityScore(q, f.fullHandle ?? ''),
+  );
+}
+
+function findMatchingFriends(query: string, friends: FriendDto[]): FriendDto[] {
   const q = query.trim().replace(/^@/, '').toLowerCase();
-  if (!q) return undefined;
-  let best: { friend: FriendDto; score: number } | null = null;
-  for (const f of friends) {
-    const firstName = f.displayName.split(/\s+/)[0] ?? '';
-    const score = Math.max(
-      similarityScore(q, f.displayName),
-      similarityScore(q, firstName),
-      similarityScore(q, f.handle),
-    );
-    if (score >= 0.78 && (!best || score > best.score)) {
-      best = { friend: f, score };
-    }
-  }
-  return best?.friend;
+  if (!q) return [];
+  const scored = friends
+    .map((f) => ({ friend: f, score: scoreFriendMatch(q, f) }))
+    .filter((x) => x.score >= 0.78)
+    .sort((a, b) => b.score - a.score);
+
+  if (scored.length === 0) return [];
+  const topScore = scored[0].score;
+  const tied = scored.filter((x) => Math.abs(x.score - topScore) <= 0.05);
+  return (tied.length > 1 ? tied : scored.slice(0, 1)).map((x) => x.friend);
+}
+
+function buildFriendDisambiguationResult(
+  matches: FriendDto[],
+  actionVerb: 'call' | 'message',
+  extraBody?: string,
+): AgentResult {
+  const chips: AgentQuickAction[] = matches.slice(0, 5).map((f) => {
+    const online = presenceStore.isOnline(f.userId) || Boolean(f.isOnline);
+    const handleText = f.fullHandle || (f.handle ? `@${f.handle.replace(/^@/, '')}` : '');
+    const promptText =
+      actionVerb === 'call'
+        ? `call ${f.fullHandle || f.displayName}`
+        : extraBody
+          ? `message ${f.fullHandle || f.displayName} ${extraBody}`
+          : `message ${f.fullHandle || f.displayName}`;
+    return {
+      label: f.displayName,
+      subtitle: `${handleText ? `${handleText} · ` : ''}${online ? 'Online' : 'Offline'}`,
+      avatarUrl: f.avatarUrl,
+      prompt: promptText,
+    };
+  });
+
+  return {
+    reply: `Found ${matches.length} people named "${matches[0].displayName.split(' ')[0]}". Who do you want to ${actionVerb}?`,
+    quickActions: chips,
+    pendingContext: null,
+    actionTaken: false,
+  };
+}
+
+function matchFriend(query: string, friends: FriendDto[]): FriendDto | undefined {
+  return findMatchingFriends(query, friends)[0];
 }
 
 function matchGroup(query: string, groups: GroupDto[]): GroupDto | undefined {
@@ -805,6 +848,35 @@ async function tryZeroTokenIntent(
 ): Promise<AgentResult | null> {
   const cleaned = normalizeInput(prompt.replace(/[.?!]+$/, ''));
   const lower = cleaned.toLowerCase();
+  const displayUser = handlers.userName?.trim() || 'there';
+
+  // 0A. Greeting by username
+  if (/^(?:hi|hello|hey|yo|namaste|good\s+(?:morning|afternoon|evening))$/i.test(lower)) {
+    return {
+      reply: `Hey ${displayUser}! How can I help you in Orbital today?`,
+      quickActions: [
+        { label: 'Who is online', prompt: 'who is online' },
+        { label: 'Send a message', prefill: 'message ' },
+        { label: 'Watch a movie', prompt: 'I want to watch a movie' },
+      ],
+      pendingContext: null,
+      actionTaken: false,
+    };
+  }
+
+  // 0B. Watch a movie / cinema intent (avoid hard refusal on movie requests)
+  if (/\b(?:watch\s+(?:a\s+)?movie|watch\s+film|cinema|chalachitra)\b/i.test(lower)) {
+    return {
+      reply: `Hey ${displayUser}, movie playback isn't built into the chat thread directly—want to open Media or jump to Chalachitra?`,
+      quickActions: [
+        { label: 'Open Media', path: '/app/notifications' },
+        { label: 'Open Orbit', path: '/app/orbit' },
+        { label: 'Open Chalachitra', path: 'https://orbitalhq.vercel.app' },
+      ],
+      pendingContext: null,
+      actionTaken: false,
+    };
+  }
 
   // 1. Open Media (/app/notifications)
   if (/^(?:show\s+(?:me\s+)?|take\s+me\s+to\s+|open\s+|go\s+to\s+)?media(?:\s+(?:gallery|files|photos|tab|page))?$/i.test(lower)) {
@@ -1180,8 +1252,13 @@ async function tryZeroTokenIntent(
   if (callMatch) {
     const isVideo = /video/i.test(callMatch[1]);
     const targetRaw = callMatch[2].trim();
-    const friend = matchFriend(targetRaw, friends);
+    const friendMatches = findMatchingFriends(targetRaw, friends);
+    const friend = friendMatches[0];
     const group = matchGroup(targetRaw, groups);
+
+    if (friendMatches.length > 1 && !group) {
+      return buildFriendDisambiguationResult(friendMatches, 'call');
+    }
 
     if (group && !friend) {
       return await triggerGroupCall(group, handlers);
@@ -1346,6 +1423,7 @@ export async function runOrbitalAgent(
 
     const systemInstruction = `
 You are Orbital Assistant, strictly an in-app action assistant for Orbital (chat & calling app), created by Mayank Pal.
+- Greet the user naturally using their name/username when appropriate (${handlers.userName || 'User'}).
 - STRICT SCOPE: ONLY handle Orbital app actions: sending/scheduling DMs or group messages, starting/joining calls, opening chats/pages (messages, groups, settings, media), checking who is online, summarizing chats, or answering who made Orbital ("Orbital was made by Mayank Pal.").
 - REFUSE ALL OFF-TOPIC QUESTIONS: Never answer general knowledge, geography, trivia, history, math, coding, definitions, or world facts (e.g. "where is Texas", "what is Odisha", "who is president"). For ANY non-Orbital question, do NOT call any tool and reply ONLY: "I can only help with Orbital chats, calls, and scheduled messages."
 - If the user wants to send a message without specifying the message text, ask "What message do you wanna send to <name>?" instead of sending an empty message.
