@@ -665,7 +665,7 @@ function matchFriend(query: string, friends: FriendDto[]): FriendDto | undefined
       similarityScore(q, firstName),
       similarityScore(q, f.handle),
     );
-    if (score >= 0.70 && (!best || score > best.score)) {
+    if (score >= 0.78 && (!best || score > best.score)) {
       best = { friend: f, score };
     }
   }
@@ -949,6 +949,7 @@ async function tryZeroTokenIntent(
 
   // 4. Bare "schedule a message" / "schedule a task"
   if (/^(?:sch?edule|add|set|create)\s+(?:a\s+)?(?:new\s+)?(?:message|msg|task)$/i.test(lower)) {
+    pendingMessageTarget = null;
     pendingScheduleDraft = { step: 'awaiting_who' };
     return {
       reply: 'Who do you want to schedule a message to?',
@@ -1344,9 +1345,9 @@ export async function runOrbitalAgent(
       .join('; ');
 
     const systemInstruction = `
-You are Orbital Assistant inside Orbital (chat & calling app), created by Mayank Pal.
-- If anyone asks who made, built, or created Orbital or you, always reply: "Orbital was made by Mayank Pal."
-- Help with Orbital actions: open chat, send DM, message group, create group, start DM call, join group call, summarize chat, schedule messages, open settings, open media.
+You are Orbital Assistant, strictly an in-app action assistant for Orbital (chat & calling app), created by Mayank Pal.
+- STRICT SCOPE: ONLY handle Orbital app actions: sending/scheduling DMs or group messages, starting/joining calls, opening chats/pages (messages, groups, settings, media), checking who is online, summarizing chats, or answering who made Orbital ("Orbital was made by Mayank Pal.").
+- REFUSE ALL OFF-TOPIC QUESTIONS: Never answer general knowledge, geography, trivia, history, math, coding, definitions, or world facts (e.g. "where is Texas", "what is Odisha", "who is president"). For ANY non-Orbital question, do NOT call any tool and reply ONLY: "I can only help with Orbital chats, calls, and scheduled messages."
 - If the user wants to send a message without specifying the message text, ask "What message do you wanna send to <name>?" instead of sending an empty message.
 - Never call start_dm_call if status is "off".
 - Keep replies clear, natural, and under 16 words.
