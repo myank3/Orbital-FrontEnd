@@ -444,7 +444,7 @@ function InterstellarDockIcon({ className = 'w-6 h-6', spinning = false }: { cla
 const DOCK_STORAGE_KEY = 'orbital_dock_incoming_v1';
 
 type DockSignal =
-  | { type: 'dock-offer'; transferId: string; fileName: string; fileSize: number; fileType: string; sdp: string }
+  | { type: 'dock-offer'; transferId: string; fileName: string; fileSize: number; fileType: string; sdp: string; senderName?: string }
   | { type: 'dock-reoffer'; transferId: string }
   | { type: 'dock-answer'; transferId: string; sdp: string }
   | { type: 'dock-ice'; transferId: string; candidate: RTCIceCandidateInit }
@@ -3597,7 +3597,10 @@ export function DirectMessagePane(): React.JSX.Element {
       speedBps: 0,
     });
 
+    let startedSend = false;
     dc.onopen = async () => {
+      if (startedSend) return;
+      startedSend = true;
       const f = dockSendFileRef.current;
       if (!f) return;
       setDockSession((prev) => (prev ? { ...prev, status: 'transferring' } : null));
@@ -3641,7 +3644,7 @@ export function DirectMessagePane(): React.JSX.Element {
             const bps = (offset - lastBytes) / dt;
             lastTick = now;
             lastBytes = offset;
-            setDockSession((prev) => (prev ? { ...prev, transferred: offset, speedBps: bps } : null));
+            setDockSession((prev) => (prev ? { ...prev, transferred: Math.min(offset, f.size), speedBps: bps } : null));
           }
         }
         dc.send('__DOCK_EOF__');
@@ -3796,7 +3799,7 @@ export function DirectMessagePane(): React.JSX.Element {
             const bps = (received - lastBytes) / dt;
             lastTick = now;
             lastBytes = received;
-            setDockSession((prev) => (prev ? { ...prev, transferred: received, speedBps: bps } : null));
+            setDockSession((prev) => (prev ? { ...prev, transferred: Math.min(received, pending.fileSize), speedBps: bps } : null));
           }
         }
       };
@@ -3839,7 +3842,13 @@ export function DirectMessagePane(): React.JSX.Element {
         const sig = JSON.parse(raw.slice(DOCK_PREFIX.length)) as DockSignal;
 
         if (sig.type === 'dock-offer') {
-          cleanupDock();
+          const cur = dockSessionRef.current;
+          if (cur && cur.transferId === sig.transferId && cur.status !== 'incoming') {
+            return;
+          }
+          if (!cur || cur.transferId !== sig.transferId) {
+            cleanupDock();
+          }
           dockPendingOfferRef.current = {
             transferId: sig.transferId,
             fileName: sig.fileName,
@@ -3849,11 +3858,17 @@ export function DirectMessagePane(): React.JSX.Element {
             senderId: payload.senderId,
           };
           const senderFriend = friendsLookupRef.current.find((f) => f.userId === payload.senderId);
+          const resolvedName =
+            sig.senderName ||
+            senderFriend?.displayName ||
+            senderFriend?.username ||
+            (selectedFriend?.userId === payload.senderId ? (selectedFriend.displayName || selectedFriend.username) : '') ||
+            payload.senderId.slice(0, 8);
           setDockSession({
             transferId: sig.transferId,
             direction: 'receive',
             peerId: payload.senderId,
-            peerName: senderFriend?.displayName ?? 'Peer',
+            peerName: resolvedName,
             fileName: sig.fileName,
             fileSize: sig.fileSize,
             fileType: sig.fileType,
@@ -3884,7 +3899,7 @@ export function DirectMessagePane(): React.JSX.Element {
         } else if (sig.type === 'dock-cancel') {
           cleanupDock();
           setDockSession(null);
-          toast.info('Docking cancelled by peer.');
+          toast.info('Docking cancelled.');
         }
       } catch (e) {
         console.warn('[Orbital Docking] Invalid signal:', e);
@@ -5225,7 +5240,7 @@ export function DirectMessagePane(): React.JSX.Element {
                       </div>
                       <p className="text-[11px] text-[#A8A29E] truncate mt-0.5">
                         {dockSession.fileName} - {formatFileSize(dockSession.fileSize)}
-                        {dockSession.status === 'offering' ? ' - Waiting for peer to accept...' : ''}
+                        {dockSession.status === 'offering' ? ' - Waiting for recipient to accept...' : ''}
                         {dockSession.status === 'connecting' ? ' - Locking P2P airlock...' : ''}
                         {dockSession.status === 'transferring' ? ` - ${formatFileSize(dockSession.transferred)} / ${formatFileSize(dockSession.fileSize)} (${formatFileSize(dockSession.speedBps)}/s)` : ''}
                         {dockSession.status === 'error' ? ` - ${dockSession.error ?? 'Connection failed'}` : ''}
