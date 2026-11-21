@@ -261,24 +261,51 @@ function isBareTimePhrase(text: string): boolean {
   );
 }
 
+const inflightScheduledIds = new Set<string>();
+const failedScheduledIds = new Set<string>();
+
+function isTransientNetworkError(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message : String(err ?? '');
+  return /websocket|signalr|disconnected|closed|network|fetch|timeout|connection|state\s*'/i.test(msg);
+}
+
+async function waitForOnlineAndSignalR(maxWaitMs = 8000): Promise<void> {
+  const deadline = Date.now() + maxWaitMs;
+  while (typeof navigator !== 'undefined' && !navigator.onLine && Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, 250));
+  }
+  while (Date.now() < deadline) {
+    if (signalRService.isConnected()) return;
+    try {
+      await signalRService.start();
+      if (signalRService.isConnected()) return;
+    } catch {
+      // keep retrying until deadline
+    }
+    await new Promise((r) => setTimeout(r, 300));
+  }
+}
+
 function flushDueScheduledMessages() {
   if (typeof window === 'undefined') return;
   const uid = activeUserSessionId;
   if (!uid) return;
+  if (typeof navigator !== 'undefined' && !navigator.onLine) return;
 
   const list = getScheduledMessagesForUser(uid);
   if (list.length === 0) return;
 
   const now = Date.now();
-  const due = list.filter((t) => t.runAt <= now);
+  const due = list.filter(
+    (t) => t.runAt <= now && !inflightScheduledIds.has(t.id) && !failedScheduledIds.has(t.id),
+  );
   if (due.length === 0) return;
 
-  const remaining = list.filter((t) => t.runAt > now);
-  saveScheduledMessages(uid, remaining);
-
   for (const item of due) {
+    inflightScheduledIds.add(item.id);
     void (async () => {
       try {
+        await waitForOnlineAndSignalR(8000);
         await dispatchOrbitalMessage(
           {
             kind: item.kind,
@@ -288,13 +315,25 @@ function flushDueScheduledMessages() {
           },
           uid,
         );
+        const latest = getScheduledMessagesForUser(uid).filter((t) => t.id !== item.id);
+        saveScheduledMessages(uid, latest);
         const label = item.kind === 'group' ? `#${item.targetName}` : item.targetName;
         toast.success(`Scheduled message sent to ${label}`, { description: item.message });
       } catch (err) {
-        console.error('[OrbitalAgent Scheduled Send Error]', err);
-        toast.error(`Failed to send scheduled message to ${item.targetName}`, {
-          description: formatAgentError(err),
-        });
+        if (isTransientNetworkError(err)) {
+          // Keep in storage so it automatically retries once connection settles
+          console.warn('[OrbitalAgent Scheduled Send Deferred - Reconnecting]', err);
+        } else {
+          failedScheduledIds.add(item.id);
+          const latest = getScheduledMessagesForUser(uid).filter((t) => t.id !== item.id);
+          saveScheduledMessages(uid, latest);
+          console.error('[OrbitalAgent Scheduled Send Error]', err);
+          toast.error(`Failed to send scheduled message to ${item.targetName}`, {
+            description: formatAgentError(err),
+          });
+        }
+      } finally {
+        inflightScheduledIds.delete(item.id);
       }
     })();
   }
@@ -302,7 +341,16 @@ function flushDueScheduledMessages() {
 
 function ensureSchedulePoller() {
   if (schedulePollerId !== null || typeof window === 'undefined') return;
-  schedulePollerId = window.setInterval(flushDueScheduledMessages, 1000);
+  schedulePollerId = window.setInterval(flushDueScheduledMessages, 1500);
+  const onResume = () => {
+    void signalRService.start().catch(() => {});
+    window.setTimeout(flushDueScheduledMessages, 600);
+  };
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') onResume();
+  });
+  window.addEventListener('online', onResume);
+  window.addEventListener('focus', onResume);
 }
 
 if (typeof window !== 'undefined') {
@@ -504,25 +552,35 @@ export async function dispatchOrbitalMessage(
     const recipientId = String(payload.targetId);
     const pub = await getPublicKeyFor(recipientId);
     const enc = await encryptFor(pub, payload.message);
-    await signalRService.sendDirectMessage({
+    const dto = {
       recipientId,
       ciphertext: enc.ciphertext,
       nonce: enc.nonce,
       mediaUrl: undefined,
       mediaType: undefined,
-    });
+    };
+    try {
+      await signalRService.sendDirectMessage(dto);
+    } catch {
+      await apiService.sendDm(dto);
+    }
     playSend();
     return `Sent to ${payload.targetName}`;
   } else {
     const groupId = Number(payload.targetId);
     const clientId = `tmp-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-    await signalRService.joinGroupChannel(groupId);
-    await signalRService.sendGroupMessage({
+    const dto = {
       groupId,
       content: `[client:${clientId}]${payload.message}`,
       mediaUrl: undefined,
       mediaType: undefined,
-    });
+    };
+    try {
+      await signalRService.joinGroupChannel(groupId);
+      await signalRService.sendGroupMessage(dto);
+    } catch {
+      await apiService.sendGroupMessage(dto);
+    }
     playSend();
     return `Sent to #${payload.targetName}`;
   }
