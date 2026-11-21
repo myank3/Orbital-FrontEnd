@@ -1067,6 +1067,7 @@ async function tryZeroTokenIntent(
 
       const { target, message } = pendingScheduleDraft!;
       pendingScheduleDraft = null;
+      if (!target || !message) return { reply: 'Missing recipient or message to schedule.', actionTaken: false };
       return scheduleMessage(handlers.currentUserId, target, message, runAt);
     }
   }

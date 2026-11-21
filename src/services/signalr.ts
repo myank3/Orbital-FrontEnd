@@ -370,8 +370,8 @@ class SignalRService {
         callType,
         status: 0, // Ringing
         initiatorId: callerId,
-        peerId: null,
-        groupId: null,
+        peerId: undefined,
+        groupId: undefined,
         startedAt: new Date().toISOString(),
         endedAt: undefined,
       };
