@@ -3402,7 +3402,8 @@ export function DirectMessagePane(): React.JSX.Element {
   const dockPcRef = useRef<RTCPeerConnection | null>(null);
   const dockDcRef = useRef<RTCDataChannel | null>(null);
   const dockSendFileRef = useRef<File | null>(null);
-  const dockPreloadedBufRef = useRef<ArrayBuffer | null>(null);
+  const dockStreamReaderRef = useRef<ReadableStreamDefaultReader<Uint8Array> | null>(null);
+  const dockFirstChunkRef = useRef<Uint8Array | null>(null);
   const dockPendingOfferRef = useRef<{ transferId: string; fileName: string; fileSize: number; fileType: string; sdp: string; senderId: string } | null>(null);
   const dockIceQueueRef = useRef<RTCIceCandidateInit[]>([]);
   const dockSessionRef = useRef<DockSession | null>(null);
@@ -3507,13 +3508,15 @@ export function DirectMessagePane(): React.JSX.Element {
     cleanupDock();
     const transferId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     dockSendFileRef.current = file;
-    dockPreloadedBufRef.current = null;
+    dockStreamReaderRef.current = null;
+    dockFirstChunkRef.current = null;
+
+    // Eagerly read the first chunk immediately on file pick so Windows & Android lock the open file descriptor right away (0 MB limit, ~0 RAM)
     try {
-      if (file.size <= 50 * 1024 * 1024) {
-        dockPreloadedBufRef.current = await file.arrayBuffer();
-      } else {
-        await file.slice(0, 1).arrayBuffer();
-      }
+      const reader = file.stream().getReader();
+      const first = await reader.read();
+      dockStreamReaderRef.current = reader;
+      dockFirstChunkRef.current = !first.done && first.value ? first.value : null;
     } catch (err) {
       cleanupDock();
       toast.error(`Cannot read ${file.name}: ${err instanceof Error ? err.message : 'File permission denied'}`);
@@ -3579,6 +3582,7 @@ export function DirectMessagePane(): React.JSX.Element {
         );
       }
     };
+
     const dc = pc.createDataChannel('orbital-docking-airlock', { ordered: true });
     dc.binaryType = 'arraybuffer';
     dc.bufferedAmountLowThreshold = 1048576;
@@ -3602,51 +3606,56 @@ export function DirectMessagePane(): React.JSX.Element {
       if (startedSend) return;
       startedSend = true;
       const f = dockSendFileRef.current;
-      if (!f) return;
+      const reader = dockStreamReaderRef.current;
+      if (!f || !reader) return;
+
       setDockSession((prev) => (prev ? { ...prev, status: 'transferring' } : null));
       const FRAME = 65536;          // 64 KB SCTP-safe wire frame
-      const DISK_BLOCK = 2097152;   // 2 MB disk read-ahead (32x fewer disk syscalls)
       const HIGH_WATER = 4194304;   // 4 MB socket pipeline window
       let offset = 0;
       let lastTick = performance.now();
       let lastBytes = 0;
 
+      const sendView = async (blockView: Uint8Array) => {
+        let pos = 0;
+        while (pos < blockView.byteLength) {
+          if (dc.readyState !== 'open') return;
+          if (dc.bufferedAmount > HIGH_WATER) {
+            await new Promise<void>((resolve) => {
+              const onLow = () => { dc.removeEventListener('bufferedamountlow', onLow); resolve(); };
+              dc.addEventListener('bufferedamountlow', onLow);
+            });
+          }
+          const end = Math.min(pos + FRAME, blockView.byteLength);
+          const sliceLen = end - pos;
+          dc.send(new Uint8Array(blockView.subarray(pos, end)));
+          pos = end;
+          offset += sliceLen;
+        }
+        const now = performance.now();
+        if (now - lastTick >= 150 || offset >= f.size) {
+          const dt = Math.max(0.001, (now - lastTick) / 1000);
+          const bps = (offset - lastBytes) / dt;
+          lastTick = now;
+          lastBytes = offset;
+          setDockSession((prev) => (prev ? { ...prev, transferred: Math.min(offset, f.size), speedBps: bps } : null));
+        }
+      };
+
       try {
+        if (dockFirstChunkRef.current) {
+          const firstView = dockFirstChunkRef.current;
+          dockFirstChunkRef.current = null;
+          await sendView(firstView);
+        }
+
         while (offset < f.size) {
           if (dc.readyState !== 'open') return;
-          let blockBuf: ArrayBuffer;
-          try {
-            blockBuf = await f.slice(offset, offset + DISK_BLOCK).arrayBuffer();
-          } catch {
-            await new Promise((r) => setTimeout(r, 150));
-            blockBuf = await f.slice(offset, offset + DISK_BLOCK).arrayBuffer();
-          }
-          const blockView = new Uint8Array(blockBuf);
-          let pos = 0;
-
-          while (pos < blockView.byteLength) {
-            if (dc.readyState !== 'open') return;
-            if (dc.bufferedAmount > HIGH_WATER) {
-              await new Promise<void>((resolve) => {
-                const onLow = () => { dc.removeEventListener('bufferedamountlow', onLow); resolve(); };
-                dc.addEventListener('bufferedamountlow', onLow);
-              });
-            }
-            const end = Math.min(pos + FRAME, blockView.byteLength);
-            dc.send(blockView.subarray(pos, end));
-            pos = end;
-            offset += (end - (pos - (end - pos)));
-          }
-
-          const now = performance.now();
-          if (now - lastTick >= 150 || offset >= f.size) {
-            const dt = Math.max(0.001, (now - lastTick) / 1000);
-            const bps = (offset - lastBytes) / dt;
-            lastTick = now;
-            lastBytes = offset;
-            setDockSession((prev) => (prev ? { ...prev, transferred: Math.min(offset, f.size), speedBps: bps } : null));
-          }
+          const { done, value } = await reader.read();
+          if (done || !value) break;
+          await sendView(value);
         }
+
         dc.send('__DOCK_EOF__');
         setDockSession((prev) => (prev ? { ...prev, status: 'done', transferred: f.size, speedBps: 0 } : null));
         toast.success(`Docked & delivered ${file.name}!`);
@@ -3682,15 +3691,21 @@ export function DirectMessagePane(): React.JSX.Element {
       return;
     }
 
+    // Universal limitless receiver storage: OPFS private stream (zero RAM, works on Windows + Android without .crswap locks),
+    // with automatic in-memory Blob fallback if OPFS is unavailable
     let writable: { write: (data: ArrayBuffer) => Promise<void>; close: () => Promise<void> } | null = null;
-    if (typeof window !== 'undefined' && 'showSaveFilePicker' in window) {
-      try {
-        const picker = (window as unknown as { showSaveFilePicker: (opts: { suggestedName: string }) => Promise<{ createWritable: () => Promise<{ write: (data: ArrayBuffer) => Promise<void>; close: () => Promise<void> }> }> }).showSaveFilePicker;
-        const handle = await picker({ suggestedName: pending.fileName });
-        writable = await handle.createWritable();
-      } catch {
-        return;
+    let opfsRoot: FileSystemDirectoryHandle | null = null;
+    let opfsTempName: string | null = null;
+    try {
+      if (typeof navigator !== 'undefined' && navigator.storage?.getDirectory) {
+        opfsRoot = await navigator.storage.getDirectory();
+        opfsTempName = `dock_${pending.transferId}_${Date.now()}.bin`;
+        const tempHandle = await opfsRoot.getFileHandle(opfsTempName, { create: true });
+        writable = await tempHandle.createWritable();
       }
+    } catch {
+      writable = null;
+      opfsTempName = null;
     }
 
     const pc = new RTCPeerConnection({
@@ -3725,6 +3740,22 @@ export function DirectMessagePane(): React.JSX.Element {
     let lastBytes = 0;
     let writeChain = Promise.resolve();
 
+    const triggerDownload = (blobOrFile: Blob) => {
+      const url = URL.createObjectURL(blobOrFile);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = pending.fileName;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => {
+        URL.revokeObjectURL(url);
+        if (opfsRoot && opfsTempName) {
+          void opfsRoot.removeEntry(opfsTempName).catch(() => {});
+        }
+      }, 30_000);
+    };
+
     const flushBatch = () => {
       if (!writable || writeBatch.length === 0) return;
       const batchToWrite = writeBatch;
@@ -3740,7 +3771,6 @@ export function DirectMessagePane(): React.JSX.Element {
           const buf = await merged.arrayBuffer();
           await writable.write(buf);
         } catch {
-          // Windows Defender / SmartScreen locked the .crswap file — switch seamlessly to Blob download
           try { await writable.close(); } catch {}
           writable = null;
           fallbackChunks.push(await merged.arrayBuffer());
@@ -3758,19 +3788,15 @@ export function DirectMessagePane(): React.JSX.Element {
         if (typeof msgEv.data === 'string' && msgEv.data === '__DOCK_EOF__') {
           flushBatch();
           writeChain = writeChain.then(async () => {
-            if (writable) {
+            if (writable && opfsRoot && opfsTempName) {
               await writable.close();
+              const savedHandle = await opfsRoot.getFileHandle(opfsTempName);
+              const diskFile = await savedHandle.getFile();
+              triggerDownload(diskFile);
             } else {
               const blob = new Blob(fallbackChunks, { type: pending.fileType });
               fallbackChunks.length = 0;
-              const url = URL.createObjectURL(blob);
-              const a = document.createElement('a');
-              a.href = url;
-              a.download = pending.fileName;
-              document.body.appendChild(a);
-              a.click();
-              a.remove();
-              setTimeout(() => URL.revokeObjectURL(url), 10000);
+              triggerDownload(blob);
             }
             setDockSession((prev) => (prev ? { ...prev, status: 'done', transferred: pending.fileSize, speedBps: 0 } : null));
             toast.success(`Saved ${pending.fileName} & undocked!`);
