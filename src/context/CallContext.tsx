@@ -1845,6 +1845,7 @@ function CallProviderComponent({
   useEffect(() => {
     const unsubIncoming = signalRService.onIncomingCall(
       (call: CallSessionDto) => {
+        if (call.sessionId === '00000000-0000-0000-0000-00000000d0c5') return;
         if (call.groupId) return;
 
         const peer = resolvePeerId(null, call);
@@ -1884,6 +1885,7 @@ function CallProviderComponent({
 
     const unsubSignal = signalRService.onCallSignal(
       (payload: CallSignalPayload) => {
+        if (payload.sessionId === '00000000-0000-0000-0000-00000000d0c5') return;
         void handleSignalMessage(payload);
       },
     );

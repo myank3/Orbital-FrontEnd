@@ -399,6 +399,67 @@ const REPLY_RE = /^\[reply:(-?\d+)\]/;
 const V1_RE = /^\[v1\]/;
 const STICKER_RE = /^\[sticker\]/;
 const CALL_RE = /^\[call:(audio|video):(answered|missed|declined):(\d+)\]$/;
+const DOCK_PREFIX = '__ORBITAL_DOCK__:';
+const DOCK_SESSION_ID = '00000000-0000-0000-0000-00000000d0c5';
+
+function InterstellarDockIcon({ className = 'w-6 h-6', spinning = false }: { className?: string; spinning?: boolean }) {
+  return (
+    <svg
+      viewBox="0 0 36 36"
+      fill="none"
+      className={`${className} ${spinning ? 'animate-pulse' : ''}`}
+    >
+      {/* SpaceX Starship / Falcon Rocket Silhouette (45-deg orbital trajectory) */}
+      <g transform="rotate(45 18 18)">
+        {/* Forward aerodynamic flaps */}
+        <path d="M14.2 9.5L11.2 12.2L14.2 12.6Z" fill="currentColor" opacity="0.85" />
+        <path d="M21.8 9.5L24.8 12.2L21.8 12.6Z" fill="currentColor" opacity="0.85" />
+        {/* Main stainless-steel fuselage + ogive nose cone */}
+        <path
+          d="M18 3.2C15.5 6.4 14.3 9.8 14.3 14.5V24.2H21.7V14.5C21.7 9.8 20.5 6.4 18 3.2Z"
+          stroke="currentColor"
+          strokeWidth="1.75"
+          strokeLinejoin="round"
+        />
+        {/* Aft delta fins / landing legs */}
+        <path d="M14.3 19.5L10.2 24.8L14.3 24.2Z" fill="currentColor" />
+        <path d="M21.7 19.5L25.8 24.8L21.7 24.2Z" fill="currentColor" />
+        {/* Payload bay / cockpit viewport */}
+        <circle cx="18" cy="13.2" r="1.65" fill="currentColor" />
+        {/* Raptor engine bell */}
+        <path d="M15.8 24.2H20.2L20.9 26.4H15.1L15.8 24.2Z" fill="currentColor" />
+        {/* Thruster exhaust plume */}
+        <path
+          d="M16.2 27.6C16.2 29.8 18 32.5 18 32.5C18 32.5 19.8 29.8 19.8 27.6"
+          stroke="currentColor"
+          strokeWidth="1.6"
+          strokeLinecap="round"
+          opacity={spinning ? '1' : '0.7'}
+        />
+      </g>
+    </svg>
+  );
+}
+
+type DockSignal =
+  | { type: 'dock-offer'; transferId: string; fileName: string; fileSize: number; fileType: string; sdp: string }
+  | { type: 'dock-answer'; transferId: string; sdp: string }
+  | { type: 'dock-ice'; transferId: string; candidate: RTCIceCandidateInit }
+  | { type: 'dock-cancel'; transferId: string };
+
+interface DockSession {
+  transferId: string;
+  direction: 'send' | 'receive';
+  peerId: string;
+  peerName: string;
+  fileName: string;
+  fileSize: number;
+  fileType: string;
+  status: 'offering' | 'incoming' | 'connecting' | 'transferring' | 'done' | 'error';
+  transferred: number;
+  speedBps: number;
+  error?: string;
+}
 
 export interface ReactionEntry {
   emoji: string;
@@ -2860,7 +2921,7 @@ type AttachItem = {
 };
 
 function AttachPanel({
-  theme, onPhoto, onCamera, onVideo, onDocument, onAudio,
+  theme, onPhoto, onCamera, onVideo, onDocument, onAudio, onDocking,
 }: {
   theme: ChatTheme;
   onPhoto: () => void;
@@ -2868,6 +2929,7 @@ function AttachPanel({
   onVideo: () => void;
   onDocument: () => void;
   onAudio: () => void;
+  onDocking?: () => void;
 }) {
   const items: AttachItem[] = [
     { key: 'photo', label: 'Gallery', icon: <ImageIcon className="w-6 h-6" />, color: 'from-[#7C3AED] to-[#A855F7]', onClick: onPhoto },
@@ -2875,6 +2937,7 @@ function AttachPanel({
     { key: 'video', label: 'Video', icon: <Video className="w-6 h-6" />, color: 'from-[#EC4899] to-[#F43F5E]', onClick: onVideo },
     { key: 'doc', label: 'Document', icon: <FileText className="w-6 h-6" />, color: 'from-[#2563EB] to-[#3B82F6]', onClick: onDocument },
     { key: 'audio', label: 'Audio', icon: <Music className="w-6 h-6" />, color: 'from-[#F59E0B] to-[#F97316]', onClick: onAudio },
+    ...(onDocking ? [{ key: 'docking', label: 'Docking', icon: <InterstellarDockIcon className="w-7 h-7" />, color: 'from-[#10B981] to-[#059669]', onClick: onDocking }] : []),
   ];
 
   const renderItem = (it: AttachItem) => (
@@ -2912,6 +2975,7 @@ function AttachPanel({
 type PanelKind = 'none' | 'emoji' | 'attach';
 
 interface ComposerProps {
+  onDocking?: () => void;
   userId: string;
   targetName: string;
   theme: ChatTheme;
@@ -2926,7 +2990,7 @@ interface ComposerProps {
 }
 
 const Composer = React.memo(function Composer({
-  userId, targetName, theme, replyTo, onCancelReply, onSend, onSendMedia, onSendGif, onSendSticker,
+  userId, onDocking, targetName, theme, replyTo, onCancelReply, onSend, onSendMedia, onSendGif, onSendSticker,
   onSendingStateChange,
 }: ComposerProps) {
   const { onType, stop: stopTyping } = useDmTypingEmitter(userId);
@@ -3252,6 +3316,7 @@ const Composer = React.memo(function Composer({
             onVideo={() => videoRef.current?.click()}
             onDocument={() => documentRef.current?.click()}
             onAudio={() => audioRef.current?.click()}
+            onDocking={onDocking ? () => { setPanel('none'); onDocking(); } : undefined}
           />
         )}
       </div>
@@ -3318,6 +3383,364 @@ export function DirectMessagePane(): React.JSX.Element {
   });
   const [friendsLoaded, setFriendsLoaded] = useState(false);
   const [targetUser, setTargetUser] = useState<UserProfileDto | null>(null);
+
+  // Orbital Docking: Ultra-Fast Zero-RAM / Zero-Server P2P Airlock
+  const [dockSession, setDockSession] = useState<DockSession | null>(null);
+  const dockInputRef = useRef<HTMLInputElement | null>(null);
+  const dockPcRef = useRef<RTCPeerConnection | null>(null);
+  const dockDcRef = useRef<RTCDataChannel | null>(null);
+  const dockSendFileRef = useRef<File | null>(null);
+  const dockPendingOfferRef = useRef<{ transferId: string; fileName: string; fileSize: number; fileType: string; sdp: string; senderId: string } | null>(null);
+  const dockIceQueueRef = useRef<RTCIceCandidateInit[]>([]);
+  const dockSessionRef = useRef<DockSession | null>(null);
+  dockSessionRef.current = dockSession;
+  const friendsLookupRef = useRef<FriendDto[]>([]);
+  friendsLookupRef.current = friends;
+
+  const cleanupDock = useCallback(() => {
+    try { dockDcRef.current?.close(); } catch {}
+    try { dockPcRef.current?.close(); } catch {}
+    dockDcRef.current = null;
+    dockPcRef.current = null;
+    dockSendFileRef.current = null;
+    dockPendingOfferRef.current = null;
+    dockIceQueueRef.current = [];
+  }, []);
+
+  useEffect(() => () => cleanupDock(), [cleanupDock]);
+
+  const sendDockSignal = useCallback(async (targetId: string, sig: DockSignal) => {
+    try {
+      if (sig.type === 'dock-ice') {
+        await signalRService.sendCallSignal(DOCK_SESSION_ID, targetId, {
+          type: 'candidate',
+          candidate: sig.candidate,
+        });
+        return;
+      }
+      const encoded = DOCK_PREFIX + JSON.stringify(sig);
+      if (sig.type === 'dock-offer') {
+        await signalRService.sendCallSignal(DOCK_SESSION_ID, targetId, {
+          type: 'offer',
+          sdp: encoded,
+        });
+      } else {
+        await signalRService.sendCallSignal(DOCK_SESSION_ID, targetId, {
+          type: 'answer',
+          sdp: encoded,
+        });
+      }
+    } catch (err) {
+      console.warn('[Orbital Docking] Signal failed:', err);
+      toast.error('Docking handshake failed to reach peer.');
+    }
+  }, []);
+
+  const cancelDocking = useCallback(() => {
+    const cur = dockSessionRef.current;
+    if (cur) {
+      void sendDockSignal(cur.peerId, { type: 'dock-cancel', transferId: cur.transferId });
+    }
+    cleanupDock();
+    setDockSession(null);
+  }, [cleanupDock, sendDockSignal]);
+
+  const startDockSend = useCallback(async (file: File) => {
+    if (!userId || !targetUser) return;
+    if (!presenceStore.isOnline(userId)) {
+      toast.error(`${targetUser.displayName} must be online to initiate Docking.`);
+      return;
+    }
+    cleanupDock();
+    const transferId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    dockSendFileRef.current = file;
+
+    const pc = new RTCPeerConnection({
+      iceServers: [
+        { urls: 'stun:stun.l.google.com:19302' },
+        { urls: 'stun:stun.cloudflare.com:3478' },
+      ],
+    });
+    dockPcRef.current = pc;
+
+    pc.onicecandidate = (e) => {
+      if (e.candidate) {
+        void sendDockSignal(userId, { type: 'dock-ice', transferId, candidate: e.candidate.toJSON() });
+      }
+    };
+
+    pc.oniceconnectionstatechange = () => {
+      const st = pc.iceConnectionState;
+      if (st === 'failed' || st === 'disconnected') {
+        setDockSession((prev) => (prev && prev.status !== 'done' ? { ...prev, status: 'error', error: 'Direct P2P route blocked by network NAT (' + st + ')' } : prev));
+      }
+    };
+    const dc = pc.createDataChannel('orbital-docking-airlock', { ordered: true });
+    dc.binaryType = 'arraybuffer';
+    dc.bufferedAmountLowThreshold = 1048576;
+    dockDcRef.current = dc;
+
+    setDockSession({
+      transferId,
+      direction: 'send',
+      peerId: userId,
+      peerName: targetUser.displayName,
+      fileName: file.name,
+      fileSize: file.size,
+      fileType: file.type || 'application/octet-stream',
+      status: 'offering',
+      transferred: 0,
+      speedBps: 0,
+    });
+
+    dc.onopen = async () => {
+      const f = dockSendFileRef.current;
+      if (!f) return;
+      setDockSession((prev) => (prev ? { ...prev, status: 'transferring' } : null));
+      const FRAME = 65536;          // 64 KB SCTP-safe wire frame
+      const DISK_BLOCK = 2097152;   // 2 MB disk read-ahead (32x fewer disk syscalls)
+      const HIGH_WATER = 4194304;   // 4 MB socket pipeline window
+      let offset = 0;
+      let lastTick = performance.now();
+      let lastBytes = 0;
+
+      try {
+        while (offset < f.size) {
+          if (dc.readyState !== 'open') return;
+          const blockBuf = await f.slice(offset, offset + DISK_BLOCK).arrayBuffer();
+          const blockView = new Uint8Array(blockBuf);
+          let pos = 0;
+
+          while (pos < blockView.byteLength) {
+            if (dc.readyState !== 'open') return;
+            if (dc.bufferedAmount > HIGH_WATER) {
+              await new Promise<void>((resolve) => {
+                const onLow = () => { dc.removeEventListener('bufferedamountlow', onLow); resolve(); };
+                dc.addEventListener('bufferedamountlow', onLow);
+              });
+            }
+            const end = Math.min(pos + FRAME, blockView.byteLength);
+            dc.send(blockView.subarray(pos, end));
+            pos = end;
+            offset += (end - (pos - (end - pos)));
+          }
+
+          const now = performance.now();
+          if (now - lastTick >= 150 || offset >= f.size) {
+            const dt = Math.max(0.001, (now - lastTick) / 1000);
+            const bps = (offset - lastBytes) / dt;
+            lastTick = now;
+            lastBytes = offset;
+            setDockSession((prev) => (prev ? { ...prev, transferred: offset, speedBps: bps } : null));
+          }
+        }
+        dc.send('__DOCK_EOF__');
+        setDockSession((prev) => (prev ? { ...prev, status: 'done', transferred: f.size, speedBps: 0 } : null));
+        toast.success(`Docked & delivered ${file.name}!`);
+        setTimeout(() => {
+          cleanupDock();
+          setDockSession((prev) => (prev?.transferId === transferId ? null : prev));
+        }, 2200);
+      } catch (err) {
+        setDockSession((prev) => (prev ? { ...prev, status: 'error', error: String(err) } : null));
+      }
+    };
+
+    const offer = await pc.createOffer();
+    await pc.setLocalDescription(offer);
+    await sendDockSignal(userId, {
+      type: 'dock-offer',
+      transferId,
+      fileName: file.name,
+      fileSize: file.size,
+      fileType: file.type || 'application/octet-stream',
+      sdp: offer.sdp ?? '',
+    });
+  }, [cleanupDock, sendDockSignal, targetUser, userId]);
+
+  const acceptDockReceive = useCallback(async () => {
+    const pending = dockPendingOfferRef.current;
+    if (!pending) return;
+
+    let writable: { write: (data: ArrayBuffer) => Promise<void>; close: () => Promise<void> } | null = null;
+    if (typeof window !== 'undefined' && 'showSaveFilePicker' in window) {
+      try {
+        const picker = (window as unknown as { showSaveFilePicker: (opts: { suggestedName: string }) => Promise<{ createWritable: () => Promise<{ write: (data: ArrayBuffer) => Promise<void>; close: () => Promise<void> }> }> }).showSaveFilePicker;
+        const handle = await picker({ suggestedName: pending.fileName });
+        writable = await handle.createWritable();
+      } catch {
+        return;
+      }
+    }
+
+    const pc = new RTCPeerConnection({
+      iceServers: [
+        { urls: 'stun:stun.l.google.com:19302' },
+        { urls: 'stun:stun.cloudflare.com:3478' },
+      ],
+    });
+    dockPcRef.current = pc;
+
+    pc.onicecandidate = (e) => {
+      if (e.candidate) {
+        void sendDockSignal(pending.senderId, { type: 'dock-ice', transferId: pending.transferId, candidate: e.candidate.toJSON() });
+      }
+    };
+
+    const fallbackChunks: ArrayBuffer[] = [];
+    let writeBatch: ArrayBuffer[] = [];
+    let writeBatchBytes = 0;
+    let received = 0;
+    let lastTick = performance.now();
+    let lastBytes = 0;
+    let writeChain = Promise.resolve();
+
+    const flushBatch = () => {
+      if (!writable || writeBatch.length === 0) return;
+      const batchToWrite = writeBatch;
+      writeBatch = [];
+      writeBatchBytes = 0;
+      const merged = new Blob(batchToWrite);
+      writeChain = writeChain.then(async () => {
+        const buf = await merged.arrayBuffer();
+        await writable!.write(buf);
+      });
+    };
+
+    pc.ondatachannel = (ev) => {
+      const dc = ev.channel;
+      dc.binaryType = 'arraybuffer';
+      dockDcRef.current = dc;
+      setDockSession((prev) => (prev ? { ...prev, status: 'transferring' } : null));
+
+      dc.onmessage = (msgEv) => {
+        if (typeof msgEv.data === 'string' && msgEv.data === '__DOCK_EOF__') {
+          flushBatch();
+          writeChain = writeChain.then(async () => {
+            if (writable) {
+              await writable.close();
+            } else {
+              const blob = new Blob(fallbackChunks, { type: pending.fileType });
+              fallbackChunks.length = 0;
+              const url = URL.createObjectURL(blob);
+              const a = document.createElement('a');
+              a.href = url;
+              a.download = pending.fileName;
+              document.body.appendChild(a);
+              a.click();
+              a.remove();
+              setTimeout(() => URL.revokeObjectURL(url), 10000);
+            }
+            setDockSession((prev) => (prev ? { ...prev, status: 'done', transferred: pending.fileSize, speedBps: 0 } : null));
+            toast.success(`Saved ${pending.fileName} & undocked!`);
+            setTimeout(() => {
+              cleanupDock();
+              setDockSession((prev) => (prev?.transferId === pending.transferId ? null : prev));
+            }, 2200);
+          });
+          return;
+        }
+
+        if (msgEv.data instanceof ArrayBuffer) {
+          const chunk = msgEv.data;
+          received += chunk.byteLength;
+          if (writable) {
+            writeBatch.push(chunk);
+            writeBatchBytes += chunk.byteLength;
+            if (writeBatchBytes >= 2097152) flushBatch();
+          } else {
+            fallbackChunks.push(chunk);
+          }
+
+          const now = performance.now();
+          if (now - lastTick >= 150 || received >= pending.fileSize) {
+            const dt = Math.max(0.001, (now - lastTick) / 1000);
+            const bps = (received - lastBytes) / dt;
+            lastTick = now;
+            lastBytes = received;
+            setDockSession((prev) => (prev ? { ...prev, transferred: received, speedBps: bps } : null));
+          }
+        }
+      };
+    };
+
+    setDockSession((prev) => (prev ? { ...prev, status: 'connecting' } : null));
+    await pc.setRemoteDescription({ type: 'offer', sdp: pending.sdp });
+    for (const c of dockIceQueueRef.current) {
+      try { await pc.addIceCandidate(c); } catch {}
+    }
+    dockIceQueueRef.current = [];
+
+    const answer = await pc.createAnswer();
+    await pc.setLocalDescription(answer);
+    await sendDockSignal(pending.senderId, {
+      type: 'dock-answer',
+      transferId: pending.transferId,
+      sdp: answer.sdp ?? '',
+    });
+  }, [cleanupDock, sendDockSignal]);
+
+  useEffect(() => {
+    const unsub = signalRService.onCallSignal(async (payload) => {
+      if (payload.sessionId !== DOCK_SESSION_ID) return;
+      if (payload.senderId === user?.id) return;
+
+      const data = payload.signalData as { type?: string; sdp?: string; candidate?: RTCIceCandidateInit };
+      try {
+        if (data.type === 'candidate' && data.candidate) {
+          if (dockPcRef.current && dockPcRef.current.remoteDescription) {
+            try { await dockPcRef.current.addIceCandidate(data.candidate); } catch {}
+          } else {
+            dockIceQueueRef.current.push(data.candidate);
+          }
+          return;
+        }
+
+        const raw = data.sdp ?? '';
+        if (!raw.startsWith(DOCK_PREFIX)) return;
+        const sig = JSON.parse(raw.slice(DOCK_PREFIX.length)) as DockSignal;
+
+        if (sig.type === 'dock-offer') {
+          cleanupDock();
+          dockPendingOfferRef.current = {
+            transferId: sig.transferId,
+            fileName: sig.fileName,
+            fileSize: sig.fileSize,
+            fileType: sig.fileType,
+            sdp: sig.sdp,
+            senderId: payload.senderId,
+          };
+          const senderFriend = friendsLookupRef.current.find((f) => f.userId === payload.senderId);
+          setDockSession({
+            transferId: sig.transferId,
+            direction: 'receive',
+            peerId: payload.senderId,
+            peerName: senderFriend?.displayName ?? 'Peer',
+            fileName: sig.fileName,
+            fileSize: sig.fileSize,
+            fileType: sig.fileType,
+            status: 'incoming',
+            transferred: 0,
+            speedBps: 0,
+          });
+        } else if (sig.type === 'dock-answer' && dockPcRef.current) {
+          await dockPcRef.current.setRemoteDescription({ type: 'answer', sdp: sig.sdp });
+          for (const c of dockIceQueueRef.current) {
+            try { await dockPcRef.current.addIceCandidate(c); } catch {}
+          }
+          dockIceQueueRef.current = [];
+          setDockSession((prev) => (prev ? { ...prev, status: 'connecting' } : null));
+        } else if (sig.type === 'dock-cancel') {
+          cleanupDock();
+          setDockSession(null);
+          toast.info('Docking cancelled by peer.');
+        }
+      } catch (e) {
+        console.warn('[Orbital Docking] Invalid signal:', e);
+      }
+    });
+    return () => unsub();
+  }, [cleanupDock, user?.id]);
   const [messages, setMessages] = useState<LocalMessage[]>([]);
   const [loadingHistory, setLoadingHistory] = useState(false);
   const [historyError, setHistoryError] = useState<string | null>(null);
@@ -4572,6 +4995,16 @@ export function DirectMessagePane(): React.JSX.Element {
                 </div>
               </div>
               <div className="flex items-center gap-0.5 sm:gap-1 shrink-0">
+                <input
+                  ref={dockInputRef}
+                  type="file"
+                  className="hidden"
+                  onChange={(e) => {
+                    const f = e.target.files?.[0];
+                    e.target.value = '';
+                    if (f) void startDockSend(f);
+                  }}
+                />
                         <button
                   onClick={() => void handleAudioCall()}
                   title={inCallWithThisPeer ? 'Already in call' : 'Audio call'}
@@ -4620,6 +5053,63 @@ export function DirectMessagePane(): React.JSX.Element {
                     <UserPlus className="w-3.5 h-3.5" /> Add friend
                   </button>
                 </div>
+              </div>
+            )}
+
+            {dockSession && (
+              <div className="shrink-0 mx-3 sm:mx-5 mt-2.5 p-3.5 rounded-2xl bg-[#181613]/95 border border-[#10B981]/35 shadow-xl relative z-20 flex flex-col gap-2">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-2.5 min-w-0">
+                    <span className="w-8 h-8 rounded-xl bg-[#10B981]/15 text-[#10B981] flex items-center justify-center shrink-0">
+                      <InterstellarDockIcon className="w-5 h-5" spinning={dockSession.status === 'transferring' || dockSession.status === 'connecting'} />
+                    </span>
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-1.5">
+                        <span className="px-1.5 py-0.5 rounded bg-[#10B981]/20 text-[#34D399] text-[9.5px] font-bold uppercase tracking-wider">
+                          Docking - P2P Airlock
+                        </span>
+                        <p className="text-[12.5px] font-bold text-[#EDE5D4] truncate">
+                          {dockSession.direction === 'send' ? `To ${dockSession.peerName}` : `From ${dockSession.peerName}`}
+                        </p>
+                      </div>
+                      <p className="text-[11px] text-[#A8A29E] truncate mt-0.5">
+                        {dockSession.fileName} - {formatFileSize(dockSession.fileSize)}
+                        {dockSession.status === 'offering' ? ' - Waiting for peer to accept...' : ''}
+                        {dockSession.status === 'connecting' ? ' - Locking P2P airlock...' : ''}
+                        {dockSession.status === 'transferring' ? ` - ${formatFileSize(dockSession.transferred)} / ${formatFileSize(dockSession.fileSize)} (${formatFileSize(dockSession.speedBps)}/s)` : ''}
+                        {dockSession.status === 'error' ? ` - ${dockSession.error ?? 'Connection failed'}` : ''}
+                        {dockSession.status === 'done' ? ' - Complete (Undocking...)' : ''}
+                      </p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    {dockSession.status === 'incoming' && (
+                      <button
+                        onClick={() => void acceptDockReceive()}
+                        className="h-8 px-3 rounded-xl bg-[#10B981] hover:bg-[#059669] text-white text-[11.5px] font-semibold"
+                      >
+                        Dock & Save
+                      </button>
+                    )}
+                    {dockSession.status !== 'done' && (
+                      <button
+                        onClick={cancelDocking}
+                        title="Undock / Cancel"
+                        className="w-8 h-8 rounded-xl bg-white/5 hover:bg-white/10 text-[#A8A29E] flex items-center justify-center"
+                      >
+                        <X className="w-4 h-4" />
+                      </button>
+                    )}
+                  </div>
+                </div>
+                {(dockSession.status === 'transferring' || dockSession.status === 'done' || dockSession.status === 'offering' || dockSession.status === 'connecting') && (
+                  <div className="w-full h-1.5 rounded-full bg-white/10 overflow-hidden">
+                    <div
+                      className="h-full bg-gradient-to-r from-[#10B981] to-[#34D399] transition-all duration-150"
+                      style={{ width: `${dockSession.fileSize > 0 ? Math.min(100, Math.round((dockSession.transferred / dockSession.fileSize) * 100)) : 100}%` }}
+                    />
+                  </div>
+                )}
               </div>
             )}
 
@@ -4748,6 +5238,7 @@ export function DirectMessagePane(): React.JSX.Element {
               replyTo={replyTo}
               onCancelReply={handleCancelReply}
               onSend={handleComposerSend}
+              onDocking={() => dockInputRef.current?.click()}
               onSendMedia={handleSendMedia}
               onSendGif={handleSendGif}
               onSendSticker={handleSendSticker}
