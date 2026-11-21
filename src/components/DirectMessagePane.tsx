@@ -3560,10 +3560,17 @@ export function DirectMessagePane(): React.JSX.Element {
               ? [data.iceServers]
               : [];
           if (rawList.length > 0) {
+            const tcpOnlyServers = rawList
+              .map((srv) => {
+                const rawUrls = Array.isArray(srv.urls) ? srv.urls : [srv.urls];
+                const filtered = rawUrls.filter((u) => !u.startsWith('turn') || u.includes('transport=tcp'));
+                return { ...srv, urls: filtered.length > 0 ? filtered : rawUrls };
+              })
+              .filter((srv) => (Array.isArray(srv.urls) ? srv.urls.length > 0 : Boolean(srv.urls)));
             return {
-              iceServers: [...fallbackServers, ...rawList],
+              iceServers: [...fallbackServers, ...tcpOnlyServers],
               iceTransportPolicy: 'all',
-              iceCandidatePoolSize: 6,
+              iceCandidatePoolSize: 4,
             };
           }
         } else {
@@ -3902,9 +3909,21 @@ export function DirectMessagePane(): React.JSX.Element {
     const pc = new RTCPeerConnection(await getDockIceConfig());
     dockPcRef.current = pc;
 
+    let rxRelayCount = 0;
+    let rxTurnErr = '';
+    let rxIceRestarted = false;
     pc.onicecandidate = (e) => {
-      if (e.candidate && !isBlockedCarrierSrflxOnAndroid(e.candidate.candidate)) {
-        void sendDockSignal(pending.senderId, { type: 'dock-ice', transferId: pending.transferId, candidate: e.candidate.toJSON() });
+      if (e.candidate) {
+        if (/\btyp\s+relay\b/i.test(e.candidate.candidate)) rxRelayCount++;
+        if (!isBlockedCarrierSrflxOnAndroid(e.candidate.candidate)) {
+          void sendDockSignal(pending.senderId, { type: 'dock-ice', transferId: pending.transferId, candidate: e.candidate.toJSON() });
+        }
+      }
+    };
+    pc.onicecandidateerror = (ev) => {
+      const errEv = ev as RTCPeerConnectionIceErrorEvent;
+      if (errEv.errorCode && errEv.errorCode >= 400) {
+        rxTurnErr = `TURN ${errEv.errorCode}`;
       }
     };
 
@@ -3934,13 +3953,21 @@ export function DirectMessagePane(): React.JSX.Element {
           }, 15000);
         }
       } else if (st === 'failed') {
+        if (!rxIceRestarted && typeof pc.restartIce === 'function') {
+          rxIceRestarted = true;
+          try { pc.restartIce(); return; } catch {}
+        }
         if (rxDisconnectTimer) {
           window.clearTimeout(rxDisconnectTimer);
           rxDisconnectTimer = null;
         }
         setDockSession((prev) =>
           prev && prev.status !== 'done'
-            ? { ...prev, status: 'error', error: 'Carrier CGNAT blocked P2P — connect both to same Wi-Fi or retry' }
+            ? {
+                ...prev,
+                status: 'error',
+                error: `ICE failed (relay=${rxRelayCount}${rxTurnErr ? `, ${rxTurnErr}` : ''}) — retry`,
+              }
             : prev
         );
       }
