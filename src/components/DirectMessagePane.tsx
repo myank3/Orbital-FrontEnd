@@ -3748,7 +3748,7 @@ export function DirectMessagePane(): React.JSX.Element {
       }
     };
 
-    const EXTRA_SOCKETS = 2; // 1 primary + 2 extra = 3 independent RTCPeerConnections (3x SCTP windows)
+    const EXTRA_SOCKETS = 3; // 1 primary + 2 extra = 3 independent RTCPeerConnections (3x SCTP windows)
     const ctrlDc = pc.createDataChannel('orbital-dock-ctrl', { ordered: true });
     const dc = pc.createDataChannel('orbital-dock-lane-0', { ordered: true });
     dc.binaryType = 'arraybuffer';
@@ -3759,6 +3759,7 @@ export function DirectMessagePane(): React.JSX.Element {
     const auxIceQueues: RTCIceCandidateInit[][] = [];
     const activeLanes: RTCDataChannel[] = [];
     let ackedBytes = 0;
+    let receiverDone = false;
     let ackWaiters: Array<() => void> = [];
 
     const notifyAckWaiters = () => {
@@ -3784,7 +3785,11 @@ export function DirectMessagePane(): React.JSX.Element {
       if (typeof ev.data !== 'string') return;
       try {
         const msg = JSON.parse(ev.data) as { t?: string; idx?: number; sdp?: string; candidate?: RTCIceCandidateInit; bytes?: number };
-        if (msg.t === 'ack' && typeof msg.bytes === 'number') {
+        if (msg.t === 'done') {
+          receiverDone = true;
+          if (typeof msg.bytes === 'number' && msg.bytes > ackedBytes) ackedBytes = msg.bytes;
+          notifyAckWaiters();
+        } else if (msg.t === 'ack' && typeof msg.bytes === 'number') {
           if (msg.bytes > ackedBytes) {
             ackedBytes = msg.bytes;
             notifyAckWaiters();
@@ -3868,8 +3873,8 @@ export function DirectMessagePane(): React.JSX.Element {
 
       setDockSession((prev) => (prev ? { ...prev, status: 'transferring' } : null));
       const FRAME = 16376; // 8-byte header + 16376 = 16384B exact (zero fragmentation / zero runt packets)
-      const HIGH_WATER = 262144; // 256 KB per independent SCTP socket
-      const IN_FLIGHT_LIMIT = 3 * 1024 * 1024; // 3 MB receiver-paced sliding window across all sockets
+      const HIGH_WATER = 524288; // 256 KB per independent SCTP socket
+      const IN_FLIGHT_LIMIT = 4 * 1024 * 1024; // 3 MB receiver-paced sliding window across all sockets
       let offset = 0;
       let lastTick = performance.now();
       let lastNetBytes = 0;
@@ -3964,18 +3969,24 @@ export function DirectMessagePane(): React.JSX.Element {
           updateRealProgress(false);
           await new Promise<void>((r) => window.setTimeout(r, 60));
         }
-        updateRealProgress(true);
         sendCtrl({ t: 'eof', totalBytes: f.size });
         if (dc.readyState === 'open') {
           dc.send('__DOCK_EOF__');
         }
+        // Keep all TURN sockets alive until receiver confirms all bytes landed
+        const confirmDeadline = performance.now() + 20000;
+        while (!receiverDone && ackedBytes < f.size && performance.now() < confirmDeadline) {
+          updateRealProgress(false);
+          await new Promise<void>((r) => window.setTimeout(r, 100));
+        }
+        updateRealProgress(true);
         setDockSession((prev) => (prev ? { ...prev, status: 'done', transferred: f.size, speedBps: 0 } : null));
         toast.success(`Docked & delivered ${file.name}!`);
         setTimeout(() => {
           closeAuxSockets();
           cleanupDock();
           setDockSession((prev) => (prev?.transferId === transferId ? null : prev));
-        }, 2500);
+        }, 1500);
       } catch (err) {
         closeAuxSockets();
         setDockSession((prev) => (prev ? { ...prev, status: 'error', error: String(err) } : null));
@@ -4211,7 +4222,7 @@ export function DirectMessagePane(): React.JSX.Element {
         window.clearTimeout(rxDisconnectTimer);
         rxDisconnectTimer = null;
       }
-      sendRxCtrl({ t: 'ack', bytes: received });
+      sendRxCtrl({ t: 'done', bytes: received });
 
       void (async () => {
         try {
@@ -4263,7 +4274,11 @@ export function DirectMessagePane(): React.JSX.Element {
 
       dc.onmessage = (msgEv) => {
         if (typeof msgEv.data === 'string' && msgEv.data === '__DOCK_EOF__') {
-          finalizeReceive();
+          if (pending.fileSize <= 0 || received >= pending.fileSize) {
+            finalizeReceive();
+          } else if (!rxFullBytesTimer && !rxFinalized) {
+            rxFullBytesTimer = window.setTimeout(() => finalizeReceive(), 5000);
+          }
           return;
         }
 
@@ -4283,7 +4298,7 @@ export function DirectMessagePane(): React.JSX.Element {
           if (received - lastAckedSent >= 262144 || now - lastAckTime >= 100) {
             lastAckedSent = received;
             lastAckTime = now;
-            sendRxCtrl({ t: 'ack', bytes: received });
+            sendRxCtrl({ t: 'done', bytes: received });
           }
 
           if (pending.fileSize > 0 && received >= pending.fileSize && !rxFullBytesTimer && !rxFinalized) {
@@ -4337,7 +4352,11 @@ export function DirectMessagePane(): React.JSX.Element {
                 auxIceQueues[msg.idx].push(msg.candidate);
               }
             } else if (msg.t === 'eof') {
-              finalizeReceive();
+              if (pending.fileSize <= 0 || received >= pending.fileSize) {
+                finalizeReceive();
+              } else if (!rxFullBytesTimer && !rxFinalized) {
+                rxFullBytesTimer = window.setTimeout(() => finalizeReceive(), 5000);
+              }
             }
           } catch {}
         };
