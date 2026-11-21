@@ -1298,8 +1298,8 @@ async function tryZeroTokenIntent(
     };
   }
 
-  // 9C. Direct Chalachitra / Signals Channel launch ("open chalachitra", "open chalchitra", "open signals")
-  if (/^(?:open|launch|start|go\s+to|tune\s+(?:in\s+)?to)\s+chala?chitra$/i.test(lower)) {
+  // 9C. Direct Chalachitra / movie launch ("let's watch a movie", "watch a movie", "open chalachitra", "open chalchitra")
+  if (/\b(?:watch\s+(?:a\s+)?movies?|watch\s+(?:a\s+)?films?|cinema|chala?chitra)\b/i.test(lower)) {
     handlers.navigate('/app/signals?channel=movies');
     return {
       reply: 'Opening Chalachitra in Signals.',
@@ -1314,20 +1314,6 @@ async function tryZeroTokenIntent(
       reply: 'Opening Signals.',
       pendingContext: null,
       actionTaken: true,
-    };
-  }
-
-  // 9D. Watch a movie / cinema intent
-  if (/\b(?:watch\s+(?:a\s+)?movie|watch\s+film|cinema|chala?chitra)\b/i.test(lower)) {
-    return {
-      reply: `Hey ${displayUser}, want to open Chalachitra in Signals or check Media?`,
-      quickActions: [
-        { label: 'Open Chalachitra', path: '/app/signals?channel=movies' },
-        { label: 'Open Signals', path: '/app/signals' },
-        { label: 'Open Media', path: '/app/notifications' },
-      ],
-      pendingContext: null,
-      actionTaken: false,
     };
   }
 
