@@ -4461,6 +4461,7 @@ export function DirectMessagePane(): React.JSX.Element {
             transferred: 0,
             speedBps: 0,
           });
+          toast(`${resolvedName} is docking (${sig.fileName}) — open DM to accept`, { duration: 1800 });
         } else if (sig.type === 'dock-answer' && dockPcRef.current) {
           await dockPcRef.current.setRemoteDescription({ type: 'answer', sdp: sig.sdp });
           for (const c of dockIceQueueRef.current) {
