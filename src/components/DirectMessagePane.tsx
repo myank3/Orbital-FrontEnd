@@ -3703,7 +3703,8 @@ export function DirectMessagePane(): React.JSX.Element {
       return;
     }
 
-    const pc = new RTCPeerConnection(await getDockIceConfig());
+    const dockIceConfig = await getDockIceConfig();
+    const pc = new RTCPeerConnection(dockIceConfig);
     dockPcRef.current = pc;
 
     pc.onicecandidate = (e) => {
@@ -3747,15 +3748,100 @@ export function DirectMessagePane(): React.JSX.Element {
       }
     };
 
-    const LANE_COUNT = 4;
-    const lanes = Array.from({ length: LANE_COUNT }, (_, idx) => {
-      const ch = pc.createDataChannel(`orbital-dock-lane-${idx}`, { ordered: true });
-      ch.binaryType = 'arraybuffer';
-      ch.bufferedAmountLowThreshold = 65536;
-      return ch;
-    });
-    const dc = lanes[0];
+    const EXTRA_SOCKETS = 2; // 1 primary + 2 extra = 3 independent RTCPeerConnections (3x SCTP windows)
+    const ctrlDc = pc.createDataChannel('orbital-dock-ctrl', { ordered: true });
+    const dc = pc.createDataChannel('orbital-dock-lane-0', { ordered: true });
+    dc.binaryType = 'arraybuffer';
+    dc.bufferedAmountLowThreshold = 131072;
     dockDcRef.current = dc;
+
+    const auxPcs: RTCPeerConnection[] = [];
+    const auxIceQueues: RTCIceCandidateInit[][] = [];
+    const activeLanes: RTCDataChannel[] = [];
+    let ackedBytes = 0;
+    let ackWaiters: Array<() => void> = [];
+
+    const notifyAckWaiters = () => {
+      const list = ackWaiters;
+      ackWaiters = [];
+      for (const fn of list) fn();
+    };
+
+    const closeAuxSockets = () => {
+      for (const apc of auxPcs) {
+        try { apc.close(); } catch {}
+      }
+      auxPcs.length = 0;
+    };
+
+    const sendCtrl = (msg: Record<string, unknown>) => {
+      if (ctrlDc.readyState === 'open') {
+        try { ctrlDc.send(JSON.stringify(msg)); } catch {}
+      }
+    };
+
+    ctrlDc.onmessage = async (ev) => {
+      if (typeof ev.data !== 'string') return;
+      try {
+        const msg = JSON.parse(ev.data) as { t?: string; idx?: number; sdp?: string; candidate?: RTCIceCandidateInit; bytes?: number };
+        if (msg.t === 'ack' && typeof msg.bytes === 'number') {
+          if (msg.bytes > ackedBytes) {
+            ackedBytes = msg.bytes;
+            notifyAckWaiters();
+          }
+        } else if (msg.t === 'aux-answer' && typeof msg.idx === 'number' && msg.sdp) {
+          const apc = auxPcs[msg.idx];
+          if (apc && apc.signalingState === 'have-local-offer') {
+            await apc.setRemoteDescription({ type: 'answer', sdp: msg.sdp });
+            const q = auxIceQueues[msg.idx] || [];
+            auxIceQueues[msg.idx] = [];
+            for (const c of q) {
+              try { await apc.addIceCandidate(c); } catch {}
+            }
+          }
+        } else if (msg.t === 'aux-ice' && typeof msg.idx === 'number' && msg.candidate) {
+          const apc = auxPcs[msg.idx];
+          if (apc && apc.remoteDescription) {
+            try { await apc.addIceCandidate(msg.candidate); } catch {}
+          } else {
+            auxIceQueues[msg.idx] = auxIceQueues[msg.idx] || [];
+            auxIceQueues[msg.idx].push(msg.candidate);
+          }
+        }
+      } catch {}
+    };
+
+    const spawnExtraSockets = async () => {
+      for (let idx = 0; idx < EXTRA_SOCKETS; idx++) {
+        try {
+          const apc = new RTCPeerConnection(dockIceConfig);
+          auxPcs[idx] = apc;
+          auxIceQueues[idx] = [];
+
+          apc.onicecandidate = (e) => {
+            if (e.candidate && !isBlockedCarrierSrflxOnAndroid(e.candidate.candidate)) {
+              sendCtrl({ t: 'aux-ice', idx, candidate: e.candidate.toJSON() });
+            }
+          };
+
+          const laneDc = apc.createDataChannel(`orbital-dock-lane-${idx + 1}`, { ordered: true });
+          laneDc.binaryType = 'arraybuffer';
+          laneDc.bufferedAmountLowThreshold = 131072;
+          laneDc.onopen = () => {
+            if (!activeLanes.includes(laneDc)) activeLanes.push(laneDc);
+            notifyAckWaiters();
+          };
+
+          const auxOffer = await apc.createOffer();
+          await apc.setLocalDescription(auxOffer);
+          sendCtrl({ t: 'aux-offer', idx, sdp: auxOffer.sdp ?? '' });
+        } catch {}
+      }
+    };
+
+    ctrlDc.onopen = () => {
+      void spawnExtraSockets();
+    };
 
     setDockSession({
       transferId,
@@ -3774,17 +3860,16 @@ export function DirectMessagePane(): React.JSX.Element {
     dc.onopen = async () => {
       if (startedSend) return;
       startedSend = true;
-      await new Promise<void>((r) => window.setTimeout(r, 120));
-      const activeLanes = lanes.filter((c) => c.readyState === 'open');
-      if (activeLanes.length === 0) return;
+      if (!activeLanes.includes(dc)) activeLanes.push(dc);
 
       const f = dockSendFileRef.current;
       const reader = dockStreamReaderRef.current;
       if (!f || !reader) return;
 
       setDockSession((prev) => (prev ? { ...prev, status: 'transferring' } : null));
-      const FRAME = 16376;
-      const HIGH_WATER = 131072;
+      const FRAME = 16376; // 8-byte header + 16376 = 16384B exact (zero fragmentation / zero runt packets)
+      const HIGH_WATER = 262144; // 256 KB per independent SCTP socket
+      const IN_FLIGHT_LIMIT = 3 * 1024 * 1024; // 3 MB receiver-paced sliding window across all sockets
       let offset = 0;
       let lastTick = performance.now();
       let lastNetBytes = 0;
@@ -3795,12 +3880,13 @@ export function DirectMessagePane(): React.JSX.Element {
       const updateRealProgress = (force = false) => {
         const now = performance.now();
         if (!force && now - lastTick < 150) return;
-        const netSent = Math.max(0, Math.min(f.size, offset - getBufferedTotal()));
+        const wireSent = Math.max(0, Math.min(f.size, offset - getBufferedTotal()));
+        const displayBytes = ackedBytes > 0 ? Math.min(f.size, Math.max(ackedBytes, wireSent)) : wireSent;
         const dt = Math.max(0.001, (now - lastTick) / 1000);
-        const bps = Math.max(0, (netSent - lastNetBytes) / dt);
+        const bps = Math.max(0, (displayBytes - lastNetBytes) / dt);
         lastTick = now;
-        lastNetBytes = netSent;
-        setDockSession((prev) => (prev ? { ...prev, transferred: netSent, speedBps: bps } : null));
+        lastNetBytes = displayBytes;
+        setDockSession((prev) => (prev ? { ...prev, transferred: displayBytes, speedBps: bps } : null));
       };
 
       const pickLowestBufferLane = (): RTCDataChannel | null => {
@@ -3816,6 +3902,21 @@ export function DirectMessagePane(): React.JSX.Element {
       const sendView = async (blockView: Uint8Array) => {
         let pos = 0;
         while (pos < blockView.byteLength) {
+          // Receiver-driven sliding window pacing (prevents bufferbloat & stalls)
+          if (ctrlDc.readyState === 'open' && offset - ackedBytes > IN_FLIGHT_LIMIT) {
+            await new Promise<void>((resolve) => {
+              let done = false;
+              const finish = () => {
+                if (done) return;
+                done = true;
+                window.clearTimeout(timer);
+                resolve();
+              };
+              const timer = window.setTimeout(finish, 120);
+              ackWaiters.push(finish);
+            });
+          }
+
           const lane = pickLowestBufferLane();
           if (!lane) return;
           if (lane.bufferedAmount > HIGH_WATER) {
@@ -3828,7 +3929,7 @@ export function DirectMessagePane(): React.JSX.Element {
                 lane.removeEventListener('bufferedamountlow', finish);
                 resolve();
               };
-              const timer = window.setTimeout(finish, 80);
+              const timer = window.setTimeout(finish, 60);
               lane.addEventListener('bufferedamountlow', finish);
             });
           }
@@ -3861,19 +3962,22 @@ export function DirectMessagePane(): React.JSX.Element {
         const drainDeadline = performance.now() + 60000;
         while (getBufferedTotal() > 0 && performance.now() < drainDeadline) {
           updateRealProgress(false);
-          await new Promise<void>((r) => window.setTimeout(r, 80));
+          await new Promise<void>((r) => window.setTimeout(r, 60));
         }
         updateRealProgress(true);
+        sendCtrl({ t: 'eof', totalBytes: f.size });
         if (dc.readyState === 'open') {
           dc.send('__DOCK_EOF__');
         }
         setDockSession((prev) => (prev ? { ...prev, status: 'done', transferred: f.size, speedBps: 0 } : null));
         toast.success(`Docked & delivered ${file.name}!`);
         setTimeout(() => {
+          closeAuxSockets();
           cleanupDock();
           setDockSession((prev) => (prev?.transferId === transferId ? null : prev));
-        }, 2200);
+        }, 2500);
       } catch (err) {
+        closeAuxSockets();
         setDockSession((prev) => (prev ? { ...prev, status: 'error', error: String(err) } : null));
       }
     };
@@ -3900,25 +4004,105 @@ export function DirectMessagePane(): React.JSX.Element {
       return;
     }
 
-    // Universal limitless receiver storage: OPFS private stream (zero RAM, works on Windows + Android without .crswap locks),
-    // with automatic in-memory Blob fallback if OPFS is unavailable
-    let writable: { write: (data: ArrayBuffer) => Promise<void>; close: () => Promise<void> } | null = null;
-    let opfsRoot: FileSystemDirectoryHandle | null = null;
-    let opfsTempName: string | null = null;
+    // Spawn off-main-thread Web Worker with OPFS createSyncAccessHandle() for native-speed positional disk writes
+    const opfsTempName = `dock_${pending.transferId}_${Date.now()}.bin`;
+    let diskWorker: Worker | null = null;
+    let diskWorkerUrl: string | null = null;
+    let useSyncWorker = false;
+    let workerCloseResolver: (() => void) | null = null;
+
+    const cleanupWorker = () => {
+      if (diskWorker) {
+        try { diskWorker.terminate(); } catch {}
+        diskWorker = null;
+      }
+      if (diskWorkerUrl) {
+        try { URL.revokeObjectURL(diskWorkerUrl); } catch {}
+        diskWorkerUrl = null;
+      }
+    };
+
     try {
-      if (typeof navigator !== 'undefined' && navigator.storage?.getDirectory) {
-        opfsRoot = await navigator.storage.getDirectory();
-        opfsTempName = `dock_${pending.transferId}_${Date.now()}.bin`;
-        const tempHandle = await opfsRoot.getFileHandle(opfsTempName, { create: true });
-        writable = await tempHandle.createWritable();
+      if (typeof Worker !== 'undefined' && typeof navigator !== 'undefined' && typeof navigator.storage?.getDirectory === 'function') {
+        const workerCode = `
+          let accessHandle = null;
+          self.onmessage = async (e) => {
+            const msg = e.data;
+            if (msg.type === 'init') {
+              try {
+                const root = await navigator.storage.getDirectory();
+                const fh = await root.getFileHandle(msg.fileName, { create: true });
+                if (typeof fh.createSyncAccessHandle !== 'function') {
+                  self.postMessage({ type: 'unsupported' });
+                  return;
+                }
+                accessHandle = await fh.createSyncAccessHandle();
+                self.postMessage({ type: 'ready' });
+              } catch (err) {
+                self.postMessage({ type: 'unsupported', error: String(err) });
+              }
+            } else if (msg.type === 'write' && accessHandle) {
+              try {
+                accessHandle.write(new Uint8Array(msg.buffer, 8), { at: msg.offset });
+              } catch (err) {
+                self.postMessage({ type: 'error', error: String(err) });
+              }
+            } else if (msg.type === 'close') {
+              try {
+                if (accessHandle) {
+                  accessHandle.flush();
+                  accessHandle.close();
+                  accessHandle = null;
+                }
+              } catch {}
+              self.postMessage({ type: 'closed' });
+            }
+          };
+        `;
+        diskWorkerUrl = URL.createObjectURL(new Blob([workerCode], { type: 'application/javascript' }));
+        diskWorker = new Worker(diskWorkerUrl);
+        useSyncWorker = await new Promise<boolean>((resolve) => {
+          const timer = window.setTimeout(() => resolve(false), 1500);
+          if (!diskWorker) { window.clearTimeout(timer); resolve(false); return; }
+          diskWorker.onmessage = (ev) => {
+            const d = ev.data as { type?: string };
+            if (d.type === 'ready') {
+              window.clearTimeout(timer);
+              resolve(true);
+            } else if (d.type === 'unsupported') {
+              window.clearTimeout(timer);
+              resolve(false);
+            } else if (d.type === 'closed' && workerCloseResolver) {
+              const fn = workerCloseResolver;
+              workerCloseResolver = null;
+              fn();
+            }
+          };
+          diskWorker.onerror = () => {
+            window.clearTimeout(timer);
+            resolve(false);
+          };
+          diskWorker.postMessage({ type: 'init', fileName: opfsTempName });
+        });
+        if (!useSyncWorker) cleanupWorker();
       }
     } catch {
-      writable = null;
-      opfsTempName = null;
+      useSyncWorker = false;
+      cleanupWorker();
     }
 
-    const pc = new RTCPeerConnection(await getDockIceConfig());
+    const rxIceConfig = await getDockIceConfig();
+    const pc = new RTCPeerConnection(rxIceConfig);
     dockPcRef.current = pc;
+
+    const auxPcs: RTCPeerConnection[] = [];
+    const auxIceQueues: RTCIceCandidateInit[][] = [];
+    const closeAuxSockets = () => {
+      for (const apc of auxPcs) {
+        try { apc.close(); } catch {}
+      }
+      auxPcs.length = 0;
+    };
 
     let rxRelayCount = 0;
     let rxTurnErr = '';
@@ -3959,9 +4143,11 @@ export function DirectMessagePane(): React.JSX.Element {
                 rxIceRestarted = true;
                 try { pc.restartIce(); return; } catch {}
               }
+              closeAuxSockets();
+              cleanupWorker();
               setDockSession((prev) =>
                 prev && prev.status !== 'done'
-                  ? { ...prev, status: 'error', error: `ICE ${pc.iceConnectionState} on receiver — retry` }
+                  ? { ...prev, status: 'error', error: `ICE ${pc.iceConnectionState} (relay=${rxRelayCount}${rxTurnErr ? `, ${rxTurnErr}` : ''}) — retry` }
                   : prev
               );
             }
@@ -3976,28 +4162,38 @@ export function DirectMessagePane(): React.JSX.Element {
           window.clearTimeout(rxDisconnectTimer);
           rxDisconnectTimer = null;
         }
+        closeAuxSockets();
+        cleanupWorker();
         setDockSession((prev) =>
           prev && prev.status !== 'done'
-            ? { ...prev, status: 'error', error: 'ICE failed on receiver — retry' }
+            ? { ...prev, status: 'error', error: `ICE failed (relay=${rxRelayCount}${rxTurnErr ? `, ${rxTurnErr}` : ''}) — retry` }
             : prev
         );
       }
     };
 
-    const fallbackChunks: Array<{ offset: number; data: Uint8Array }> = [];
+    const fallbackChunks: Array<{ offset: number; data: ArrayBuffer }> = [];
     let received = 0;
+    let lastAckedSent = 0;
+    let lastAckTime = performance.now();
     let lastTick = performance.now();
     let lastBytes = 0;
-    let writeChain = Promise.resolve();
     let rxFinalized = false;
     let rxFullBytesTimer: number | null = null;
+    let ctrlDcRef: RTCDataChannel | null = null;
+
+    const sendRxCtrl = (msg: Record<string, unknown>) => {
+      if (ctrlDcRef && ctrlDcRef.readyState === 'open') {
+        try { ctrlDcRef.send(JSON.stringify(msg)); } catch {}
+      }
+    };
 
     const triggerDownload = async (blobOrFile: Blob): Promise<string> => {
       const savedLoc = await saveReceivedDockFile(blobOrFile, pending.fileName);
       console.info('[Docking] Saved to:', savedLoc);
       setTimeout(() => {
-        if (opfsRoot && opfsTempName) {
-          void opfsRoot.removeEntry(opfsTempName).catch(() => {});
+        if (useSyncWorker && typeof navigator.storage?.getDirectory === 'function') {
+          void navigator.storage.getDirectory().then((root) => root.removeEntry(opfsTempName).catch(() => {})).catch(() => {});
         }
       }, 30_000);
       return savedLoc;
@@ -4015,17 +4211,28 @@ export function DirectMessagePane(): React.JSX.Element {
         window.clearTimeout(rxDisconnectTimer);
         rxDisconnectTimer = null;
       }
-      writeChain = writeChain.then(async () => {
+      sendRxCtrl({ t: 'ack', bytes: received });
+
+      void (async () => {
         try {
           let savedPath = pending.fileName;
-          if (writable && opfsRoot && opfsTempName) {
-            await writable.close();
-            const savedHandle = await opfsRoot.getFileHandle(opfsTempName);
+          if (useSyncWorker && diskWorker) {
+            await new Promise<void>((resolve) => {
+              const t = window.setTimeout(resolve, 4000);
+              workerCloseResolver = () => {
+                window.clearTimeout(t);
+                resolve();
+              };
+              diskWorker?.postMessage({ type: 'close' });
+            });
+            cleanupWorker();
+            const root = await navigator.storage.getDirectory();
+            const savedHandle = await root.getFileHandle(opfsTempName);
             const diskFile = await savedHandle.getFile();
             savedPath = await triggerDownload(diskFile);
           } else {
             fallbackChunks.sort((a, b) => a.offset - b.offset);
-            const orderedParts = fallbackChunks.map((c) => c.data.buffer as ArrayBuffer);
+            const orderedParts = fallbackChunks.map((c) => c.data);
             fallbackChunks.length = 0;
             const blob = new Blob(orderedParts, { type: pending.fileType });
             savedPath = await triggerDownload(blob);
@@ -4033,19 +4240,21 @@ export function DirectMessagePane(): React.JSX.Element {
           setDockSession((prev) => (prev ? { ...prev, status: 'done', transferred: pending.fileSize, speedBps: 0 } : null));
           toast.success(`Saved to ${savedPath}`);
           setTimeout(() => {
+            closeAuxSockets();
             cleanupDock();
             setDockSession((prev) => (prev?.transferId === pending.transferId ? null : prev));
           }, 3000);
         } catch (saveErr) {
+          closeAuxSockets();
+          cleanupWorker();
           const msg = saveErr instanceof Error ? saveErr.message : String(saveErr);
           setDockSession((prev) => (prev ? { ...prev, status: 'error', error: msg } : null));
           toast.error(msg);
         }
-      });
+      })();
     };
 
-    pc.ondatachannel = (ev) => {
-      const dc = ev.channel;
+    const attachDataChannel = (dc: RTCDataChannel) => {
       dc.binaryType = 'arraybuffer';
       if (!dockDcRef.current || dc.label === 'orbital-dock-lane-0') {
         dockDcRef.current = dc;
@@ -4060,35 +4269,27 @@ export function DirectMessagePane(): React.JSX.Element {
 
         if (msgEv.data instanceof ArrayBuffer && msgEv.data.byteLength > 8) {
           const pktOffset = new DataView(msgEv.data).getFloat64(0, true);
-          const payload = new Uint8Array(msgEv.data, 8);
-          received += payload.byteLength;
+          const payloadLen = msgEv.data.byteLength - 8;
+          received += payloadLen;
 
-          if (writable) {
-            const wRef = writable as unknown as {
-              write: (params: { type: 'write'; position: number; data: Uint8Array }) => Promise<void>;
-            };
-            writeChain = writeChain.then(async () => {
-              if (!writable) {
-                fallbackChunks.push({ offset: pktOffset, data: payload });
-                return;
-              }
-              try {
-                await wRef.write({ type: 'write', position: pktOffset, data: payload });
-              } catch {
-                try { await writable.close(); } catch {}
-                writable = null;
-                fallbackChunks.push({ offset: pktOffset, data: payload });
-              }
-            });
+          if (useSyncWorker && diskWorker) {
+            // Zero-copy transfer directly to background OPFS SyncAccessHandle Worker
+            diskWorker.postMessage({ type: 'write', offset: pktOffset, buffer: msgEv.data }, [msgEv.data]);
           } else {
-            fallbackChunks.push({ offset: pktOffset, data: payload });
-          }
-
-          if (pending.fileSize > 0 && received >= pending.fileSize && !rxFullBytesTimer && !rxFinalized) {
-            rxFullBytesTimer = window.setTimeout(() => finalizeReceive(), 350);
+            fallbackChunks.push({ offset: pktOffset, data: msgEv.data.slice(8) });
           }
 
           const now = performance.now();
+          if (received - lastAckedSent >= 262144 || now - lastAckTime >= 100) {
+            lastAckedSent = received;
+            lastAckTime = now;
+            sendRxCtrl({ t: 'ack', bytes: received });
+          }
+
+          if (pending.fileSize > 0 && received >= pending.fileSize && !rxFullBytesTimer && !rxFinalized) {
+            rxFullBytesTimer = window.setTimeout(() => finalizeReceive(), 300);
+          }
+
           if (now - lastTick >= 150 || received >= pending.fileSize) {
             const dt = Math.max(0.001, (now - lastTick) / 1000);
             const bps = (received - lastBytes) / dt;
@@ -4099,6 +4300,52 @@ export function DirectMessagePane(): React.JSX.Element {
         }
       };
     };
+
+    pc.ondatachannel = (ev) => {
+      const ch = ev.channel;
+      if (ch.label === 'orbital-dock-ctrl') {
+        ctrlDcRef = ch;
+        ch.onmessage = async (msgEv) => {
+          if (typeof msgEv.data !== 'string') return;
+          try {
+            const msg = JSON.parse(msgEv.data) as { t?: string; idx?: number; sdp?: string; candidate?: RTCIceCandidateInit };
+            if (msg.t === 'aux-offer' && typeof msg.idx === 'number' && msg.sdp) {
+              const idx = msg.idx;
+              const apc = new RTCPeerConnection(rxIceConfig);
+              auxPcs[idx] = apc;
+              apc.onicecandidate = (iceEv) => {
+                if (iceEv.candidate && !isBlockedCarrierSrflxOnAndroid(iceEv.candidate.candidate)) {
+                  sendRxCtrl({ t: 'aux-ice', idx, candidate: iceEv.candidate.toJSON() });
+                }
+              };
+              apc.ondatachannel = (auxDcEv) => attachDataChannel(auxDcEv.channel);
+              await apc.setRemoteDescription({ type: 'offer', sdp: msg.sdp });
+              const queued = auxIceQueues[idx] || [];
+              auxIceQueues[idx] = [];
+              for (const c of queued) {
+                try { await apc.addIceCandidate(c); } catch {}
+              }
+              const auxAnswer = await apc.createAnswer();
+              await apc.setLocalDescription(auxAnswer);
+              sendRxCtrl({ t: 'aux-answer', idx, sdp: auxAnswer.sdp ?? '' });
+            } else if (msg.t === 'aux-ice' && typeof msg.idx === 'number' && msg.candidate) {
+              const apc = auxPcs[msg.idx];
+              if (apc && apc.remoteDescription) {
+                try { await apc.addIceCandidate(msg.candidate); } catch {}
+              } else {
+                auxIceQueues[msg.idx] = auxIceQueues[msg.idx] || [];
+                auxIceQueues[msg.idx].push(msg.candidate);
+              }
+            } else if (msg.t === 'eof') {
+              finalizeReceive();
+            }
+          } catch {}
+        };
+        return;
+      }
+      attachDataChannel(ch);
+    };
+
     await pc.setRemoteDescription({ type: 'offer', sdp: pending.sdp });
     for (const c of dockIceQueueRef.current) {
       if (!isBlockedCarrierSrflxOnAndroid(c.candidate)) {
