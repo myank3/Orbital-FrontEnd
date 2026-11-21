@@ -3411,6 +3411,56 @@ export function DirectMessagePane(): React.JSX.Element {
   const friendsLookupRef = useRef<FriendDto[]>([]);
   friendsLookupRef.current = friends;
 
+  const getDockIceConfig = useCallback(async (): Promise<RTCConfiguration> => {
+    const baseServers: RTCIceServer[] = [
+      { urls: 'stun:stun.l.google.com:19302' },
+      { urls: 'stun:stun1.l.google.com:19302' },
+      { urls: 'stun:stun.cloudflare.com:3478' },
+      {
+        urls: [
+          'turn:a.relay.metered.ca:80',
+          'turn:a.relay.metered.ca:80?transport=tcp',
+          'turn:a.relay.metered.ca:443',
+          'turns:a.relay.metered.ca:443?transport=tcp',
+        ],
+        username: 'e8dd65b92f6dde4312b1786d',
+        credential: '3G+8V/1mH+6f9Z0q',
+      },
+      {
+        urls: [
+          'turn:free.expressturn.com:3478',
+          'turn:free.expressturn.com:3478?transport=tcp',
+        ],
+        username: 'efree',
+        credential: 'efree',
+      },
+    ];
+    try {
+      const ctrl = new AbortController();
+      const t = window.setTimeout(() => ctrl.abort(), 1800);
+      const res = await fetch('https://orbital.metered.live/api/v1/turn/credentials?apiKey=e8dd65b92f6dde4312b1786d', {
+        signal: ctrl.signal,
+      });
+      window.clearTimeout(t);
+      if (res.ok) {
+        const dynamicServers = (await res.json()) as RTCIceServer[];
+        if (Array.isArray(dynamicServers) && dynamicServers.length > 0) {
+          return {
+            iceServers: [...baseServers, ...dynamicServers],
+            iceTransportPolicy: 'all',
+            iceCandidatePoolSize: 6,
+          };
+        }
+      }
+    } catch {}
+    return {
+      iceServers: baseServers,
+      iceTransportPolicy: 'all',
+      iceCandidatePoolSize: 6,
+    };
+  }, []);
+
+
   const cleanupDock = useCallback(() => {
     try { sessionStorage.removeItem(DOCK_STORAGE_KEY); } catch {}
     try { dockDcRef.current?.close(); } catch {}
@@ -3498,56 +3548,6 @@ export function DirectMessagePane(): React.JSX.Element {
     cleanupDock();
     setDockSession(null);
   }, [cleanupDock, getDockIceConfig, sendDockSignal]);
-
-  const getDockIceConfig = useCallback(async (): Promise<RTCConfiguration> => {
-    const baseServers: RTCIceServer[] = [
-      { urls: 'stun:stun.l.google.com:19302' },
-      { urls: 'stun:stun1.l.google.com:19302' },
-      { urls: 'stun:stun.cloudflare.com:3478' },
-      {
-        urls: [
-          'turn:a.relay.metered.ca:80',
-          'turn:a.relay.metered.ca:80?transport=tcp',
-          'turn:a.relay.metered.ca:443',
-          'turns:a.relay.metered.ca:443?transport=tcp',
-        ],
-        username: 'e8dd65b92f6dde4312b1786d',
-        credential: '3G+8V/1mH+6f9Z0q',
-      },
-      {
-        urls: [
-          'turn:free.expressturn.com:3478',
-          'turn:free.expressturn.com:3478?transport=tcp',
-        ],
-        username: 'efree',
-        credential: 'efree',
-      },
-    ];
-    try {
-      const ctrl = new AbortController();
-      const t = window.setTimeout(() => ctrl.abort(), 1800);
-      const res = await fetch('https://orbital.metered.live/api/v1/turn/credentials?apiKey=e8dd65b92f6dde4312b1786d', {
-        signal: ctrl.signal,
-      });
-      window.clearTimeout(t);
-      if (res.ok) {
-        const dynamicServers = (await res.json()) as RTCIceServer[];
-        if (Array.isArray(dynamicServers) && dynamicServers.length > 0) {
-          return {
-            iceServers: [...baseServers, ...dynamicServers],
-            iceTransportPolicy: 'all',
-            iceCandidatePoolSize: 6,
-          };
-        }
-      }
-    } catch {}
-    return {
-      iceServers: baseServers,
-      iceTransportPolicy: 'all',
-      iceCandidatePoolSize: 6,
-    };
-  }, []);
-
   const startDockSend = useCallback(async (file: File) => {
     if (!userId || !targetUser) return;
     if (!presenceStore.isOnline(userId)) {
