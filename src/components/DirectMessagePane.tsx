@@ -3869,7 +3869,7 @@ export function DirectMessagePane(): React.JSX.Element {
 
       const f = dockSendFileRef.current;
       const reader = dockStreamReaderRef.current;
-      if (!f || !reader) return;
+      if (!f) return;
 
       setDockSession((prev) => (prev ? { ...prev, status: 'transferring' } : null));
       const FRAME = 16376; // 8-byte header + 16376 = 16384B exact (zero fragmentation / zero runt packets)
@@ -3957,11 +3957,22 @@ export function DirectMessagePane(): React.JSX.Element {
           await sendView(firstView);
         }
 
-        while (offset < f.size) {
-          if (!pickLowestBufferLane()) return;
-          const { done, value } = await reader.read();
-          if (done || !value) break;
-          await sendView(value);
+        if (reader) {
+          while (offset < f.size) {
+            if (!pickLowestBufferLane()) return;
+            const { done, value } = await reader.read();
+            if (done || !value) break;
+            await sendView(value);
+          }
+        } else {
+          const SLICE_BLOCK = 262144; // 256 KB slice reads for Android WebView
+          while (offset < f.size) {
+            if (!pickLowestBufferLane()) return;
+            const sliceEnd = Math.min(offset + SLICE_BLOCK, f.size);
+            const buf = await f.slice(offset, sliceEnd).arrayBuffer();
+            if (buf.byteLength === 0) break;
+            await sendView(new Uint8Array(buf));
+          }
         }
 
         const drainDeadline = performance.now() + 60000;

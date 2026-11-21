@@ -381,6 +381,8 @@ function AppShell(): React.JSX.Element {
         const label = sig.senderName || payload.senderId.slice(0, 8);
         const fileLabel = sig.fileName ? ` · ${sig.fileName}` : '';
         const targetDmPath = `/app/dm/${encodeURIComponent(payload.senderId)}`;
+        const activePath = window.location.pathname.replace(/\/+$/, '');
+        if (activePath === targetDmPath || activePath.startsWith(`${targetDmPath}/`)) return;
 
         toast.custom(
           () => (
@@ -391,7 +393,7 @@ function AppShell(): React.JSX.Element {
                 </div>
                 <div className="min-w-0">
                   <div className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wider text-sky-400">
-                    <span>Incoming Dock</span>
+                    <span>Dock Request</span>
                   </div>
                   <p className="truncate text-xs font-medium text-zinc-100">
                     {label}
@@ -408,7 +410,7 @@ function AppShell(): React.JSX.Element {
                   }}
                   className="inline-flex items-center gap-1.5 rounded-xl bg-sky-500 px-2.5 py-1.5 text-[11px] font-semibold text-white shadow-sm transition hover:bg-sky-400 active:scale-[0.98]"
                 >
-                  <span>Take me to DM</span>
+                  <span>Open Chat</span>
                   <i className="fa-solid fa-arrow-right text-[10px]" aria-hidden="true" />
                 </button>
                 <button
@@ -418,7 +420,7 @@ function AppShell(): React.JSX.Element {
                   className="inline-flex items-center gap-1 rounded-xl border border-white/10 bg-white/5 px-2 py-1.5 text-[11px] font-medium text-zinc-300 transition hover:bg-white/15 hover:text-white active:scale-[0.98]"
                 >
                   <i className="fa-solid fa-xmark text-[11px]" aria-hidden="true" />
-                  <span>Close</span>
+                  <span>Dismiss</span>
                 </button>
               </div>
             </div>
