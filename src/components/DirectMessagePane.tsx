@@ -3421,6 +3421,8 @@ export function DirectMessagePane(): React.JSX.Element {
     dockIceQueueRef.current = [];
   }, []);
 
+  useEffect(() => () => cleanupDock(), [cleanupDock]);
+
   useEffect(() => {
     try {
       if (dockSession && dockSession.status === 'incoming') {
@@ -3430,37 +3432,6 @@ export function DirectMessagePane(): React.JSX.Element {
       }
     } catch {}
   }, [dockSession]);
-
-  // If receiver refreshed while an incoming offer was active, ask sender for a fresh SDP offer
-  useEffect(() => {
-    if (dockSession?.status === 'incoming' && !dockPendingOfferRef.current) {
-      void sendDockSignal(dockSession.peerId, {
-        type: 'dock-reoffer',
-        transferId: dockSession.transferId,
-      });
-    }
-  }, [dockSession, sendDockSignal]);
-
-  useEffect(() => () => cleanupDock(), [cleanupDock]);
-
-  useEffect(() => {
-    if (dockSession?.direction !== 'send' || dockSession.status !== 'offering') return;
-    const timer = window.setInterval(() => {
-      const cur = dockSessionRef.current;
-      const localSdp = dockPcRef.current?.localDescription?.sdp;
-      if (cur && cur.direction === 'send' && cur.status === 'offering' && localSdp) {
-        void sendDockSignal(cur.peerId, {
-          type: 'dock-offer',
-          transferId: cur.transferId,
-          fileName: cur.fileName,
-          fileSize: cur.fileSize,
-          fileType: cur.fileType,
-          sdp: localSdp,
-        });
-      }
-    }, 3000);
-    return () => window.clearInterval(timer);
-  }, [dockSession?.direction, dockSession?.status, sendDockSignal]);
 
   const sendDockSignal = useCallback(async (targetId: string, sig: DockSignal) => {
     try {
@@ -3488,6 +3459,35 @@ export function DirectMessagePane(): React.JSX.Element {
       toast.error('Docking handshake failed to reach peer.');
     }
   }, []);
+
+  // If receiver refreshed while an incoming offer was active, ask sender for a fresh SDP offer
+  useEffect(() => {
+    if (dockSession?.status === 'incoming' && !dockPendingOfferRef.current) {
+      void sendDockSignal(dockSession.peerId, {
+        type: 'dock-reoffer',
+        transferId: dockSession.transferId,
+      });
+    }
+  }, [dockSession, sendDockSignal]);
+
+  useEffect(() => {
+    if (dockSession?.direction !== 'send' || dockSession.status !== 'offering') return;
+    const timer = window.setInterval(() => {
+      const cur = dockSessionRef.current;
+      const localSdp = dockPcRef.current?.localDescription?.sdp;
+      if (cur && cur.direction === 'send' && cur.status === 'offering' && localSdp) {
+        void sendDockSignal(cur.peerId, {
+          type: 'dock-offer',
+          transferId: cur.transferId,
+          fileName: cur.fileName,
+          fileSize: cur.fileSize,
+          fileType: cur.fileType,
+          sdp: localSdp,
+        });
+      }
+    }, 3000);
+    return () => window.clearInterval(timer);
+  }, [dockSession?.direction, dockSession?.status, sendDockSignal]);
 
   const cancelDocking = useCallback(() => {
     const cur = dockSessionRef.current;
