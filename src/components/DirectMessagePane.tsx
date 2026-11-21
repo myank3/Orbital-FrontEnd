@@ -3553,12 +3553,17 @@ export function DirectMessagePane(): React.JSX.Element {
           }
         );
         if (res.ok) {
-          const data = (await res.json()) as { iceServers?: RTCIceServer[] };
-          if (Array.isArray(data.iceServers) && data.iceServers.length > 0) {
+          const data = (await res.json()) as { iceServers?: RTCIceServer | RTCIceServer[] };
+          const rawList = Array.isArray(data.iceServers)
+            ? data.iceServers
+            : data.iceServers
+              ? [data.iceServers]
+              : [];
+          if (rawList.length > 0) {
             return {
-              iceServers: [...fallbackServers, ...data.iceServers],
+              iceServers: [...fallbackServers, ...rawList],
               iceTransportPolicy: 'all',
-              iceCandidatePoolSize: 4,
+              iceCandidatePoolSize: 6,
             };
           }
         } else {
