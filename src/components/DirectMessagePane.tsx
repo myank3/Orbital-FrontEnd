@@ -3516,7 +3516,7 @@ export function DirectMessagePane(): React.JSX.Element {
       }
     } catch (err) {
       cleanupDock();
-      toast.error(Cannot read : );
+      toast.error(`Cannot read ${file.name}: ${err instanceof Error ? err.message : 'File permission denied'}`);
       return;
     }
 
