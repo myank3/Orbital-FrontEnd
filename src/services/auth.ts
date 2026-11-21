@@ -79,7 +79,7 @@ export class AuthService {
   public async tryRefresh(): Promise<boolean> {
     try {
       const res = await apiService.refresh();
-      return Boolean(res?.token);
+      return Boolean((res as { token?: string; accessToken?: string } | null)?.token || (res as { token?: string; accessToken?: string } | null)?.accessToken);
     } catch {
       return false;
     }

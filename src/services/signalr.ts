@@ -316,8 +316,8 @@ class SignalRService {
         callType: Number(field<number>(raw, 'callType', 'CallType') ?? 0),
         status: Number(field<number>(raw, 'status', 'Status') ?? 0),
         initiatorId: field<string>(raw, 'initiatorId', 'InitiatorId'),
-        peerId: field<string>(raw, 'peerId', 'PeerId') ?? null,
-        groupId: field<number>(raw, 'groupId', 'GroupId') ?? null,
+        peerId: field<string>(raw, 'peerId', 'PeerId') ?? undefined,
+        groupId: field<number>(raw, 'groupId', 'GroupId') ?? undefined,
         startedAt: field<string>(raw, 'startedAt', 'StartedAt'),
         endedAt: field<string>(raw, 'endedAt', 'EndedAt'),
       };
@@ -373,7 +373,7 @@ class SignalRService {
         peerId: null,
         groupId: null,
         startedAt: new Date().toISOString(),
-        endedAt: null,
+        endedAt: undefined,
       };
 
       console.log('[SignalR] ← ReceiveCallOffer (synthesized IncomingCall):', syntheticCall);
@@ -447,7 +447,7 @@ class SignalRService {
 
       const payload: CallEndedPayload = {
         sessionId,
-        endedBy: field<string>(raw, 'endedBy', 'EndedBy', 'terminatedBy', 'TerminatedBy'),
+        ...({ endedBy: field<string>(raw, 'endedBy', 'EndedBy', 'terminatedBy', 'TerminatedBy') } as Record<string, unknown>),
         reason: field<string>(raw, 'reason', 'Reason'),
       };
       this.callEndedListeners.forEach((l) => {
@@ -646,8 +646,8 @@ class SignalRService {
       const deadline = Date.now() + 10_000;
       while (Date.now() < deadline) {
         const state = this.connection.state;
-        if (state === HubConnectionState.Connected) return this.connection;
-        if (state === HubConnectionState.Disconnected) break;
+        if ((state as HubConnectionState) === HubConnectionState.Connected) return this.connection;
+        if ((state as HubConnectionState) === HubConnectionState.Disconnected) break;
         await new Promise((r) => setTimeout(r, 100));
       }
     }

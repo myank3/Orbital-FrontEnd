@@ -1047,7 +1047,7 @@ async function tryZeroTokenIntent(
       };
     }
 
-    if (pendingScheduleDraft.step === 'awaiting_when' && pendingScheduleDraft.target && pendingScheduleDraft.message) {
+    if (pendingScheduleDraft?.step === 'awaiting_when' && pendingScheduleDraft.target && pendingScheduleDraft.message) {
       const bareDuration = cleaned.match(
         /^(\d+)\s*(sec|secs|second|seconds|min|mins|minute|minutes|hr|hrs|hour|hours)$/i,
       );
@@ -1065,7 +1065,7 @@ async function tryZeroTokenIntent(
         };
       }
 
-      const { target, message } = pendingScheduleDraft;
+      const { target, message } = pendingScheduleDraft!;
       pendingScheduleDraft = null;
       return scheduleMessage(handlers.currentUserId, target, message, runAt);
     }
