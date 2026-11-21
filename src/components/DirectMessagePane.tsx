@@ -3513,7 +3513,7 @@ export function DirectMessagePane(): React.JSX.Element {
         if (Array.isArray(dynamicServers) && dynamicServers.length > 0) {
           return {
             iceServers: [...baseServers, ...dynamicServers],
-            iceTransportPolicy: 'all',
+            iceTransportPolicy: isNativeAndroidApk() ? 'relay' : 'all',
             iceCandidatePoolSize: 6,
           };
         }
@@ -3521,7 +3521,7 @@ export function DirectMessagePane(): React.JSX.Element {
     } catch {}
     return {
       iceServers: baseServers,
-      iceTransportPolicy: 'all',
+      iceTransportPolicy: isNativeAndroidApk() ? 'relay' : 'all',
       iceCandidatePoolSize: 6,
     };
   }, []);
