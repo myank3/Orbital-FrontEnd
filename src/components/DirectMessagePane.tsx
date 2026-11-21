@@ -3497,7 +3497,56 @@ export function DirectMessagePane(): React.JSX.Element {
     }
     cleanupDock();
     setDockSession(null);
-  }, [cleanupDock, sendDockSignal]);
+  }, [cleanupDock, getDockIceConfig, sendDockSignal]);
+
+  const getDockIceConfig = useCallback(async (): Promise<RTCConfiguration> => {
+    const baseServers: RTCIceServer[] = [
+      { urls: 'stun:stun.l.google.com:19302' },
+      { urls: 'stun:stun1.l.google.com:19302' },
+      { urls: 'stun:stun.cloudflare.com:3478' },
+      {
+        urls: [
+          'turn:a.relay.metered.ca:80',
+          'turn:a.relay.metered.ca:80?transport=tcp',
+          'turn:a.relay.metered.ca:443',
+          'turns:a.relay.metered.ca:443?transport=tcp',
+        ],
+        username: 'e8dd65b92f6dde4312b1786d',
+        credential: '3G+8V/1mH+6f9Z0q',
+      },
+      {
+        urls: [
+          'turn:free.expressturn.com:3478',
+          'turn:free.expressturn.com:3478?transport=tcp',
+        ],
+        username: 'efree',
+        credential: 'efree',
+      },
+    ];
+    try {
+      const ctrl = new AbortController();
+      const t = window.setTimeout(() => ctrl.abort(), 1800);
+      const res = await fetch('https://orbital.metered.live/api/v1/turn/credentials?apiKey=e8dd65b92f6dde4312b1786d', {
+        signal: ctrl.signal,
+      });
+      window.clearTimeout(t);
+      if (res.ok) {
+        const dynamicServers = (await res.json()) as RTCIceServer[];
+        if (Array.isArray(dynamicServers) && dynamicServers.length > 0) {
+          return {
+            iceServers: [...baseServers, ...dynamicServers],
+            iceTransportPolicy: 'all',
+            iceCandidatePoolSize: 6,
+          };
+        }
+      }
+    } catch {}
+    return {
+      iceServers: baseServers,
+      iceTransportPolicy: 'all',
+      iceCandidatePoolSize: 6,
+    };
+  }, []);
 
   const startDockSend = useCallback(async (file: File) => {
     if (!userId || !targetUser) return;
@@ -3523,22 +3572,7 @@ export function DirectMessagePane(): React.JSX.Element {
       return;
     }
 
-    const pc = new RTCPeerConnection({
-      iceServers: [
-        { urls: 'stun:stun.l.google.com:19302' },
-        { urls: 'stun:stun.cloudflare.com:3478' },
-        {
-          urls: [
-            'turn:openrelay.metered.ca:80',
-            'turn:openrelay.metered.ca:443',
-            'turns:openrelay.metered.ca:443?transport=tcp',
-          ],
-          username: 'openrelayproject',
-          credential: 'openrelayproject',
-        },
-      ],
-      iceTransportPolicy: 'all',
-    });
+    const pc = new RTCPeerConnection(await getDockIceConfig());
     dockPcRef.current = pc;
 
     pc.onicecandidate = (e) => {
@@ -3678,7 +3712,7 @@ export function DirectMessagePane(): React.JSX.Element {
       fileType: file.type || 'application/octet-stream',
       sdp: offer.sdp ?? '',
     });
-  }, [cleanupDock, sendDockSignal, targetUser, userId]);
+  }, [cleanupDock, getDockIceConfig, sendDockSignal, targetUser, userId]);
 
   const acceptDockReceive = useCallback(async () => {
     const pending = dockPendingOfferRef.current;
@@ -3708,27 +3742,48 @@ export function DirectMessagePane(): React.JSX.Element {
       opfsTempName = null;
     }
 
-    const pc = new RTCPeerConnection({
-      iceServers: [
-        { urls: 'stun:stun.l.google.com:19302' },
-        { urls: 'stun:stun.cloudflare.com:3478' },
-        {
-          urls: [
-            'turn:openrelay.metered.ca:80',
-            'turn:openrelay.metered.ca:443',
-            'turns:openrelay.metered.ca:443?transport=tcp',
-          ],
-          username: 'openrelayproject',
-          credential: 'openrelayproject',
-        },
-      ],
-      iceTransportPolicy: 'all',
-    });
+    const pc = new RTCPeerConnection(await getDockIceConfig());
     dockPcRef.current = pc;
 
     pc.onicecandidate = (e) => {
       if (e.candidate) {
         void sendDockSignal(pending.senderId, { type: 'dock-ice', transferId: pending.transferId, candidate: e.candidate.toJSON() });
+      }
+    };
+
+    let rxDisconnectTimer: number | null = null;
+    pc.oniceconnectionstatechange = () => {
+      const st = pc.iceConnectionState;
+      if (st === 'connected' || st === 'completed') {
+        if (rxDisconnectTimer) {
+          window.clearTimeout(rxDisconnectTimer);
+          rxDisconnectTimer = null;
+        }
+        return;
+      }
+      if (st === 'disconnected') {
+        try { pc.restartIce(); } catch {}
+        if (!rxDisconnectTimer) {
+          rxDisconnectTimer = window.setTimeout(() => {
+            if (pc.iceConnectionState === 'disconnected' || pc.iceConnectionState === 'failed') {
+              setDockSession((prev) =>
+                prev && prev.status !== 'done'
+                  ? { ...prev, status: 'error', error: 'Carrier CGNAT blocked P2P — connect both to same Wi-Fi or retry' }
+                  : prev
+              );
+            }
+          }, 8000);
+        }
+      } else if (st === 'failed') {
+        if (rxDisconnectTimer) {
+          window.clearTimeout(rxDisconnectTimer);
+          rxDisconnectTimer = null;
+        }
+        setDockSession((prev) =>
+          prev && prev.status !== 'done'
+            ? { ...prev, status: 'error', error: 'Carrier CGNAT blocked P2P — connect both to same Wi-Fi or retry' }
+            : prev
+        );
       }
     };
 
@@ -3845,7 +3900,7 @@ export function DirectMessagePane(): React.JSX.Element {
       transferId: pending.transferId,
       sdp: answer.sdp ?? '',
     });
-  }, [cleanupDock, sendDockSignal]);
+  }, [cleanupDock, getDockIceConfig, sendDockSignal]);
 
   useEffect(() => {
     const unsub = signalRService.onCallSignal(async (payload) => {
