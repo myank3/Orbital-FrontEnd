@@ -717,7 +717,11 @@ function previewText(msg: DirectMessageDto, myId: string): LastMessagePreview {
   const d = decodeIncoming(body);
 
   if (!d.isReaction && d.call) {
-    return { text: '', sentAt: msg.sentAt, isMe };
+    return {
+      text: d.call.kind === 'video' ? '🎥 Video call' : '📞 Voice call',
+      sentAt: msg.sentAt,
+      isMe,
+    };
   }
 
   const viewOnce = Boolean((msg as LocalMessage).viewOnce) || (!d.isReaction && d.viewOnce);
@@ -2056,7 +2060,50 @@ const MessageRow = React.memo(
       return count > 0 && count * 1.5 >= chars.length;
     }, [displayText, hasText]);
 
-    if (message.call) return null;
+    if (message.call) {
+      const { kind, result, duration } = message.call;
+      const mins = Math.floor(duration / 60);
+      const secs = String(duration % 60).padStart(2, '0');
+      const statusText =
+        result === 'answered'
+          ? `${mins}:${secs}`
+          : result === 'missed'
+            ? (isMe ? 'No answer' : 'Missed')
+            : 'Declined';
+      const isMissed = result !== 'answered';
+      return (
+        <div
+          id={`msg-${message.id}`}
+          className={`flex w-full mt-3.5 ${isMe ? 'justify-end' : 'justify-start'}`}
+        >
+          <div
+            className={`inline-flex items-center gap-3 px-3.5 py-2.5 rounded-[18px] border ${theme.subtleBg} ${theme.subtleBorder}`}
+          >
+            <span
+              className={`w-8 h-8 rounded-full flex items-center justify-center shrink-0 ${
+                isMissed
+                  ? 'bg-[#EF4444]/15 text-[#F87171]'
+                  : 'bg-[#10B981]/15 text-[#34D399]'
+              }`}
+            >
+              {kind === 'video' ? (
+                <Video className="w-4 h-4" />
+              ) : (
+                <Phone className="w-4 h-4" />
+              )}
+            </span>
+            <div className="min-w-0">
+              <p className={`text-[13px] font-semibold leading-tight ${theme.textPrimary}`}>
+                {kind === 'video' ? 'Video call' : 'Voice call'}
+              </p>
+              <p className={`text-[11px] mt-0.5 tabular-nums ${isMissed ? 'text-[#F87171]' : theme.textSecondary}`}>
+                {statusText} · {formatTime(message.sentAt)}
+              </p>
+            </div>
+          </div>
+        </div>
+      );
+    }
 
     const isVoice = message.mediaType === MediaType.Audio;
     const tailClass = isLastOfGroup ? (isMe ? 'rounded-br-[4px]' : 'rounded-bl-[4px]') : '';
@@ -4271,14 +4318,18 @@ export function DirectMessagePane(): React.JSX.Element {
     let lastTs = 0;
 
     for (const m of messages) {
-      if (m.call) continue;
-
       const day = parseUtc(m.sentAt).toDateString();
       if (day !== lastDate) {
         out.push({ type: 'date', key: `d-${day}`, label: formatDayDivider(m.sentAt) });
         lastDate = day;
         lastSenderId = '';
         lastTs = 0;
+      }
+      if (m.call) {
+        out.push({ type: 'msg', key: String(m.id), message: m, grouped: false, last: true });
+        lastSenderId = '';
+        lastTs = 0;
+        continue;
       }
       const ts = getMessageTime(m);
       const isGrouped = m.senderId === lastSenderId && ts - lastTs < 7 * 60 * 1000;

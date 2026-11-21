@@ -1362,11 +1362,15 @@ function CallProviderComponent({
         );
       } catch (err) {
         console.warn('[Call] initiateCall failed:', err);
+        const wasCaller = callInitiatedByMeRef.current;
         const s = sessionRef.current;
         if (s?.sessionId) {
           void apiService.endCall(s.sessionId).catch(() => {});
         }
         teardown();
+        if (wasCaller && targetPeerId) {
+          void logCallToChat(targetPeerId, callType, false, 0);
+        }
         throw err;
       }
     },
