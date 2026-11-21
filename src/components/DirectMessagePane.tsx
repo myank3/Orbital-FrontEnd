@@ -3390,6 +3390,7 @@ export function DirectMessagePane(): React.JSX.Element {
   const dockPcRef = useRef<RTCPeerConnection | null>(null);
   const dockDcRef = useRef<RTCDataChannel | null>(null);
   const dockSendFileRef = useRef<File | null>(null);
+  const dockPreloadedBufRef = useRef<ArrayBuffer | null>(null);
   const dockPendingOfferRef = useRef<{ transferId: string; fileName: string; fileSize: number; fileType: string; sdp: string; senderId: string } | null>(null);
   const dockIceQueueRef = useRef<RTCIceCandidateInit[]>([]);
   const dockSessionRef = useRef<DockSession | null>(null);
@@ -3454,6 +3455,18 @@ export function DirectMessagePane(): React.JSX.Element {
     cleanupDock();
     const transferId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     dockSendFileRef.current = file;
+    dockPreloadedBufRef.current = null;
+    try {
+      if (file.size <= 50 * 1024 * 1024) {
+        dockPreloadedBufRef.current = await file.arrayBuffer();
+      } else {
+        await file.slice(0, 1).arrayBuffer();
+      }
+    } catch (err) {
+      cleanupDock();
+      toast.error(Cannot read : );
+      return;
+    }
 
     const pc = new RTCPeerConnection({
       iceServers: [
