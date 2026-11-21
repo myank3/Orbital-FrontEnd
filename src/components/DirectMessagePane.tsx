@@ -3411,6 +3411,22 @@ export function DirectMessagePane(): React.JSX.Element {
   const friendsLookupRef = useRef<FriendDto[]>([]);
   friendsLookupRef.current = friends;
 
+  const isBlockedCarrierSrflxOnAndroid = (candidateStr?: string | null): boolean => {
+    if (!isNativeAndroidApk() || !candidateStr) return false;
+    return /\btyp\s+srflx\b/i.test(candidateStr);
+  };
+
+  const yieldMicrotaskAndroid = (): Promise<void> =>
+    new Promise((resolve) => {
+      if (typeof MessageChannel !== 'undefined') {
+        const ch = new MessageChannel();
+        ch.port1.onmessage = () => resolve();
+        ch.port2.postMessage(null);
+      } else {
+        window.setTimeout(resolve, 0);
+      }
+    });
+
   const isNativeAndroidApk = (): boolean => {
     if (typeof window === 'undefined') return false;
     const cap = (window as unknown as { Capacitor?: { isNativePlatform?: () => boolean; getPlatform?: () => string } }).Capacitor;
@@ -3441,6 +3457,11 @@ export function DirectMessagePane(): React.JSX.Element {
                 directory: string;
                 recursive?: boolean;
               }) => Promise<{ uri?: string }>;
+              appendFile?: (opts: {
+                path: string;
+                data: string;
+                directory: string;
+              }) => Promise<void>;
             };
           };
         };
@@ -3449,38 +3470,53 @@ export function DirectMessagePane(): React.JSX.Element {
       const fsPlugin = cap?.Plugins?.Filesystem;
       if (fsPlugin?.writeFile) {
         try { await fsPlugin.requestPermissions?.(); } catch {}
-        const sliceSize = 2 * 1024 * 1024;
-        const b64Chunks: string[] = [];
-        for (let offset = 0; offset < blob.size; offset += sliceSize) {
-          const buf = await blob.slice(offset, Math.min(offset + sliceSize, blob.size)).arrayBuffer();
-          b64Chunks.push(bytesToBase64Chunked(new Uint8Array(buf)));
-        }
-        const fullBase64 = b64Chunks.join('');
 
-        // Attempt 1: Public Download/<file>
+        const writeChunkedToDir = async (relPath: string, directory: string): Promise<void> => {
+          // 768 KB (divisible by 3 so base64 chunks concatenate with zero padding corruption)
+          const sliceSize = 2097150;
+          let isFirst = true;
+          for (let offset = 0; offset < blob.size; offset += sliceSize) {
+            const buf = await blob.slice(offset, Math.min(offset + sliceSize, blob.size)).arrayBuffer();
+            const b64 = bytesToBase64Chunked(new Uint8Array(buf));
+            if (isFirst || !fsPlugin.appendFile) {
+              await fsPlugin.writeFile!({
+                path: relPath,
+                data: b64,
+                directory,
+                recursive: true,
+              });
+              isFirst = false;
+            } else {
+              await fsPlugin.appendFile({
+                path: relPath,
+                data: b64,
+                directory,
+              });
+            }
+          }
+          if (blob.size === 0) {
+            await fsPlugin.writeFile!({ path: relPath, data: '', directory, recursive: true });
+          }
+        };
+
         try {
-          await fsPlugin.writeFile({
-            path: `Download/${safeName}`,
-            data: fullBase64,
-            directory: 'EXTERNAL_STORAGE',
-            recursive: true,
-          });
+          await writeChunkedToDir(`Download/${safeName}`, 'EXTERNAL_STORAGE');
           return `Internal storage/Download/${safeName}`;
         } catch (err1) {
-          console.warn('[Docking] EXTERNAL_STORAGE Download/ blocked by Scoped Storage, falling back to DOCUMENTS:', err1);
+          console.warn('[Docking] EXTERNAL_STORAGE Download/ blocked, falling back to DOCUMENTS:', err1);
         }
 
-        // Attempt 2: Public Documents/Orbital/<file> (works on Android 10-16 without MANAGE_EXTERNAL_STORAGE)
         try {
-          await fsPlugin.writeFile({
-            path: `Orbital/${safeName}`,
-            data: fullBase64,
-            directory: 'DOCUMENTS',
-            recursive: true,
-          });
+          await writeChunkedToDir(`Orbital/${safeName}`, 'DOCUMENTS');
           return `Internal storage/Documents/Orbital/${safeName}`;
         } catch (err2) {
-          console.error('[Docking] DOCUMENTS writeFile failed:', err2);
+          console.warn('[Docking] Retrying DOCUMENTS with unique filename:', err2);
+          const dotIdx = safeName.lastIndexOf('.');
+          const stamped = dotIdx > 0
+            ? `${safeName.slice(0, dotIdx)}_${Date.now().toString().slice(-4)}${safeName.slice(dotIdx)}`
+            : `${safeName}_${Date.now().toString().slice(-4)}`;
+          await writeChunkedToDir(`Orbital/${stamped}`, 'DOCUMENTS');
+          return `Internal storage/Documents/Orbital/${stamped}`;
         }
       }
     }
@@ -3496,24 +3532,47 @@ export function DirectMessagePane(): React.JSX.Element {
     return `Downloads/${safeName}`;
   };
   const getDockIceConfig = useCallback(async (): Promise<RTCConfiguration> => {
-    const baseServers: RTCIceServer[] = [
-      { urls: 'stun:stun.l.google.com:19302' },
-      { urls: 'stun:stun1.l.google.com:19302' },
-      {
-        urls: [
-          'turn:global.relay.metered.ca:80',
-          'turn:global.relay.metered.ca:80?transport=tcp',
-          'turn:global.relay.metered.ca:443',
-          'turns:global.relay.metered.ca:443?transport=tcp',
-        ],
-        username: '314b509605be09e502e550bd',
-        credential: 'x53QpqdPM1wUJnAa',
-      },
+    const fallbackServers: RTCIceServer[] = [
+      { urls: 'stun:stun.cloudflare.com:3478' },
     ];
+
+    const turnKeyId = 'eb9a378711892b421525ca90e7bce71a';
+    const turnApiToken = 'd777b077108e869bc8cf0b7690992e6e2a1cce86610af2d9d4a5a446276cbab2';
+
+    if (turnKeyId && turnApiToken) {
+      try {
+        const res = await fetch(
+          `https://rtc.live.cloudflare.com/v1/turn/keys/${turnKeyId}/credentials/generate-ice-servers`,
+          {
+            method: 'POST',
+            headers: {
+              Authorization: `Bearer ${turnApiToken}`,
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ ttl: 86400 }),
+          }
+        );
+        if (res.ok) {
+          const data = (await res.json()) as { iceServers?: RTCIceServer[] };
+          if (Array.isArray(data.iceServers) && data.iceServers.length > 0) {
+            return {
+              iceServers: [...fallbackServers, ...data.iceServers],
+              iceTransportPolicy: 'all',
+              iceCandidatePoolSize: 4,
+            };
+          }
+        } else {
+          console.warn('[Orbital Docking] Cloudflare TURN HTTP error:', res.status);
+        }
+      } catch (err) {
+        console.warn('[Orbital Docking] Cloudflare TURN fetch failed:', err);
+      }
+    }
+
     return {
-      iceServers: baseServers,
-      iceTransportPolicy: isNativeAndroidApk() ? 'relay' : 'all',
-      iceCandidatePoolSize: 6,
+      iceServers: fallbackServers,
+      iceTransportPolicy: 'all',
+      iceCandidatePoolSize: 4,
     };
   }, []);
   const cleanupDock = useCallback(() => {
@@ -3617,10 +3676,15 @@ export function DirectMessagePane(): React.JSX.Element {
 
     // Eagerly read the first chunk immediately on file pick so Windows & Android lock the open file descriptor right away (0 MB limit, ~0 RAM)
     try {
-      const reader = file.stream().getReader();
-      const first = await reader.read();
-      dockStreamReaderRef.current = reader;
-      dockFirstChunkRef.current = !first.done && first.value ? first.value : null;
+      if (isNativeAndroidApk()) {
+        const probe = await file.slice(0, Math.min(1024, file.size)).arrayBuffer();
+        dockFirstChunkRef.current = probe.byteLength > 0 ? new Uint8Array(probe) : null;
+      } else {
+        const reader = file.stream().getReader();
+        const first = await reader.read();
+        dockStreamReaderRef.current = reader;
+        dockFirstChunkRef.current = !first.done && first.value ? first.value : null;
+      }
     } catch (err) {
       cleanupDock();
       toast.error(`Cannot read ${file.name}: ${err instanceof Error ? err.message : 'File permission denied'}`);
@@ -3631,7 +3695,7 @@ export function DirectMessagePane(): React.JSX.Element {
     dockPcRef.current = pc;
 
     pc.onicecandidate = (e) => {
-      if (e.candidate) {
+      if (e.candidate && !isBlockedCarrierSrflxOnAndroid(e.candidate.candidate)) {
         void sendDockSignal(userId, { type: 'dock-ice', transferId, candidate: e.candidate.toJSON() });
       }
     };
@@ -3673,7 +3737,7 @@ export function DirectMessagePane(): React.JSX.Element {
 
     const dc = pc.createDataChannel('orbital-docking-airlock', { ordered: true });
     dc.binaryType = 'arraybuffer';
-    dc.bufferedAmountLowThreshold = 1048576;
+    dc.bufferedAmountLowThreshold = isNativeAndroidApk() ? 524288 : 1048576;
     dockDcRef.current = dc;
 
     setDockSession({
@@ -3694,15 +3758,17 @@ export function DirectMessagePane(): React.JSX.Element {
       if (startedSend) return;
       startedSend = true;
       const f = dockSendFileRef.current;
+      const nativeAndroid = isNativeAndroidApk();
       const reader = dockStreamReaderRef.current;
-      if (!f || !reader) return;
+      if (!f || (!nativeAndroid && !reader)) return;
 
       setDockSession((prev) => (prev ? { ...prev, status: 'transferring' } : null));
-      const FRAME = 65536;          // 64 KB SCTP-safe wire frame
-      const HIGH_WATER = 4194304;   // 4 MB socket pipeline window
+      const FRAME = nativeAndroid ? 16384 : 65536;
+      const HIGH_WATER = nativeAndroid ? 1048576 : 4194304;
       let offset = 0;
       let lastTick = performance.now();
       let lastBytes = 0;
+      let framesSinceYield = 0;
 
       const sendView = async (blockView: Uint8Array) => {
         let pos = 0;
@@ -3710,8 +3776,16 @@ export function DirectMessagePane(): React.JSX.Element {
           if (dc.readyState !== 'open') return;
           if (dc.bufferedAmount > HIGH_WATER) {
             await new Promise<void>((resolve) => {
-              const onLow = () => { dc.removeEventListener('bufferedamountlow', onLow); resolve(); };
-              dc.addEventListener('bufferedamountlow', onLow);
+              let doneWait = false;
+              const finish = () => {
+                if (doneWait) return;
+                doneWait = true;
+                window.clearTimeout(timer);
+                dc.removeEventListener('bufferedamountlow', finish);
+                resolve();
+              };
+              const timer = window.setTimeout(finish, 150);
+              dc.addEventListener('bufferedamountlow', finish);
             });
           }
           const end = Math.min(pos + FRAME, blockView.byteLength);
@@ -3719,6 +3793,11 @@ export function DirectMessagePane(): React.JSX.Element {
           dc.send(new Uint8Array(blockView.subarray(pos, end)));
           pos = end;
           offset += sliceLen;
+          framesSinceYield++;
+          if (nativeAndroid && framesSinceYield >= 32) {
+            framesSinceYield = 0;
+            await yieldMicrotaskAndroid();
+          }
         }
         const now = performance.now();
         if (now - lastTick >= 150 || offset >= f.size) {
@@ -3737,20 +3816,39 @@ export function DirectMessagePane(): React.JSX.Element {
           await sendView(firstView);
         }
 
-        while (offset < f.size) {
-          if (dc.readyState !== 'open') return;
-          const { done, value } = await reader.read();
-          if (done || !value) break;
-          await sendView(value);
+        if (nativeAndroid) {
+          const SLICE_BLOCK = 1048576; // 1 MB direct file.slice reads bypass Android content:// stream hangs
+          while (offset < f.size) {
+            if (dc.readyState !== 'open') return;
+            const nextEnd = Math.min(offset + SLICE_BLOCK, f.size);
+            const buf = await f.slice(offset, nextEnd).arrayBuffer();
+            if (buf.byteLength === 0) break;
+            await sendView(new Uint8Array(buf));
+          }
+        } else if (reader) {
+          while (offset < f.size) {
+            if (dc.readyState !== 'open') return;
+            const { done, value } = await reader.read();
+            if (done || !value) break;
+            await sendView(value);
+          }
         }
 
-        dc.send('__DOCK_EOF__');
+        if (nativeAndroid) {
+          const drainDeadline = performance.now() + 30000;
+          while (dc.readyState === 'open' && dc.bufferedAmount > 0 && performance.now() < drainDeadline) {
+            await new Promise<void>((r) => window.setTimeout(r, 80));
+          }
+        }
+        if (dc.readyState === 'open') {
+          dc.send('__DOCK_EOF__');
+        }
         setDockSession((prev) => (prev ? { ...prev, status: 'done', transferred: f.size, speedBps: 0 } : null));
         toast.success(`Docked & delivered ${file.name}!`);
         setTimeout(() => {
           cleanupDock();
           setDockSession((prev) => (prev?.transferId === transferId ? null : prev));
-        }, 2200);
+        }, nativeAndroid ? 8000 : 2200);
       } catch (err) {
         setDockSession((prev) => (prev ? { ...prev, status: 'error', error: String(err) } : null));
       }
@@ -3800,13 +3898,15 @@ export function DirectMessagePane(): React.JSX.Element {
     dockPcRef.current = pc;
 
     pc.onicecandidate = (e) => {
-      if (e.candidate) {
+      if (e.candidate && !isBlockedCarrierSrflxOnAndroid(e.candidate.candidate)) {
         void sendDockSignal(pending.senderId, { type: 'dock-ice', transferId: pending.transferId, candidate: e.candidate.toJSON() });
       }
     };
 
     let rxDisconnectTimer: number | null = null;
+    let rxEofReceived = false;
     pc.oniceconnectionstatechange = () => {
+      if (rxEofReceived) return;
       const st = pc.iceConnectionState;
       if (st === 'connected' || st === 'completed') {
         if (rxDisconnectTimer) {
@@ -3818,6 +3918,7 @@ export function DirectMessagePane(): React.JSX.Element {
       if (st === 'disconnected') {
         if (!rxDisconnectTimer) {
           rxDisconnectTimer = window.setTimeout(() => {
+            if (rxEofReceived) return;
             if (pc.iceConnectionState === 'disconnected' || pc.iceConnectionState === 'failed') {
               setDockSession((prev) =>
                 prev && prev.status !== 'done'
@@ -3889,24 +3990,30 @@ export function DirectMessagePane(): React.JSX.Element {
 
       dc.onmessage = (msgEv) => {
         if (typeof msgEv.data === 'string' && msgEv.data === '__DOCK_EOF__') {
+          rxEofReceived = true;
+          if (rxDisconnectTimer) {
+            window.clearTimeout(rxDisconnectTimer);
+            rxDisconnectTimer = null;
+          }
           flushBatch();
           writeChain = writeChain.then(async () => {
+            let savedPath = pending.fileName;
             if (writable && opfsRoot && opfsTempName) {
               await writable.close();
               const savedHandle = await opfsRoot.getFileHandle(opfsTempName);
               const diskFile = await savedHandle.getFile();
-              triggerDownload(diskFile);
+              savedPath = await triggerDownload(diskFile);
             } else {
               const blob = new Blob(fallbackChunks, { type: pending.fileType });
               fallbackChunks.length = 0;
-              triggerDownload(blob);
+              savedPath = await triggerDownload(blob);
             }
             setDockSession((prev) => (prev ? { ...prev, status: 'done', transferred: pending.fileSize, speedBps: 0 } : null));
-            toast.success(`Saved ${pending.fileName} & undocked!`);
+            toast.success(`Saved to ${savedPath}`);
             setTimeout(() => {
               cleanupDock();
               setDockSession((prev) => (prev?.transferId === pending.transferId ? null : prev));
-            }, 2200);
+            }, 2500);
           });
           return;
         }
@@ -3937,7 +4044,7 @@ export function DirectMessagePane(): React.JSX.Element {
     setDockSession((prev) => (prev ? { ...prev, status: 'connecting' } : null));
     await pc.setRemoteDescription({ type: 'offer', sdp: pending.sdp });
     for (const c of dockIceQueueRef.current) {
-      try { await pc.addIceCandidate(c); } catch {}
+      if (!isBlockedCarrierSrflxOnAndroid(c.candidate)) { try { await pc.addIceCandidate(c); } catch {} }
     }
     dockIceQueueRef.current = [];
 
@@ -3959,7 +4066,7 @@ export function DirectMessagePane(): React.JSX.Element {
       try {
         if (data.type === 'candidate' && data.candidate) {
           if (dockPcRef.current && dockPcRef.current.remoteDescription) {
-            try { await dockPcRef.current.addIceCandidate(data.candidate); } catch {}
+            if (!isBlockedCarrierSrflxOnAndroid(data.candidate.candidate)) { try { await dockPcRef.current.addIceCandidate(data.candidate); } catch {} }
           } else {
             dockIceQueueRef.current.push(data.candidate);
           }
@@ -4006,7 +4113,7 @@ export function DirectMessagePane(): React.JSX.Element {
         } else if (sig.type === 'dock-answer' && dockPcRef.current) {
           await dockPcRef.current.setRemoteDescription({ type: 'answer', sdp: sig.sdp });
           for (const c of dockIceQueueRef.current) {
-            try { await dockPcRef.current.addIceCandidate(c); } catch {}
+            if (!isBlockedCarrierSrflxOnAndroid(c.candidate)) { try { await dockPcRef.current.addIceCandidate(c); } catch {} }
           }
           dockIceQueueRef.current = [];
           setDockSession((prev) => (prev ? { ...prev, status: 'connecting' } : null));
