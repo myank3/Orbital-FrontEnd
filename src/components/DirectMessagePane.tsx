@@ -4093,6 +4093,13 @@ export function DirectMessagePane(): React.JSX.Element {
         }
       };
     };
+    await pc.setRemoteDescription({ type: 'offer', sdp: pending.sdp });
+    for (const c of dockIceQueueRef.current) {
+      if (!isBlockedCarrierSrflxOnAndroid(c.candidate)) {
+        try { await pc.addIceCandidate(c); } catch {}
+      }
+    }
+    dockIceQueueRef.current = [];
     const answer = await pc.createAnswer();
     await pc.setLocalDescription(answer);
     await sendDockSignal(pending.senderId, {
