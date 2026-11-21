@@ -1,4 +1,4 @@
-﻿/**
+/**
  * @license
  * SPDX-License-Identifier: Apache-2.0
  */
@@ -159,7 +159,8 @@ export function FloatingOrbitalOrb({ onOpen }: { onOpen: () => void }) {
     }
     const isMobile = typeof window !== 'undefined' && window.innerWidth < 768;
     const padX = isMobile ? 16 : 24;
-    const padBottom = isMobile ? 80 : 24;
+    // Lift ~0.5cm (~20px) on PC only; keep Android/mobile bottom offset at 80px
+    const padBottom = isMobile ? 80 : 44;
     const padTop = isMobile ? 56 : 24;
     const c = CORNER_COORDS[corner];
 
