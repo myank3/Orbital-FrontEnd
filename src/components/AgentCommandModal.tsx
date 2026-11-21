@@ -576,7 +576,7 @@ export function AgentCommandModal({
     try {
       const res = await runOrbitalAgent(trimmed, {
         currentUserId: user.id,
-        userName: user.displayName || user.userHandle || user.fullHandle,
+        userName: user.userHandle || user.displayName || user.fullHandle,
         activePath: location.pathname,
         viaVoice,
         navigate: (path) => {
@@ -645,7 +645,7 @@ export function AgentCommandModal({
 
     startListening();
 
-    const userLabel = user.displayName || user.userHandle || user.fullHandle || 'there';
+    const userLabel = user.userHandle || user.displayName || user.fullHandle || 'there';
     const greetKey = `orbital.ai.greeted.${user.id}`;
     try {
       if (!sessionStorage.getItem(greetKey)) {

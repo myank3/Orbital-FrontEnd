@@ -698,12 +698,21 @@ function formatFriendChip(
   };
 }
 
+let pendingDisambiguation: {
+  matches: FriendDto[];
+  actionVerb: 'call' | 'message' | 'schedule';
+  extraBody?: string;
+} | null = null;
+
 function buildFriendDisambiguationResult(
   matches: FriendDto[],
   actionVerb: 'call' | 'message' | 'schedule',
   extraBody?: string,
 ): AgentResult {
-  const chips: AgentQuickAction[] = matches.slice(0, 5).map((f) => {
+  const sliced = matches.slice(0, 5);
+  pendingDisambiguation = { matches: sliced, actionVerb, extraBody };
+
+  const chips: AgentQuickAction[] = sliced.map((f) => {
     const uniqueIdentifier = (f.fullHandle || f.handle || f.userId).trim();
     const promptText =
       actionVerb === 'call'
@@ -717,9 +726,9 @@ function buildFriendDisambiguationResult(
   });
 
   return {
-    reply: `Found ${matches.length} people named "${matches[0].displayName.split(' ')[0]}". Which one?`,
+    reply: `Found ${sliced.length} people named "${sliced[0].displayName.split(' ')[0]}". Which one?`,
     quickActions: chips,
-    pendingContext: null,
+    pendingContext: `Pick ${sliced[0].displayName.split(' ')[0]}`,
     actionTaken: false,
   };
 }
@@ -868,6 +877,7 @@ async function tryZeroTokenIntent(
     saveScheduledMessages(handlers.currentUserId, []);
     pendingScheduleDraft = null;
     pendingMessageTarget = null;
+    pendingDisambiguation = null;
     return { reply: 'Cancelled all scheduled messages.', pendingContext: null, actionTaken: true };
   }
 
@@ -896,8 +906,50 @@ async function tryZeroTokenIntent(
     return { reply: 'Opened Media.', pendingContext: null, actionTaken: true };
   }
 
-  // 3. List scheduled messages
-  if (/^(?:show|list|view|my)\s+(?:schedul(?:e|ed)\s+)?(?:messages?|msgs?|tasks?|schedules?)$/i.test(lower)) {
+  // 2B. Active disambiguation follow-up ("first one", "second one", "1", "2", or handle)
+  if (pendingDisambiguation) {
+    const ordinalMap: Record<string, number> = {
+      '1': 0, 'first': 0, 'first one': 0, '1st': 0, '1st one': 0, 'top one': 0,
+      '2': 1, 'second': 1, 'second one': 1, '2nd': 1, '2nd one': 1, 'last one': 1,
+      '3': 2, 'third': 2, 'third one': 2, '3rd': 2,
+      '4': 3, 'fourth': 3, 'fourth one': 3, '4th': 3,
+    };
+    let chosen: FriendDto | undefined;
+    if (lower in ordinalMap) {
+      chosen = pendingDisambiguation.matches[ordinalMap[lower]];
+    } else {
+      const exact = findMatchingFriends(cleaned, pendingDisambiguation.matches);
+      if (exact.length === 1) chosen = exact[0];
+    }
+
+    if (chosen) {
+      const { actionVerb, extraBody } = pendingDisambiguation;
+      pendingDisambiguation = null;
+      const uid = (chosen.fullHandle || chosen.handle || chosen.userId).trim();
+      if (actionVerb === 'call') {
+        return await runOrbitalAgent(`call ${uid}`, handlers);
+      }
+      if (actionVerb === 'schedule') {
+        pendingScheduleDraft = {
+          step: 'awaiting_body',
+          target: { kind: 'dm', id: chosen.userId, name: chosen.displayName },
+        };
+        return {
+          reply: `What message do you wanna schedule for ${chosen.displayName}?`,
+          pendingContext: `Scheduling for ${chosen.displayName}`,
+          actionTaken: false,
+        };
+      }
+      if (extraBody) {
+        return await runOrbitalAgent(`message ${uid} ${extraBody}`, handlers);
+      }
+      return askForMessageBody({ kind: 'dm', id: chosen.userId, name: chosen.displayName });
+    }
+    pendingDisambiguation = null;
+  }
+
+  // 3. List scheduled messages / tasks (including bare "scheduled task" or "scheduled messages")
+  if (/^(?:(?:show|list|view|my|check)\s+)?schedul(?:e|ed)\s+(?:messages?|msgs?|tasks?|schedules?)$/i.test(lower)) {
     const list = getScheduledMessagesForUser(handlers.currentUserId);
     if (list.length === 0) {
       return { reply: 'No scheduled messages right now.', pendingContext: null, actionTaken: false };
@@ -1246,10 +1298,10 @@ async function tryZeroTokenIntent(
     };
   }
 
-  // 9C. Watch a movie / cinema intent
-  if (/\b(?:watch\s+(?:a\s+)?movie|watch\s+film|cinema|chalachitra)\b/i.test(lower)) {
+  // 9C. Watch a movie / Chalachitra intent (handles both "chalachitra" and "chalchitra")
+  if (/\b(?:watch\s+(?:a\s+)?movie|watch\s+film|cinema|chala?chitra)\b/i.test(lower)) {
     return {
-      reply: `Hey ${displayUser}, want to open Media or jump to Chalachitra to watch together?`,
+      reply: `Want to open Media or jump to Chalachitra to watch together?`,
       quickActions: [
         { label: 'Open Media', path: '/app/notifications' },
         { label: 'Open Orbit', path: '/app/orbit' },
