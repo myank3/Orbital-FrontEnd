@@ -3417,6 +3417,66 @@ export function DirectMessagePane(): React.JSX.Element {
     return Boolean(cap?.isNativePlatform?.() && cap?.getPlatform?.() === 'android');
   };
 
+  const bytesToBase64Chunked = (bytes: Uint8Array): string => {
+    const step = 0x8000;
+    const parts: string[] = [];
+    for (let i = 0; i < bytes.length; i += step) {
+      const sub = bytes.subarray(i, Math.min(i + step, bytes.length));
+      parts.push(String.fromCharCode.apply(null, Array.from(sub)));
+    }
+    return btoa(parts.join(''));
+  };
+
+  const saveReceivedDockFile = async (blob: Blob, fileName: string): Promise<void> => {
+    const safeName = (fileName || 'dock-transfer.bin').replace(/[\\/:*?"<>|]+/g, '_');
+    if (isNativeAndroidApk()) {
+      try {
+        const cap = (window as unknown as {
+          Capacitor?: {
+            Plugins?: {
+              Filesystem?: {
+                requestPermissions?: () => Promise<unknown>;
+                writeFile?: (opts: {
+                  path: string;
+                  data: string;
+                  directory: string;
+                  recursive?: boolean;
+                }) => Promise<{ uri?: string }>;
+              };
+            };
+          };
+        }).Capacitor;
+
+        const fsPlugin = cap?.Plugins?.Filesystem;
+        if (fsPlugin?.writeFile) {
+          try { await fsPlugin.requestPermissions?.(); } catch {}
+          const sliceSize = 2 * 1024 * 1024;
+          const b64Chunks: string[] = [];
+          for (let offset = 0; offset < blob.size; offset += sliceSize) {
+            const buf = await blob.slice(offset, Math.min(offset + sliceSize, blob.size)).arrayBuffer();
+            b64Chunks.push(bytesToBase64Chunked(new Uint8Array(buf)));
+          }
+          await fsPlugin.writeFile({
+            path: `Download/${safeName}`,
+            data: b64Chunks.join(''),
+            directory: 'EXTERNAL_STORAGE',
+            recursive: true,
+          });
+          return;
+        }
+      } catch (err) {
+        console.warn('[Docking] Capacitor Filesystem save fallback:', err);
+      }
+    }
+
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = safeName;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+  };
   const getDockIceConfig = useCallback(async (): Promise<RTCConfiguration> => {
     const baseServers: RTCIceServer[] = [
       { urls: 'stun:stun.l.google.com:19302' },
@@ -3611,6 +3671,11 @@ export function DirectMessagePane(): React.JSX.Element {
           }, 6000);
         }
       } else if (st === 'failed') {
+              if (!(pc as unknown as { __midTransferIceRestart?: boolean }).__midTransferIceRestart) {
+                (pc as unknown as { __midTransferIceRestart?: boolean }).__midTransferIceRestart = true;
+                try { pc.restartIce(); } catch {}
+                return;
+              }
         if (disconnectTimer) {
           window.clearTimeout(disconnectTimer);
           disconnectTimer = null;
@@ -3781,6 +3846,11 @@ export function DirectMessagePane(): React.JSX.Element {
           }, 8000);
         }
       } else if (st === 'failed') {
+              if (!(pc as unknown as { __midTransferIceRestart?: boolean }).__midTransferIceRestart) {
+                (pc as unknown as { __midTransferIceRestart?: boolean }).__midTransferIceRestart = true;
+                try { pc.restartIce(); } catch {}
+                return;
+              }
         if (rxDisconnectTimer) {
           window.clearTimeout(rxDisconnectTimer);
           rxDisconnectTimer = null;
@@ -3802,15 +3872,7 @@ export function DirectMessagePane(): React.JSX.Element {
     let writeChain = Promise.resolve();
 
     const triggerDownload = (blobOrFile: Blob) => {
-      const url = URL.createObjectURL(blobOrFile);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = pending.fileName;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      setTimeout(() => {
-        URL.revokeObjectURL(url);
+      void saveReceivedDockFile(blobOrFile, pending.fileName);setTimeout(() => {
         if (opfsRoot && opfsTempName) {
           void opfsRoot.removeEntry(opfsTempName).catch(() => {});
         }
