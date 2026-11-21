@@ -3524,7 +3524,17 @@ export function DirectMessagePane(): React.JSX.Element {
       iceServers: [
         { urls: 'stun:stun.l.google.com:19302' },
         { urls: 'stun:stun.cloudflare.com:3478' },
+        {
+          urls: [
+            'turn:openrelay.metered.ca:80',
+            'turn:openrelay.metered.ca:443',
+            'turns:openrelay.metered.ca:443?transport=tcp',
+          ],
+          username: 'openrelayproject',
+          credential: 'openrelayproject',
+        },
       ],
+      iceTransportPolicy: 'all',
     });
     dockPcRef.current = pc;
 
@@ -3534,10 +3544,39 @@ export function DirectMessagePane(): React.JSX.Element {
       }
     };
 
+    let disconnectTimer: number | null = null;
     pc.oniceconnectionstatechange = () => {
       const st = pc.iceConnectionState;
-      if (st === 'failed' || st === 'disconnected') {
-        setDockSession((prev) => (prev && prev.status !== 'done' ? { ...prev, status: 'error', error: 'Direct P2P route blocked by network NAT (' + st + ')' } : prev));
+      if (st === 'connected' || st === 'completed') {
+        if (disconnectTimer) {
+          window.clearTimeout(disconnectTimer);
+          disconnectTimer = null;
+        }
+        return;
+      }
+      if (st === 'disconnected') {
+        try { pc.restartIce(); } catch {}
+        if (!disconnectTimer) {
+          disconnectTimer = window.setTimeout(() => {
+            if (pc.iceConnectionState === 'disconnected' || pc.iceConnectionState === 'failed') {
+              setDockSession((prev) =>
+                prev && prev.status !== 'done'
+                  ? { ...prev, status: 'error', error: 'Network NAT blocked P2P route — try normal attachment' }
+                  : prev
+              );
+            }
+          }, 6000);
+        }
+      } else if (st === 'failed') {
+        if (disconnectTimer) {
+          window.clearTimeout(disconnectTimer);
+          disconnectTimer = null;
+        }
+        setDockSession((prev) =>
+          prev && prev.status !== 'done'
+            ? { ...prev, status: 'error', error: 'Network NAT blocked P2P route — try normal attachment' }
+            : prev
+        );
       }
     };
     const dc = pc.createDataChannel('orbital-docking-airlock', { ordered: true });
@@ -3655,7 +3694,17 @@ export function DirectMessagePane(): React.JSX.Element {
       iceServers: [
         { urls: 'stun:stun.l.google.com:19302' },
         { urls: 'stun:stun.cloudflare.com:3478' },
+        {
+          urls: [
+            'turn:openrelay.metered.ca:80',
+            'turn:openrelay.metered.ca:443',
+            'turns:openrelay.metered.ca:443?transport=tcp',
+          ],
+          username: 'openrelayproject',
+          credential: 'openrelayproject',
+        },
       ],
+      iceTransportPolicy: 'all',
     });
     dockPcRef.current = pc;
 
