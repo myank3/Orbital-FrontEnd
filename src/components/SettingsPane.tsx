@@ -590,7 +590,7 @@ function SettingsPane(): React.JSX.Element {
               Legal &amp; Info
             </h2>
             <span className="text-[10px] font-mono uppercase tracking-[0.18em] text-[#5A524A] px-2 py-1 rounded-md bg-white/[0.03] border border-white/[0.05]">
-              v1.0
+              v2.0
             </span>
           </div>
 

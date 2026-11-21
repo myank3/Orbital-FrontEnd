@@ -2876,17 +2876,17 @@ export default function GroupPane(): React.JSX.Element {
   }, [groups, groupsLoaded, user?.id]);
 
   useEffect(() => {
-    if (!activeGroupId || isNaN(activeGroupId)) { setActiveGroup(null); setMessages([]); return; }
+    if (!activeGroupId || isNaN(activeGroupId)) { setActiveGroup(null); setMessages([]); return; } const cachedGroup = groups.find((grp) => grp.id === activeGroupId); if (cachedGroup) { setActiveGroup((prev) => (prev?.id === activeGroupId ? prev : ({ ...cachedGroup, members: [] } as any))); }
     let active = true;
     const loadGroup = async () => {
       setLoadingHistory(true); setHistoryError(null);
       try {
-        await signalRService.joinGroupChannel(activeGroupId);
+        void signalRService.joinGroupChannel(activeGroupId).catch(() => {});
         const [detail, res] = await Promise.all([
           apiService.getGroupDetail(activeGroupId),
           apiService.getGroupMessages(activeGroupId, PAGE_SIZE),
         ]);
-        if (active) startTransition(() => setActiveGroup(detail));
+        if (active) setActiveGroup(detail);
         const msgs = applyPresignedUrls(res.messages, res.presignedUrls);
         if (!active) return;
         const sorted = [...msgs].sort((a, b) => getMessageTime(a) - getMessageTime(b));

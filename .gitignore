@@ -21,3 +21,7 @@ android/keystore.properties
 android/.kotlin/
 
 **/google-services.json
+
+.env
+.env.local
+.orbital-agent-backup/

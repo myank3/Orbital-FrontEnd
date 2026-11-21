@@ -12,9 +12,9 @@ import {
   useNavigate,
 } from 'react-router-dom';
 import { Toaster } from 'sonner';
-import { Analytics } from '@vercel/analytics/react';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { CallProvider } from './context/CallContext';
+import { GroupCallProvider } from './context/GroupCallContext';
 import { ScrollToTop } from './components/ScrollToTop';
 import ConnectionBanner from './components/ConnectionBanner';
 
@@ -211,15 +211,17 @@ function NativeIntegration() {
 
     const handleClick = (e: MouseEvent) => {
       const target = (e.target as HTMLElement).closest('a');
-      if (
-        target &&
-        target.href &&
-        target.href.startsWith('http') &&
-        !target.href.includes('orbitalhq.vercel.app')
-      ) {
-        e.preventDefault();
-        Browser.open({ url: target.href });
-      }
+      if (!target || !target.href || !target.href.startsWith('http')) return;
+
+      // 🚨 THE FIX: Ignore internal app routes (https://localhost/...)
+      if (target.href.startsWith(window.location.origin)) return;
+
+      // Ignore our own production website just in case
+      if (target.href.includes('orbitalhq.vercel.app')) return;
+
+      // If it's a true external link (like Google, Terms, etc), open in Chrome
+      e.preventDefault();
+      Browser.open({ url: target.href });
     };
 
     document.addEventListener('click', handleClick);
@@ -256,7 +258,9 @@ export default function App() {
               path="/app"
               element={
                 <ProtectedRoute>
-                  <AppShell />
+                  <GroupCallProvider>
+                    <AppShell />
+                  </GroupCallProvider>
                 </ProtectedRoute>
               }
             >
@@ -283,18 +287,20 @@ export default function App() {
 
           <Toaster
             position="top-center"
-            theme="dark"
             toastOptions={{
               style: {
-                background: '#1A1816',
-                border: '1px solid rgba(255,255,255,0.08)',
-                color: '#EDE5D4',
+                background: 'rgba(28, 28, 30, 0.86)',
+                backdropFilter: 'blur(28px)',
+                border: '1px solid rgba(255, 255, 255, 0.14)',
+                borderRadius: '22px',
+                color: '#FFFFFF',
+                boxShadow: '0 20px 50px -12px rgba(0,0,0,0.85)',
               },
             }}
           />
-          <Analytics />
         </CallProvider>
       </AuthProvider>
     </BrowserRouter>
   );
 }
+

@@ -1,3 +1,4 @@
+import { Capacitor } from '@capacitor/core';
 /**
  * @license
  * SPDX-License-Identifier: Apache-2.0
@@ -14,10 +15,12 @@ import { createPortal } from 'react-dom';
 import { NavLink, Outlet, useNavigate, Link, useLocation } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { useCall } from '../context/CallContext';
+import { useGroupCallContext } from '../context/GroupCallContext';
+import { AgentCommandModal, FloatingOrbitalOrb } from '../components/AgentCommandModal';
 import { apiService } from '../services/api';
 import { Avatar } from '../components/Avatar';
 import VideoCallOverlay from '../components/VideoCallOverlay';
-import { Menu, X, Phone, PhoneOff, LogOut, SlidersHorizontal } from 'lucide-react';
+import { Menu, X, Phone, PhoneOff, LogOut, SlidersHorizontal, Sparkles } from 'lucide-react';
 
 /* ────────────────────────────────────────────────────────── */
 /* Custom icon set — 1.8 stroke, cohesive                    */
@@ -317,7 +320,9 @@ function AppShell(): React.JSX.Element {
   const navigate = useNavigate();
   const location = useLocation();
   const { user, logout } = useAuth();
-  const { incomingCall, acceptCall, rejectCall } = useCall();
+  const { incomingCall, acceptCall, rejectCall, callState } = useCall();
+  const { inCall: inGroupCall } = useGroupCallContext();
+  const [agentOpen, setAgentOpen] = useState(false);
 
   const fullScreen = isFullScreenRoute(location.pathname);
   const hideMobileChrome = fullScreen;
@@ -754,7 +759,8 @@ function AppShell(): React.JSX.Element {
     [primaryNav],
   );
 
-  const railWidth = railHovered ? 224 : 68;
+  const railExpanded = railHovered || userMenuOpen || agentOpen;
+  const railWidth = railExpanded ? 224 : 68;
   const incomingDisplayName = callerName ?? 'Someone';
 
   const navRef = useRef<{
@@ -822,7 +828,7 @@ function AppShell(): React.JSX.Element {
 
   return (
     <div
-      ref={shellRef}
+      ref={shellRef} onClick={() => { if (userMenuOpen) setUserMenuOpen(false); }}
       className="app-shell flex text-[#EDE5D4] overflow-hidden selection:bg-[#D97706]/30 selection:text-[#EDE5D4]"
       style={{
         height: 'var(--vv-height, 100vh)',
@@ -908,7 +914,7 @@ function AppShell(): React.JSX.Element {
       <div
         className="hidden md:block relative shrink-0 w-[68px]"
         onMouseEnter={() => setRailHovered(true)}
-        onMouseLeave={() => setRailHovered(false)}
+        onMouseLeave={() => { if (!userMenuOpen && !agentOpen) setRailHovered(false); }}
       >
         <aside
           style={{
@@ -940,7 +946,7 @@ function AppShell(): React.JSX.Element {
           <nav className="flex-1 py-4 px-2 overflow-y-auto overflow-x-hidden custom-scrollbar">
             <div className="space-y-0.5">
               {primaryNav.map((item) => (
-                <RailItem key={item.to} item={item} expanded={railHovered} />
+                <RailItem key={item.to} item={item} expanded={railExpanded} />
               ))}
             </div>
 
@@ -948,7 +954,7 @@ function AppShell(): React.JSX.Element {
 
             <div className="space-y-0.5">
               {activityNav.map((item) => (
-                <RailItem key={item.to} item={item} expanded={railHovered} />
+                <RailItem key={item.to} item={item} expanded={railExpanded} />
               ))}
             </div>
           </nav>
@@ -977,7 +983,7 @@ function AppShell(): React.JSX.Element {
                     isOnline
                   />
                 </span>
-                {railHovered && (
+                {railExpanded && (
                   <div className="min-w-0 flex-1 text-left whitespace-nowrap">
                     <p className="text-[13px] font-medium text-[#EDE5D4] truncate leading-tight">
                       {user?.displayName || 'Active User'}
@@ -1268,6 +1274,16 @@ function AppShell(): React.JSX.Element {
         )}
       </div>
 
+      {!incomingCall && callState === 'idle' && !inGroupCall && (
+        <FloatingOrbitalOrb onOpen={() => setAgentOpen(true)} />
+      )}
+
+      <AgentCommandModal
+        open={agentOpen}
+        onClose={() => setAgentOpen(false)}
+        autoListen={false}
+      />
+
       <VideoCallOverlay />
     </div>
   );
@@ -1424,3 +1440,8 @@ function MobileItem({
 }
 
 export default AppShell;
+
+
+
+
+

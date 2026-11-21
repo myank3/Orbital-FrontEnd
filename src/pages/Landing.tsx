@@ -1,36 +1,42 @@
 /**
  * @file src/pages/Landing.tsx
- * Orbital — v18.4 · "The Thread" (Android smoothness pass)
+ * Orbital — v18.5 · "The Thread" (Ultra-HD + smoothness pass)
  *
- * ⚡ v18.4 deltas (Android-first)
+ * ⚡ v18.5 deltas
  *
- *  ROUND RINGS (Gates / Portal / Thread)
- *   · Gate torus tube 0.07 → 0.045; tubeSeg 8 → 10; ringSeg 96 → 112.
- *     Octagonal cross-section was the "chunky ring" on Android. 10 is
- *     the minimum that reads round at typical camera distances.
- *   · Ghost halo (fake bloom) slimmed 3.2× → 2.4× and opacity 0.14 →
- *     0.10. Additive overdraw on 12 stacked toruses was expensive.
- *   · Portal rings: ringSeg 64 → 112, tubeSeg 8 → 10 (inner) / 6 → 8
- *     (outer). Circle disc 48 → 64 segments. No more polygon edges.
- *   · Thread tubes: mainRadial 6 → 10, strandRadial 4 → 6. The spine
- *     now looks round instead of hexagonal.
- *   · Thread fragment: packet frequency is now a uniform (uFreq). Mobile
- *     uses 90 (was 180) — kills the shimmer/aliasing on low-DPR screens.
+ *  BLUR (resolution)
+ *   · Canvas used to START at the *minimum* DPR (0.65 mobile / ~1.0 PC) and
+ *     crawl upward 0.06–0.08 at a time, so the first ~25 s were blurry.
+ *     It also compared FPS against the monitor refresh (default 120 Hz!),
+ *     so on most devices it concluded "too slow" and stayed at min forever.
+ *     Now: start at MAX DPR (mobile up to 2.0, PC up to 2.0, 1.25× supersample
+ *     on 1× monitors for high tier), target FPS is capped (60 mobile / 90 PC),
+ *     and the controller only ever steps DOWN, in 0.25 steps, after 1.5 s of
+ *     sustained slowness. No more constant resize → no resize hitches.
+ *   · DPR no longer depends on measured refresh rate, so nothing is
+ *     re-allocated ~400 ms after mount.
+ *   · Gallery textures were fetched at 2800 px wide (Pexels `dpr=2` on top of
+ *     w=1400) → ~600 MB of GPU memory + giant upload stalls. Now 720/1440 px
+ *     desktop, 480/960 px mobile, no dpr multiplier. Sharper AND lighter.
  *
- *  BACKDROP / OVERLAY
- *   · BG_FRAG_MOBILE: deleted the 2-octave per-fragment fbm. Replaced
- *     with an animated radial gradient + pulse. It was the single most
- *     expensive full-screen shader in the mobile path.
- *   · Mobile bloom overlay: removed `mix-blend-mode: screen`. That was
- *     forcing a compositor readback of the WebGL canvas every frame —
- *     the #1 Android stutter source. Now a plain radial gradient with
- *     a CSS opacity animation (compositor-only, near-free).
+ *  PIXELATED RINGS
+ *   · Mobile had antialias:false and no post-AA; mid-tier PC had none either.
+ *     Now: MSAA on the canvas when no post-processing is used (mobile / low),
+ *     MSAA inside the EffectComposer (4× high, 2× mid) otherwise. SMAA pass
+ *     removed (it ran on HDR data, which it isn't designed for).
+ *   · Gate tori 12×192 (PC) / 10×128 (mobile); portal outer ring thickened.
  *
- *  BOOT
- *   · useDeviceTier now computes synchronously on first render. Before,
- *     mobile flashed "high tier → low tier" after a tick, which forced
- *     the R3F canvas to reallocate and re-compile shaders right when
- *     the user first touched the page.
+ *  LAG
+ *   · Thread geometry cut from ~280 k to ~85 k triangles (PC) / ~35 k
+ *     (mobile): radial 40 → 16 / 12, tubular halved. The silhouette fade in
+ *     the shader keeps it perfectly round.
+ *   · backdrop-filter removed everywhere (it re-blurs an animating WebGL
+ *     canvas every frame — brutal on PC). Replaced with a solid scrim.
+ *   · Removed will-change:transform from every <Reveal>/<Words> (dozens of
+ *     GPU layers over a full-screen canvas).
+ *   · Texture uploads: 1 per frame instead of 3 (no upload spikes).
+ *   · Dropped `desynchronized` canvas hint (tearing / compositor issues).
+ *   · Removed dead code (VaultCrystal, SoundRings were never mounted).
  *
  * ROUTES PRESERVED   /login  /register  /downloads/orbital.apk
  */
@@ -53,9 +59,8 @@ import {
   Bloom,
   ToneMapping,
   Vignette,
-  SMAA,
 } from "@react-three/postprocessing";
-import { ToneMappingMode, BlendFunction, KernelSize } from "postprocessing";
+import { ToneMappingMode, BlendFunction } from "postprocessing";
 
 import {
   motion,
@@ -88,11 +93,17 @@ import {
 /* ═══════════════════════════════════════════════════════════
    IMAGE MANIFEST
    ═══════════════════════════════════════════════════════════ */
+
+const IS_MOBILE_UA =
+  typeof navigator !== "undefined" &&
+  /Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+
+/* v18.5: no `dpr=2` multiplier — `w` is the real pixel width now. */
 const u = (id: string, w: number, q = 85) => {
   if (id.startsWith("http")) return id;
   if (id.startsWith("px:")) {
     const photoId = id.slice(3);
-    return `https://images.pexels.com/photos/${photoId}/pexels-photo-${photoId}.jpeg?auto=compress&cs=tinysrgb&fit=crop&w=${w}&dpr=2`;
+    return `https://images.pexels.com/photos/${photoId}/pexels-photo-${photoId}.jpeg?auto=compress&cs=tinysrgb&fit=crop&w=${w}`;
   }
   return `https://images.unsplash.com/photo-${id}?auto=format&fit=crop&crop=faces,entropy&w=${w}&q=${q}`;
 };
@@ -136,12 +147,17 @@ function toUrls<T extends Record<string, string>>(
   return out as { [K in keyof T]: string };
 }
 
-const FACE = toUrls(FACE_IDS, 640, 88);
-const SCENE = toUrls(SCENE_IDS, 1200, 88);
+/* DOM images (avatars are ≤ 44 css px; scene images ≤ ~560 css px). */
+const FACE = toUrls(FACE_IDS, 480, 90);
+const SCENE = toUrls(SCENE_IDS, 1600, 90);
 
+/* WebGL gallery textures — sized for what a card actually covers on
+   screen. Bigger than this is just GPU memory + upload stalls. */
+const GAL_FACE_W = IS_MOBILE_UA ? 480 : 720;
+const GAL_SCENE_W = IS_MOBILE_UA ? 960 : 1440;
 const GALLERY: string[] = [
-  ...Object.values(FACE_IDS).map((id) => u(id, 800, 88)),
-  ...Object.values(SCENE_IDS).map((id) => u(id, 1400, 88)),
+  ...Object.values(FACE_IDS).map((id) => u(id, GAL_FACE_W, 90)),
+  ...Object.values(SCENE_IDS).map((id) => u(id, GAL_SCENE_W, 90)),
 ];
 
 if (typeof window !== "undefined") {
@@ -211,7 +227,6 @@ function mulberry32(seed: number) {
 
 /* ═══════════════════════════════════════════════════════════
    DEVICE TIER & REFRESH RATE
-   v18.4: tier computed synchronously — no high→low flash at mount.
    ═══════════════════════════════════════════════════════════ */
 
 type Tier = "low" | "mid" | "high";
@@ -246,7 +261,7 @@ function useIsMobile() {
 const REFRESH_STEPS = [60, 75, 90, 100, 120, 144, 165, 240];
 
 function useRefreshRate() {
-  const [hz, setHz] = useState(120);
+  const [hz, setHz] = useState(60);
   useEffect(() => {
     let raf = 0;
     let frames = 0;
@@ -421,85 +436,74 @@ function ScrollDriver() {
 }
 
 /* ═══════════════════════════════════════════════════════════
-   ADAPTIVE RESOLUTION
+   ADAPTIVE RESOLUTION  (v18.5)
+   Starts at MAX quality. Only ever steps DOWN, and only after
+   ~1.5 s of sustained slowness, so resolution never flickers and
+   the drawing buffer is never re-allocated in a loop.
    ═══════════════════════════════════════════════════════════ */
 
 function AdaptiveResolution({
   min,
   max,
   targetFps,
-  mobile,
 }: {
   min: number;
   max: number;
   targetFps: number;
-  mobile: boolean;
 }) {
   const setDpr = useThree((s) => s.setDpr);
-  const cur = useRef(min);
+  const cur = useRef(max);
   const acc = useRef(0);
   const frames = useRef(0);
-  const cooldown = useRef(mobile ? 2 : 3);
-  const low = useRef(0);
-  const high = useRef(0);
+  const warm = useRef(4); // ~3 s ignored while shaders compile / textures upload
+  const bad = useRef(0);
+  const hold = useRef(0);
 
   useEffect(() => {
-    cur.current = min;
-    low.current = 0;
-    high.current = 0;
-    cooldown.current = mobile ? 2 : 3;
+    cur.current = max;
     acc.current = 0;
     frames.current = 0;
-    setDpr(min);
-  }, [min, setDpr, mobile]);
+    warm.current = 4;
+    bad.current = 0;
+    hold.current = 0;
+    setDpr(max);
+  }, [min, max, setDpr]);
 
   useFrame((_, delta) => {
-    acc.current += Math.min(delta, 0.1);
+    // Ignore big stalls (tab switch, GC, texture upload) — not a sustained signal.
+    if (delta > 0.25) {
+      acc.current = 0;
+      frames.current = 0;
+      return;
+    }
+    acc.current += delta;
     frames.current += 1;
-    if (acc.current < 0.5) return;
+    if (acc.current < 0.75) return;
 
     const fps = frames.current / acc.current;
     acc.current = 0;
     frames.current = 0;
 
-    if (cooldown.current > 0) {
-      cooldown.current -= 1;
+    if (warm.current > 0) {
+      warm.current -= 1;
+      return;
+    }
+    if (hold.current > 0) {
+      hold.current -= 1;
       return;
     }
 
-    const target = targetFps * 0.92;
-    if (fps < target * (mobile ? 0.86 : 0.85)) {
-      low.current += 1;
-      high.current = 0;
-    } else if (fps > target * 0.96) {
-      high.current += 1;
-      low.current = 0;
-    } else {
-      low.current = 0;
-      high.current = 0;
-    }
+    if (fps < targetFps * 0.8) bad.current += 1;
+    else bad.current = 0;
 
-    const dropStep = mobile ? 0.08 : 0.1;
-    const upStep = mobile ? 0.06 : 0.08;
-    const lowNeed = mobile ? 1 : 2;
-    const highNeed = mobile ? 4 : 4;
-
-    if (low.current >= lowNeed && cur.current > min + 1e-3) {
+    if (bad.current >= 2 && cur.current > min + 1e-3) {
       cur.current = Math.max(
         min,
-        Math.round((cur.current - dropStep) * 100) / 100,
+        Math.round((cur.current - 0.25) * 100) / 100,
       );
       setDpr(cur.current);
-      low.current = 0;
-      cooldown.current = mobile ? 4 : 4;
-    } else if (high.current >= highNeed && cur.current < max - 1e-3) {
-      cur.current = Math.min(
-        max,
-        Math.round((cur.current + upStep) * 100) / 100,
-      );
-      setDpr(cur.current);
-      high.current = 0;
-      cooldown.current = mobile ? 6 : 5;
+      bad.current = 0;
+      hold.current = 3;
     }
   });
 
@@ -575,7 +579,6 @@ function sampleTangentFast(u: number, out: THREE.Vector3) {
 
 const UP = new THREE.Vector3(0, 1, 0);
 const AXIS_Z = new THREE.Vector3(0, 0, 1);
-const AXIS_Y = new THREE.Vector3(0, 1, 0);
 const AXIS_X = new THREE.Vector3(1, 0, 0);
 
 const BEAT_U = [0.04, 0.22, 0.4, 0.58, 0.76, 0.94];
@@ -771,11 +774,7 @@ const BG_BODY_HIGH = /* glsl */ `
 
 const BG_FRAG_HIGH = BG_COMMON + BG_FBM_HIGH + BG_BODY_HIGH;
 
-/* v18.4 mobile: dropped the 2-octave per-fragment fbm entirely.
-   It was the single most expensive full-screen shader on mobile and the
-   main reason the whole scene felt "warm" on mid-range Androids. A
-   radial gradient + slow pulse gives the same visual for ~10× less
-   fragment work. */
+/* Mobile: radial gradient + slow pulse. ~10× cheaper than the fbm. */
 const BG_FRAG_MOBILE = /* glsl */ `
   precision mediump float;
   varying vec2 vUv;
@@ -834,7 +833,7 @@ function Backdrop({ mobile }: { mobile: boolean }) {
 }
 
 /* ═══════════════════════════════════════════════════════════
-   THE THREAD — v18.4: rounder tubes on mobile, aliasing-safe freq
+   THE THREAD — v18.5: ~3× fewer triangles, still perfectly round
    ═══════════════════════════════════════════════════════════ */
 
 const THREAD_VERT = /* glsl */ `
@@ -865,8 +864,6 @@ const THREAD_FRAG = /* glsl */ `
     float s = vUv.x;
     float d = s - uHead;
 
-    /* clamp guards the pow() base against float drift after
-       interpolation on mediump-preferred GPUs */
     float packets = pow(
       clamp(0.5 + 0.5 * sin(s * uFreq - uTime * 3.2 + uPhase), 0.0, 1.0),
       7.0
@@ -876,26 +873,15 @@ const THREAD_FRAG = /* glsl */ `
     float lit   = d < 0.0 ? mix(0.30, 1.0, behind) : 0.0;
     float ghost = d >= 0.0 ? 0.08 + 0.22 * packets * exp(-d * 5.0) : 0.0;
 
-    /* ── RED-LINE FIX ───────────────────────────────────────
-     * pow(negative, 2.0) is undefined behavior in GLSL. On
-     * Adreno/Immortalis mobile GPUs it returns NaN, which the
-     * driver paints RED. d < 0 on the entire lit side of the
-     * head, so the whole back half of the tube showed red on
-     * those GPUs.
-     *
-     * exp(-(d*70)^2) is mathematically identical to
-     * exp(-pow(d*70, 2.0)) but well-defined for negative d.
-     * ─────────────────────────────────────────────────────── */
+    /* pow(negative, 2.0) is undefined in GLSL (NaN → red on Adreno).
+       exp(-(d*70)^2) is identical and well-defined. */
     float g70  = d * 70.0;
     float head = exp(-g70 * g70) * 2.4;
 
     float inten = lit * (0.5 + 1.25 * packets) + ghost + head;
 
-    /* ── SILHOUETTE SOFTENING (anti-hexagon) ────────────────
-     * |vN.z| = 1 on the camera-facing part of the tube, 0 at
-     * the silhouette. Fading toward 0 dissolves the polygon
-     * edge over ~3 px so a 32-gon reads as a perfect circle
-     * even with antialias:false. */
+    /* Silhouette softening: dissolves the polygon edge so a 16-gon
+       reads as a perfect circle. */
     float facing = abs(normalize(vN).z);
     inten *= smoothstep(0.0, 0.55, facing);
 
@@ -904,8 +890,6 @@ const THREAD_FRAG = /* glsl */ `
     vec3 col = mix(ember, steel, clamp(s, 0.0, 1.0));
     col = mix(col, vec3(1.0, 0.93, 0.78), clamp(head * 0.3, 0.0, 1.0));
 
-    /* Sub-pixel dither breaks banding + hard edges on Android
-       GPUs that lack default dither. */
     float dt = fract(
       sin(dot(gl_FragCoord.xy, vec2(12.9898, 78.233))) * 43758.5453
     );
@@ -918,21 +902,15 @@ const THREAD_FRAG = /* glsl */ `
 
 function Thread({ mobile }: { mobile: boolean }) {
   const parts = useMemo(() => {
-    /* v18.4c — round + lag-free.
-     *
-     * 32-gon cross-sections, 50 samples per revolution of the
-     * helix. Combined with the silhouette fade above, polygon
-     * edges are impossible to see even with antialias OFF.
-     *
-     * All of this is static geometry, built once inside
-     * heavyReady's delayed mount — zero per-frame cost.
-     */
-    const mainTubular   = mobile ? 480  : 720;
-    const mainRadial    = mobile ? 32   : 40;
-    const N             = mobile ? 1000 : 1600;
-    const strandTubular = mobile ? 1000 : 1400;
-    const strandRadial  = mobile ? 32   : 40;
-    const turns         = mobile ? 20   : 40;
+    /* v18.5 — ~25 tubular segments per helix turn is plenty for a smooth
+       spiral; 16 / 12 radial sides + silhouette fade reads as round.
+       Triangles: ~85k desktop (was ~280k), ~35k mobile (was ~160k). */
+    const mainTubular   = mobile ? 360 : 600;
+    const mainRadial    = mobile ? 12  : 16;
+    const N             = mobile ? 560 : 1000;
+    const strandTubular = mobile ? 520 : 1000;
+    const strandRadial  = mobile ? 12  : 16;
+    const turns         = mobile ? 20  : 40;
 
     const mainRadius   = mobile ? 0.045 : 0.03;
     const strandRadius = mobile ? 0.018 : 0.013;
@@ -1105,6 +1083,8 @@ function Dust({ tier, mobile }: { tier: Tier; mobile: boolean }) {
     [],
   );
 
+  /* gl.getPixelRatio() is read on every size change; AdaptiveResolution
+     calls setDpr which triggers a size update, so this stays in sync. */
   useEffect(() => {
     uniforms.uPx.value = (size.height * gl.getPixelRatio()) / (2 * TAN_HALF);
   }, [size, gl, uniforms]);
@@ -1330,25 +1310,23 @@ function useGallery(wanted: number[]) {
   useEffect(() => {
     let alive = true;
     const store_ = ref.current;
-    const maxAniso = Math.min(8, gl.capabilities.getMaxAnisotropy());
+    const maxAniso = Math.min(
+      IS_MOBILE_UA ? 4 : 8,
+      gl.capabilities.getMaxAnisotropy(),
+    );
     const uploadQueue: Array<{ idx: number; tex: THREE.Texture }> = [];
     let rafId = 0;
 
+    /* v18.5: one GPU upload per frame — no multi-texture upload spikes. */
     const drainUploadQueue = () => {
       if (!alive) return;
-      let batch = 0;
-      while (uploadQueue.length > 0 && batch < 3) {
-        const next = uploadQueue.shift()!;
+      const next = uploadQueue.shift();
+      if (next) {
         gl.initTexture(next.tex);
         store_[next.idx] = next.tex;
-        batch++;
+        bump((v) => v + 1);
       }
-      if (batch > 0) bump((v) => v + 1);
-      if (uploadQueue.length > 0) {
-        rafId = requestAnimationFrame(drainUploadQueue);
-      } else {
-        rafId = 0;
-      }
+      rafId = uploadQueue.length > 0 ? requestAnimationFrame(drainUploadQueue) : 0;
     };
 
     const enqueue = (idx: number, tex: THREE.Texture) => {
@@ -1576,7 +1554,7 @@ function Gallery({ tier, mobile }: { tier: Tier; mobile: boolean }) {
 }
 
 /* ═══════════════════════════════════════════════════════════
-   SIGNAL — GATES (v18.4: rounder rings on mobile)
+   SIGNAL — GATES (v18.5: smoother rings, MSAA handles the edges)
    ═══════════════════════════════════════════════════════════ */
 
 const _m4 = new THREE.Matrix4();
@@ -1652,13 +1630,11 @@ function Gates({ mobile }: { mobile: boolean }) {
     }
   });
 
-  // v18.4: 0.045 tube (was 0.07 — chunky), 10 tubeSeg (was 8 — octagonal),
-  // 112 ringSeg (was 96 — slightly polygonal on a phone screen).
   const tubeRadius = mobile ? 0.045 : 0.035;
-  const tubeSeg = mobile ? 10 : 10;
-  const ringSeg = mobile ? 112 : 128;
+  const tubeSeg = mobile ? 10 : 12;
+  const ringSeg = mobile ? 128 : 192;
   const ghostRadius = mobile ? 0.045 * 2.4 : 0.035 * 3.2;
-  const ghostSeg = mobile ? 8 : 8;
+  const ghostSeg = 8;
   const ghostRingSeg = mobile ? 96 : 128;
 
   return (
@@ -1702,315 +1678,7 @@ function Gates({ mobile }: { mobile: boolean }) {
 }
 
 /* ═══════════════════════════════════════════════════════════
-   VAULT
-   ═══════════════════════════════════════════════════════════ */
-
-const SHARD_VERT = /* glsl */ `
-  varying vec3 vW;
-  void main() {
-    vec4 wp = modelMatrix * instanceMatrix * vec4(position, 1.0);
-    vW = wp.xyz;
-    gl_Position = projectionMatrix * viewMatrix * wp;
-  }
-`;
-
-const SHARD_FRAG = /* glsl */ `
-  precision highp float;
-  uniform float uTint;
-  varying vec3 vW;
-  void main() {
-    vec3 n = normalize(cross(dFdx(vW), dFdy(vW)));
-    vec3 V = normalize(cameraPosition - vW);
-    float f = pow(1.0 - abs(dot(n, V)), 2.0);
-    vec3 ember = vec3(0.784, 0.502, 0.235);
-    vec3 steel = vec3(0.44, 0.59, 0.71);
-    vec3 tint = mix(ember, steel, uTint);
-    vec3 col = tint * (0.10 + f * 1.25) + vec3(0.9, 0.85, 0.75) * pow(f, 6.0) * 0.8;
-    float far = 1.0 - smoothstep(14.0, 48.0, distance(cameraPosition, vW));
-    gl_FragColor = vec4(col * far, (0.28 + f * 0.62) * far);
-  }
-`;
-
-const GLOW_VERT = /* glsl */ `
-  varying vec3 vN;
-  varying vec3 vP;
-  void main() {
-    vN = normalize(mat3(modelMatrix) * normal);
-    vec4 wp = modelMatrix * vec4(position, 1.0);
-    vP = wp.xyz;
-    gl_Position = projectionMatrix * viewMatrix * wp;
-  }
-`;
-
-const GLOW_FRAG = /* glsl */ `
-  precision highp float;
-  uniform vec3 uColor;
-  uniform float uI;
-  varying vec3 vN;
-  varying vec3 vP;
-  void main() {
-    float f = pow(1.0 - abs(dot(normalize(vN), normalize(cameraPosition - vP))), 2.4);
-    float far = 1.0 - smoothstep(14.0, 48.0, distance(cameraPosition, vP));
-    gl_FragColor = vec4(uColor * f * uI * far, 1.0);
-  }
-`;
-
-function VaultCrystal({ mobile }: { mobile: boolean }) {
-  const SHARD_N = mobile ? 10 : 22;
-  const cageRef = useRef<THREE.LineSegments>(null);
-  const shardRef = useRef<THREE.InstancedMesh>(null);
-  const coreRef = useRef<THREE.Group>(null);
-  const dummy = useMemo(() => new THREE.Object3D(), []);
-  const B = useMemo(() => basisAt(0.4), []);
-
-  const cage = useMemo(() => {
-    const g = new THREE.EdgesGeometry(
-      new THREE.IcosahedronGeometry(6.4, mobile ? 0 : 1),
-    );
-    const m = new THREE.LineBasicMaterial({
-      color: AMBER,
-      transparent: true,
-      opacity: 0.3,
-      blending: THREE.AdditiveBlending,
-      depthWrite: false,
-      toneMapped: false,
-    });
-    return { g, m };
-  }, [mobile]);
-
-  const shardMat = useMemo(
-    () =>
-      new THREE.ShaderMaterial({
-        uniforms: { uTint: SHARED.uTint },
-        vertexShader: SHARD_VERT,
-        fragmentShader: SHARD_FRAG,
-        transparent: true,
-        blending: THREE.AdditiveBlending,
-        depthWrite: false,
-        side: THREE.DoubleSide,
-        toneMapped: false,
-      }),
-    [],
-  );
-
-  const glowUniforms = useMemo(
-    () => ({
-      uColor: { value: new THREE.Color(AMBER) },
-      uI: { value: 1.7 },
-    }),
-    [],
-  );
-
-  const shards = useMemo(() => {
-    const rng = mulberry32(4242);
-    const list: {
-      x: number; y: number; z: number;
-      rx: number; ry: number; rz: number;
-      v: number; w: number; l: number; seed: number;
-    }[] = [];
-    for (let i = 0; i < SHARD_N; i++) {
-      const ang = rng() * TAU;
-      const rad = 2.2 + rng() * 3.2;
-      const z = (rng() - 0.5) * 9;
-      const ca = Math.cos(ang) * rad;
-      const sa = Math.sin(ang) * rad * 0.85;
-      list.push({
-        x: B.p.x + B.r.x * ca + B.up.x * sa + B.t.x * z,
-        y: B.p.y + B.r.y * ca + B.up.y * sa + B.t.y * z,
-        z: B.p.z + B.r.z * ca + B.up.z * sa + B.t.z * z,
-        rx: rng() * TAU,
-        ry: rng() * TAU,
-        rz: rng() * TAU,
-        v: 0.05 + rng() * 0.12,
-        w: 0.16 + rng() * 0.2,
-        l: 0.9 + rng() * 1.2,
-        seed: rng() * 50,
-      });
-    }
-    return list;
-  }, [B, SHARD_N]);
-
-  const corePos = useMemo(
-    () =>
-      new THREE.Vector3(
-        B.p.x - B.r.x * 2.3 + B.up.x * 0.9,
-        B.p.y - B.r.y * 2.3 + B.up.y * 0.9,
-        B.p.z - B.r.z * 2.3 + B.up.z * 0.9,
-      ),
-    [B],
-  );
-
-  useFrame((state, delta) => {
-    const dt = Math.min(delta, 0.05);
-    const t = state.clock.elapsedTime;
-    if (cageRef.current) {
-      cageRef.current.rotation.y = t * 0.03;
-      cageRef.current.rotation.x = t * 0.017;
-    }
-    const sm = shardRef.current;
-    if (sm) {
-      for (let i = 0; i < SHARD_N; i++) {
-        const s = shards[i];
-        dummy.position.set(
-          s.x + Math.sin(t * 0.2 + s.seed) * 0.25,
-          s.y + Math.cos(t * 0.17 + s.seed) * 0.3,
-          s.z,
-        );
-        dummy.rotation.set(s.rx + t * s.v, s.ry + t * s.v * 0.7, s.rz);
-        dummy.scale.set(s.w, s.l, s.w);
-        dummy.updateMatrix();
-        sm.setMatrixAt(i, dummy.matrix);
-      }
-      sm.instanceMatrix.needsUpdate = true;
-    }
-    const c = coreRef.current;
-    if (c) {
-      c.rotation.y += dt * 0.25;
-      c.rotation.x += dt * 0.11;
-      c.scale.setScalar(1 + 0.04 * Math.sin(t * TAU * 0.6));
-    }
-  });
-
-  return (
-    <group>
-      <lineSegments
-        ref={cageRef}
-        geometry={cage.g}
-        material={cage.m}
-        position={B.p}
-        frustumCulled={false}
-      />
-      <instancedMesh
-        ref={shardRef}
-        args={[undefined, undefined, SHARD_N]}
-        material={shardMat}
-        frustumCulled={false}
-      >
-        <octahedronGeometry args={[1, 0]} />
-      </instancedMesh>
-      <group ref={coreRef} position={corePos}>
-        <mesh>
-          <icosahedronGeometry args={[0.42, mobile ? 0 : 1]} />
-          <meshBasicMaterial color="#F6DDAE" wireframe toneMapped={false} />
-        </mesh>
-        <mesh>
-          <octahedronGeometry args={[0.2, 0]} />
-          <meshBasicMaterial color="#FFF1D2" toneMapped={false} />
-        </mesh>
-        <mesh>
-          <sphereGeometry
-            args={[0.95, mobile ? 20 : 28, mobile ? 20 : 28]}
-          />
-          <shaderMaterial
-            uniforms={glowUniforms}
-            vertexShader={GLOW_VERT}
-            fragmentShader={GLOW_FRAG}
-            transparent
-            blending={THREE.AdditiveBlending}
-            depthWrite={false}
-            toneMapped={false}
-          />
-        </mesh>
-      </group>
-    </group>
-  );
-}
-
-/* ═══════════════════════════════════════════════════════════
-   RESONANCE
-   ═══════════════════════════════════════════════════════════ */
-
-function SoundRings({ mobile }: { mobile: boolean }) {
-  const RINGS = mobile ? 4 : 6;
-  const PER = mobile ? 28 : 40;
-  const N = RINGS * PER;
-  const ref = useRef<THREE.InstancedMesh>(null);
-
-  const data = useMemo(() => {
-    const pos = new Float32Array(N * 3);
-    const quat = new Float32Array(N * 4);
-    const ph = new Float32Array(N);
-    const ring = new Float32Array(N);
-    const radial = new THREE.Vector3();
-    const q = new THREE.Quaternion();
-    for (let k = 0; k < RINGS; k++) {
-      const uu = 0.705 + k * (0.135 / Math.max(1, RINGS - 1));
-      const b = basisAt(uu);
-      const R = 3.1 + 0.25 * (k % 2);
-      for (let j = 0; j < PER; j++) {
-        const a = (j / PER) * TAU;
-        radial
-          .set(0, 0, 0)
-          .addScaledVector(b.r, Math.cos(a))
-          .addScaledVector(b.up, Math.sin(a))
-          .normalize();
-        q.setFromUnitVectors(AXIS_Y, radial);
-        const i = k * PER + j;
-        pos[i * 3] = b.p.x + radial.x * R;
-        pos[i * 3 + 1] = b.p.y + radial.y * R;
-        pos[i * 3 + 2] = b.p.z + radial.z * R;
-        quat[i * 4] = q.x;
-        quat[i * 4 + 1] = q.y;
-        quat[i * 4 + 2] = q.z;
-        quat[i * 4 + 3] = q.w;
-        ph[i] = a;
-        ring[i] = uu;
-      }
-    }
-    return { pos, quat, ph, ring };
-  }, [RINGS, PER, N]);
-
-  const geo = useMemo(() => {
-    const g = new THREE.BoxGeometry(0.05, 1, 0.05);
-    g.translate(0, 0.5, 0);
-    return g;
-  }, []);
-
-  useFrame((state) => {
-    const m = ref.current;
-    if (!m) return;
-    const t = state.clock.elapsedTime;
-    const vel = Math.min(1, Math.abs(store.velocity) * 1.5);
-    for (let i = 0; i < N; i++) {
-      const near = Math.exp(-Math.pow((data.ring[i] - store.head) * 14, 2));
-      const wave =
-        0.5 + 0.5 * Math.sin(t * 2.6 + data.ph[i] * 3.0 + data.ring[i] * 90.0);
-      const h = 0.14 + (0.3 + 1.3 * near + 0.7 * vel) * wave;
-      _v3.set(data.pos[i * 3], data.pos[i * 3 + 1], data.pos[i * 3 + 2]);
-      _q4.set(
-        data.quat[i * 4],
-        data.quat[i * 4 + 1],
-        data.quat[i * 4 + 2],
-        data.quat[i * 4 + 3],
-      );
-      _s3.set(1, h, 1);
-      _m4.compose(_v3, _q4, _s3);
-      m.setMatrixAt(i, _m4);
-    }
-    m.instanceMatrix.needsUpdate = true;
-  });
-
-  return (
-    <instancedMesh
-      ref={ref}
-      args={[undefined, undefined, N]}
-      geometry={geo}
-      frustumCulled={false}
-    >
-      <meshBasicMaterial
-        color="#E8C890"
-        transparent
-        opacity={0.9}
-        blending={THREE.AdditiveBlending}
-        depthWrite={false}
-        toneMapped={false}
-      />
-    </instancedMesh>
-  );
-}
-
-/* ═══════════════════════════════════════════════════════════
-   ARRIVAL — portal (v18.4: smoother round rings)
+   ARRIVAL — portal
    ═══════════════════════════════════════════════════════════ */
 
 const PORTAL_VERT = /* glsl */ `
@@ -2058,9 +1726,8 @@ function Portal({ mobile }: { mobile: boolean }) {
     if (ringRef.current) ringRef.current.rotation.z += dt * 0.05;
   });
 
-  // v18.4: bumped ring segments so the big circles don't read as polygons.
-  const ringSeg = mobile ? 112 : 160;
-  const tubeInner = mobile ? 10 : 12;
+  const ringSeg = mobile ? 128 : 192;
+  const tubeInner = mobile ? 10 : 14;
   const tubeOuter = mobile ? 8 : 10;
   const circleSeg = mobile ? 64 : 96;
 
@@ -2071,8 +1738,9 @@ function Portal({ mobile }: { mobile: boolean }) {
           <torusGeometry args={[3.4, 0.06, tubeInner, ringSeg]} />
           <meshBasicMaterial color={AMBER} toneMapped={false} />
         </mesh>
+        {/* outer ring thickened 0.02 → 0.03 so it survives sub-pixel thinning */}
         <mesh matrixAutoUpdate={false}>
-          <torusGeometry args={[3.95, 0.02, tubeOuter, ringSeg]} />
+          <torusGeometry args={[3.95, 0.03, tubeOuter, ringSeg]} />
           <meshBasicMaterial
             color={CREAM}
             transparent
@@ -2099,45 +1767,34 @@ function Portal({ mobile }: { mobile: boolean }) {
 }
 
 /* ═══════════════════════════════════════════════════════════
-   POST FX
+   POST FX  (v18.5)
+   MSAA lives inside the composer (the canvas's own MSAA does not
+   apply to composer render targets). Bloom uses mipmapBlur, which
+   ignores kernel/resolution settings, so none are passed.
    ═══════════════════════════════════════════════════════════ */
 
-function PostFX({
-  tier,
-  hz,
-  mobile,
-}: {
-  tier: Tier;
-  hz: number;
-  mobile: boolean;
-}) {
+function PostFX({ tier, mobile }: { tier: Tier; mobile: boolean }) {
   if (mobile || tier === "low") return null;
-  const highHz = hz >= 120;
   if (tier === "mid") {
     return (
-      <EffectComposer multisampling={0} enableNormalPass={false}>
+      <EffectComposer multisampling={2} enableNormalPass={false}>
         <Bloom
           intensity={0.55}
           luminanceThreshold={0.55}
           luminanceSmoothing={0.25}
           mipmapBlur
-          kernelSize={highHz ? KernelSize.SMALL : KernelSize.MEDIUM}
-          resolutionScale={highHz ? 0.35 : 0.5}
         />
         <ToneMapping mode={ToneMappingMode.ACES_FILMIC} />
       </EffectComposer>
     );
   }
   return (
-    <EffectComposer multisampling={0} enableNormalPass={false}>
-      <SMAA />
+    <EffectComposer multisampling={4} enableNormalPass={false}>
       <Bloom
         intensity={0.7}
         luminanceThreshold={0.55}
         luminanceSmoothing={0.25}
         mipmapBlur
-        kernelSize={highHz ? KernelSize.SMALL : KernelSize.MEDIUM}
-        resolutionScale={highHz ? 0.45 : 0.6}
       />
       <Vignette
         offset={0.28}
@@ -2155,12 +1812,10 @@ function PostFX({
 
 function OrbitalWorld({
   tier,
-  hz,
   mobile,
   isNative,
 }: {
   tier: Tier;
-  hz: number;
   mobile: boolean;
   isNative: boolean;
 }) {
@@ -2192,7 +1847,7 @@ function OrbitalWorld({
           <Gates mobile={mobile} />
           <Portal mobile={mobile} />
           <Gallery tier={tier} mobile={mobile} />
-          <PostFX tier={tier} hz={hz} mobile={mobile} />
+          <PostFX tier={tier} mobile={mobile} />
         </>
       )}
     </>
@@ -2874,7 +2529,7 @@ const PrimaryButton = memo(function PrimaryButton({
   external?: boolean;
 }) {
   const cls =
-    "group inline-flex items-center justify-center gap-2.5 rounded-full bg-gradient-to-b from-amber-300 to-amber-500 px-6 py-3.5 text-[13.5px] font-semibold tracking-[-0.01em] text-[#150E03] shadow-[0_10px_36px_-14px_rgba(200,136,58,0.85),inset_0_1px_0_rgba(255,255,255,0.30)] transition-[transform,box-shadow] duration-300 ease-out will-change-transform hover:-translate-y-0.5 hover:shadow-[0_18px_50px_-14px_rgba(200,136,58,1),inset_0_1px_0_rgba(255,255,255,0.40)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-300/70";
+    "group inline-flex items-center justify-center gap-2.5 rounded-full bg-gradient-to-b from-amber-300 to-amber-500 px-6 py-3.5 text-[13.5px] font-semibold tracking-[-0.01em] text-[#150E03] shadow-[0_10px_36px_-14px_rgba(200,136,58,0.85),inset_0_1px_0_rgba(255,255,255,0.30)] transition-[transform,box-shadow] duration-300 ease-out hover:-translate-y-0.5 hover:shadow-[0_18px_50px_-14px_rgba(200,136,58,1),inset_0_1px_0_rgba(255,255,255,0.40)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-300/70";
   const content = (
     <>
       {children}
@@ -2947,6 +2602,9 @@ function Eyebrow({ children }: { children: React.ReactNode }) {
   );
 }
 
+/* v18.5: no will-change here — framer promotes the layer only while the
+   animation runs; a permanent hint on every Reveal meant dozens of idle
+   GPU layers stacked over the full-screen canvas. */
 function Reveal({
   children,
   className = "",
@@ -2965,7 +2623,7 @@ function Reveal({
       whileInView={{ opacity: 1, y: 0, scale: 1 }}
       viewport={{ once: true, amount: 0.2 }}
       transition={{ ...CINEMATIC_SPRING, delay: reduce ? 0 : delay }}
-      className={`will-change-transform ${className}`}
+      className={className}
     >
       {children}
     </motion.div>
@@ -3025,7 +2683,7 @@ function Words({ text }: { text: string }) {
           className="inline-block overflow-hidden pb-[0.08em] align-bottom"
         >
           <motion.span
-            className="inline-block will-change-transform"
+            className="inline-block"
             initial={reduce ? false : { y: "110%" }}
             animate={{ y: 0 }}
             transition={{ ...CINEMATIC_SPRING, delay: 0.08 + i * 0.07 }}
@@ -3567,7 +3225,7 @@ function BeatArrival() {
             <a
               href={DOWNLOAD_HREF}
               download="Orbital.apk"
-              className="group relative inline-flex items-center gap-3 overflow-hidden rounded-full border border-white/20 bg-white/[0.06] py-2.5 pl-3 pr-5 text-left backdrop-blur-md transition-all duration-300 ease-out will-change-transform hover:-translate-y-0.5 hover:border-amber-400/60 hover:bg-white/[0.10] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-300/70"
+              className="group relative inline-flex items-center gap-3 overflow-hidden rounded-full border border-white/20 bg-white/[0.06] py-2.5 pl-3 pr-5 text-left backdrop-blur-md transition-all duration-300 ease-out hover:-translate-y-0.5 hover:border-amber-400/60 hover:bg-white/[0.10] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-300/70"
             >
               <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-gradient-to-b from-amber-300 to-amber-500 shadow-[inset_0_1px_0_rgba(255,255,255,0.35),0_6px_20px_-8px_rgba(200,136,58,0.9)]">
                 <svg
@@ -3729,20 +3387,32 @@ export function Landing() {
     return () => document.removeEventListener("error", h, true);
   }, []);
 
+  /* v18.5 — resolution budget.
+     Depends ONLY on tier/mobile (never on measured Hz) so the drawing
+     buffer is allocated once, at full quality. Mobile now renders at up
+     to 2× (was 1.05×, the main reason it looked blurry); the buffer is
+     measured in CSS pixels, so 2× on a phone is only ~1.4 MP. */
   const { maxDpr, minDpr } = useMemo(() => {
-    if (mobile) return { maxDpr: 1.05, minDpr: 0.65 };
     const native =
-      typeof window === "undefined"
-        ? 1
-        : Math.min(window.devicePixelRatio || 1, 2.0);
-    const headroom = hz >= 144 ? 0.92 : hz >= 120 ? 0.96 : 1;
-    const tierCap = tier === "low" ? 1.25 : tier === "mid" ? 1.65 : 1.9;
-    const hi = Math.max(1.25, Math.min(native, tierCap) * headroom);
-    return {
-      maxDpr: Math.round(hi * 100) / 100,
-      minDpr: Math.max(1.0, Math.round(hi * 0.8 * 100) / 100),
-    };
-  }, [tier, hz, mobile]);
+      typeof window === "undefined" ? 1 : window.devicePixelRatio || 1;
+    const round = (v: number) => Math.round(v * 100) / 100;
+    if (mobile) {
+      const hi = clampN(native, 1.25, 2);
+      return { maxDpr: round(hi), minDpr: 1.0 };
+    }
+    const tierCap = tier === "low" ? 1.5 : 2;
+    const floor = tier === "high" ? 1.25 : 1; // supersample 1× monitors on high tier
+    const hi = Math.max(floor, Math.min(native, tierCap));
+    return { maxDpr: round(hi), minDpr: Math.max(1, round(hi * 0.75)) };
+  }, [tier, mobile]);
+
+  /* Don't chase the monitor refresh rate — 120/144 Hz targets made the
+     controller think every device was "slow". */
+  const targetFps = Math.min(hz, mobile ? 60 : 90);
+
+  /* Post-processing (mid/high desktop) has its own MSAA. Everywhere else
+     the canvas needs hardware MSAA or thin rings look pixelated. */
+  const canvasAA = mobile || tier === "low";
 
   return (
     <main
@@ -3802,6 +3472,16 @@ export function Landing() {
           }
         }
 
+        /* v18.5: backdrop-filter is OFF everywhere. Blurring whatever sits
+           behind an element means re-blurring the live WebGL canvas every
+           single frame — the biggest desktop lag source. A solid dark scrim
+           looks near-identical over this dark scene and costs nothing. */
+        main [class*="backdrop-blur"] {
+          -webkit-backdrop-filter: none !important;
+          backdrop-filter: none !important;
+          background-color: rgba(10, 10, 14, 0.78) !important;
+        }
+
         @keyframes orbital-phone-float {
           0%, 100% { transform: translate3d(0, 0px, 0); }
           50%      { transform: translate3d(0, -10px, 0); }
@@ -3813,10 +3493,6 @@ export function Landing() {
           transform: translate3d(0,0,0);
         }
 
-        /* v18.4: no more mix-blend-mode. On Android that forced a full
-           compositor readback of the WebGL canvas every frame — the #1
-           source of frame drops. A plain opacity animation over a
-           gradient is compositor-only and costs ~nothing. */
         @keyframes orbital-bloom {
           0%, 100% { opacity: 0.55; }
           50%      { opacity: 0.85; }
@@ -3837,12 +3513,10 @@ export function Landing() {
         }
         .orbital-bubble-me  {
           animation: orbital-bubble-in-me 0.28s cubic-bezier(0.22, 1, 0.36, 1) both;
-          will-change: transform, opacity;
           backface-visibility: hidden;
         }
         .orbital-bubble-ava {
           animation: orbital-bubble-in-ava 0.28s cubic-bezier(0.22, 1, 0.36, 1) both;
-          will-change: transform, opacity;
           backface-visibility: hidden;
         }
 
@@ -3852,7 +3526,6 @@ export function Landing() {
         }
         .orbital-typing {
           animation: orbital-typing-in 0.16s ease-out both;
-          will-change: transform, opacity;
           backface-visibility: hidden;
         }
 
@@ -3866,10 +3539,6 @@ export function Landing() {
         }
 
         @media (hover: none) and (pointer: coarse) {
-          * {
-            backdrop-filter: none !important;
-            -webkit-backdrop-filter: none !important;
-          }
           html, body {
             overscroll-behavior: none;
           }
@@ -3896,16 +3565,15 @@ export function Landing() {
           }}
         >
           <Canvas
-            dpr={minDpr}
+            dpr={maxDpr}
             camera={{ position: [0, 0.05, 7.2], fov: FOV, near: 0.1, far: 260 }}
             gl={
               {
-                antialias: mobile ? false : tier === "low",
+                antialias: canvasAA,
                 alpha: false,
-                powerPreference: mobile ? "default" : "high-performance",
+                powerPreference: "high-performance",
                 stencil: false,
                 depth: true,
-                desynchronized: !mobile,
                 preserveDrawingBuffer: false,
               } as any
             }
@@ -3923,17 +3591,11 @@ export function Landing() {
             fallback={<div className="absolute inset-0 bg-[#04060A]" />}
           >
             <Suspense fallback={null}>
-              <OrbitalWorld
-                tier={tier}
-                hz={hz}
-                mobile={mobile}
-                isNative={isNative}
-              />
+              <OrbitalWorld tier={tier} mobile={mobile} isNative={isNative} />
               <AdaptiveResolution
                 min={minDpr}
                 max={maxDpr}
-                targetFps={hz}
-                mobile={mobile}
+                targetFps={targetFps}
               />
             </Suspense>
           </Canvas>
@@ -3941,7 +3603,6 @@ export function Landing() {
           <div className="absolute inset-0 bg-gradient-to-b from-[#04060A]/25 via-transparent to-[#04060A]/90" />
           <div className="absolute inset-0 bg-gradient-to-r from-[#04060A]/70 via-[#04060A]/15 to-transparent" />
 
-          {/* v18.4: plain gradient, opacity-animated. No mix-blend-mode. */}
           {mobile && (
             <div
               className="orbital-bloom absolute inset-0"
