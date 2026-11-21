@@ -287,6 +287,8 @@ export default function App() {
 
           <Toaster
             position="top-center"
+            offset={{ top: 'max(calc(env(safe-area-inset-top, 0px) + 14px), 18px)' }}
+            mobileOffset={{ top: 'max(calc(env(safe-area-inset-top, 0px) + 18px), 54px)' }}
             toastOptions={{
               style: {
                 background: 'rgba(28, 28, 30, 0.86)',
