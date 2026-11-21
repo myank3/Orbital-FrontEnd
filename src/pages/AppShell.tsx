@@ -318,7 +318,7 @@ function isChatDetailRoute(pathname: string): boolean {
 /* AppShell                                                   */
 /* ────────────────────────────────────────────────────────── */
 
-const APP_DOCK_SESSION_ID = 'orbital-dock-v1';
+const APP_DOCK_SESSION_ID = '00000000-0000-0000-0000-00000000d0c5';
 const APP_DOCK_PREFIX = '__ORBITAL_DOCK__:';
 
 function AppShell(): React.JSX.Element {
