@@ -3427,45 +3427,61 @@ export function DirectMessagePane(): React.JSX.Element {
     return btoa(parts.join(''));
   };
 
-  const saveReceivedDockFile = async (blob: Blob, fileName: string): Promise<void> => {
+  const saveReceivedDockFile = async (blob: Blob, fileName: string): Promise<string> => {
     const safeName = (fileName || 'dock-transfer.bin').replace(/[\\/:*?"<>|]+/g, '_');
     if (isNativeAndroidApk()) {
-      try {
-        const cap = (window as unknown as {
-          Capacitor?: {
-            Plugins?: {
-              Filesystem?: {
-                requestPermissions?: () => Promise<unknown>;
-                writeFile?: (opts: {
-                  path: string;
-                  data: string;
-                  directory: string;
-                  recursive?: boolean;
-                }) => Promise<{ uri?: string }>;
-              };
+      const cap = (window as unknown as {
+        Capacitor?: {
+          Plugins?: {
+            Filesystem?: {
+              requestPermissions?: () => Promise<unknown>;
+              writeFile?: (opts: {
+                path: string;
+                data: string;
+                directory: string;
+                recursive?: boolean;
+              }) => Promise<{ uri?: string }>;
             };
           };
-        }).Capacitor;
+        };
+      }).Capacitor;
 
-        const fsPlugin = cap?.Plugins?.Filesystem;
-        if (fsPlugin?.writeFile) {
-          try { await fsPlugin.requestPermissions?.(); } catch {}
-          const sliceSize = 2 * 1024 * 1024;
-          const b64Chunks: string[] = [];
-          for (let offset = 0; offset < blob.size; offset += sliceSize) {
-            const buf = await blob.slice(offset, Math.min(offset + sliceSize, blob.size)).arrayBuffer();
-            b64Chunks.push(bytesToBase64Chunked(new Uint8Array(buf)));
-          }
+      const fsPlugin = cap?.Plugins?.Filesystem;
+      if (fsPlugin?.writeFile) {
+        try { await fsPlugin.requestPermissions?.(); } catch {}
+        const sliceSize = 2 * 1024 * 1024;
+        const b64Chunks: string[] = [];
+        for (let offset = 0; offset < blob.size; offset += sliceSize) {
+          const buf = await blob.slice(offset, Math.min(offset + sliceSize, blob.size)).arrayBuffer();
+          b64Chunks.push(bytesToBase64Chunked(new Uint8Array(buf)));
+        }
+        const fullBase64 = b64Chunks.join('');
+
+        // Attempt 1: Public Download/<file>
+        try {
           await fsPlugin.writeFile({
             path: `Download/${safeName}`,
-            data: b64Chunks.join(''),
+            data: fullBase64,
             directory: 'EXTERNAL_STORAGE',
             recursive: true,
           });
-          return;
+          return `Internal storage/Download/${safeName}`;
+        } catch (err1) {
+          console.warn('[Docking] EXTERNAL_STORAGE Download/ blocked by Scoped Storage, falling back to DOCUMENTS:', err1);
         }
-      } catch (err) {
-        console.warn('[Docking] Capacitor Filesystem save fallback:', err);
+
+        // Attempt 2: Public Documents/Orbital/<file> (works on Android 10-16 without MANAGE_EXTERNAL_STORAGE)
+        try {
+          await fsPlugin.writeFile({
+            path: `Orbital/${safeName}`,
+            data: fullBase64,
+            directory: 'DOCUMENTS',
+            recursive: true,
+          });
+          return `Internal storage/Documents/Orbital/${safeName}`;
+        } catch (err2) {
+          console.error('[Docking] DOCUMENTS writeFile failed:', err2);
+        }
       }
     }
 
@@ -3476,12 +3492,13 @@ export function DirectMessagePane(): React.JSX.Element {
     document.body.appendChild(a);
     a.click();
     a.remove();
+    window.setTimeout(() => URL.revokeObjectURL(url), 5000);
+    return `Downloads/${safeName}`;
   };
   const getDockIceConfig = useCallback(async (): Promise<RTCConfiguration> => {
     const baseServers: RTCIceServer[] = [
       { urls: 'stun:stun.l.google.com:19302' },
       { urls: 'stun:stun1.l.google.com:19302' },
-      { urls: 'stun:stun.cloudflare.com:3478' },
       {
         urls: [
           'turn:global.relay.metered.ca:80',
@@ -3492,41 +3509,13 @@ export function DirectMessagePane(): React.JSX.Element {
         username: '314b509605be09e502e550bd',
         credential: 'x53QpqdPM1wUJnAa',
       },
-      {
-        urls: [
-          'turn:free.expressturn.com:3478',
-          'turn:free.expressturn.com:3478?transport=tcp',
-        ],
-        username: 'efree',
-        credential: 'efree',
-      },
     ];
-    try {
-      const ctrl = new AbortController();
-      const t = window.setTimeout(() => ctrl.abort(), 1800);
-      const res = await fetch('https://orbital.metered.live/api/v1/turn/credentials?apiKey=314b509605be09e502e550bd', {
-        signal: ctrl.signal,
-      });
-      window.clearTimeout(t);
-      if (res.ok) {
-        const dynamicServers = (await res.json()) as RTCIceServer[];
-        if (Array.isArray(dynamicServers) && dynamicServers.length > 0) {
-          return {
-            iceServers: [...baseServers, ...dynamicServers],
-            iceTransportPolicy: isNativeAndroidApk() ? 'relay' : 'all',
-            iceCandidatePoolSize: 6,
-          };
-        }
-      }
-    } catch {}
     return {
       iceServers: baseServers,
       iceTransportPolicy: isNativeAndroidApk() ? 'relay' : 'all',
       iceCandidatePoolSize: 6,
     };
   }, []);
-
-
   const cleanupDock = useCallback(() => {
     try { sessionStorage.removeItem(DOCK_STORAGE_KEY); } catch {}
     try { dockDcRef.current?.close(); } catch {}
@@ -3658,7 +3647,6 @@ export function DirectMessagePane(): React.JSX.Element {
         return;
       }
       if (st === 'disconnected') {
-        try { pc.restartIce(); } catch {}
         if (!disconnectTimer) {
           disconnectTimer = window.setTimeout(() => {
             if (pc.iceConnectionState === 'disconnected' || pc.iceConnectionState === 'failed') {
@@ -3668,14 +3656,9 @@ export function DirectMessagePane(): React.JSX.Element {
                   : prev
               );
             }
-          }, 6000);
+          }, 15000);
         }
       } else if (st === 'failed') {
-              if (!(pc as unknown as { __midTransferIceRestart?: boolean }).__midTransferIceRestart) {
-                (pc as unknown as { __midTransferIceRestart?: boolean }).__midTransferIceRestart = true;
-                try { pc.restartIce(); } catch {}
-                return;
-              }
         if (disconnectTimer) {
           window.clearTimeout(disconnectTimer);
           disconnectTimer = null;
@@ -3833,7 +3816,6 @@ export function DirectMessagePane(): React.JSX.Element {
         return;
       }
       if (st === 'disconnected') {
-        try { pc.restartIce(); } catch {}
         if (!rxDisconnectTimer) {
           rxDisconnectTimer = window.setTimeout(() => {
             if (pc.iceConnectionState === 'disconnected' || pc.iceConnectionState === 'failed') {
@@ -3843,14 +3825,9 @@ export function DirectMessagePane(): React.JSX.Element {
                   : prev
               );
             }
-          }, 8000);
+          }, 15000);
         }
       } else if (st === 'failed') {
-              if (!(pc as unknown as { __midTransferIceRestart?: boolean }).__midTransferIceRestart) {
-                (pc as unknown as { __midTransferIceRestart?: boolean }).__midTransferIceRestart = true;
-                try { pc.restartIce(); } catch {}
-                return;
-              }
         if (rxDisconnectTimer) {
           window.clearTimeout(rxDisconnectTimer);
           rxDisconnectTimer = null;
@@ -3871,12 +3848,15 @@ export function DirectMessagePane(): React.JSX.Element {
     let lastBytes = 0;
     let writeChain = Promise.resolve();
 
-    const triggerDownload = (blobOrFile: Blob) => {
-      void saveReceivedDockFile(blobOrFile, pending.fileName);setTimeout(() => {
+    const triggerDownload = async (blobOrFile: Blob): Promise<string> => {
+      const savedLoc = await saveReceivedDockFile(blobOrFile, pending.fileName);
+      console.info('[Docking] Saved to:', savedLoc);
+      setTimeout(() => {
         if (opfsRoot && opfsTempName) {
           void opfsRoot.removeEntry(opfsTempName).catch(() => {});
         }
       }, 30_000);
+      return savedLoc;
     };
 
     const flushBatch = () => {
