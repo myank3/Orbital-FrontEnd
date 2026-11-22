@@ -526,7 +526,7 @@ function VideoCallOverlay(): React.JSX.Element | null {
   /* VIDEO CALL                                             */
   /* ────────────────────────────────────────────────────── */
 
-  if (isVideoCall) {
+  if (isVideoCall || hasRemoteVideo || isScreenSharing) {
     return (
       <div
         className="fixed inset-0 z-[100] flex flex-col select-none overflow-hidden"
@@ -538,7 +538,7 @@ function VideoCallOverlay(): React.JSX.Element | null {
           ref={remoteVideoRef}
           autoPlay
           playsInline
-          className={`absolute inset-0 w-full h-full object-cover ${
+          className={`absolute inset-0 w-full h-full object-contain bg-black ${
             hasRemoteVideo ? 'block' : 'hidden'
           }`}
         />
@@ -631,7 +631,7 @@ function VideoCallOverlay(): React.JSX.Element | null {
               muted
               onLoadedMetadata={() => setLocalVideoReady(true)}
               onCanPlay={() => setLocalVideoReady(true)}
-              className={`w-full h-full object-cover -scale-x-100 ${
+              className={`w-full h-full ${isScreenSharing ? "object-contain bg-black" : "object-cover -scale-x-100"} ${
                 hasLocalVideo ? 'block' : 'hidden'
               }`}
             />
@@ -710,13 +710,15 @@ function VideoCallOverlay(): React.JSX.Element | null {
               onClick={() => setSpeakerOn(!isSpeakerOn)}
               label={isSpeakerOn ? 'Speaker on' : 'Speaker off'}
             />
-            <ControlButton
-              icon={isScreenSharing ? MonitorOff : MonitorUp}
-              active={isScreenSharing}
-              onClick={() => void handleToggleScreenShare()}
-              label={isScreenSharing ? 'Stop sharing' : 'Share screen'}
-              busy={screenBusy}
-            />
+            {typeof navigator !== 'undefined' && !/Android|iPhone|iPad|iPod|wv/i.test(navigator.userAgent) && (
+              <ControlButton
+                icon={isScreenSharing ? MonitorOff : MonitorUp}
+                active={isScreenSharing}
+                onClick={() => void handleToggleScreenShare()}
+                label={isScreenSharing ? 'Stop sharing' : 'Share screen'}
+                busy={screenBusy}
+              />
+            )}
           </div>
         </div>
       </div>

@@ -1650,15 +1650,35 @@ function CallProviderComponent({
     setIsVideoOff(next);
   }, [localStream, isVideoOff]);
 
+  const tuneVideoSenderQuality = useCallback(async (sender: RTCRtpSender | undefined, isScreen: boolean) => {
+    if (!sender) return;
+    try {
+      const params = sender.getParameters();
+      if (!params.encodings || params.encodings.length === 0) {
+        params.encodings = [{}];
+      }
+      params.degradationPreference = isScreen ? 'maintain-resolution' : 'balanced';
+      params.encodings[0].maxBitrate = isScreen ? 4_000_000 : 1_500_000;
+      params.encodings[0].maxFramerate = isScreen ? 60 : 30;
+      await sender.setParameters(params);
+    } catch {
+      /* ignore browser-specific constraints */
+    }
+  }, []);
+
   const stopScreenShare = useCallback(() => {
     const pc = peerConnectionRef.current;
     const sender = pc?.getSenders().find((s) => s.track?.kind === 'video');
     const cameraTrack = localStreamRef.current?.getVideoTracks()[0];
 
-    if (sender && cameraTrack) {
-      void sender.replaceTrack(cameraTrack).catch((err) => {
-        console.warn('[Call] Failed to restore camera track:', err);
-      });
+    if (sender) {
+      if (cameraTrack) {
+        void sender.replaceTrack(cameraTrack).then(() => tuneVideoSenderQuality(sender, false)).catch((err) => {
+          console.warn('[Call] Failed to restore camera track:', err);
+        });
+      } else {
+        void sender.replaceTrack(null).catch(() => {});
+      }
     }
 
     screenStreamRef.current?.getTracks().forEach((t) => {
@@ -1670,7 +1690,7 @@ function CallProviderComponent({
     });
     screenStreamRef.current = null;
     setIsScreenSharing(false);
-  }, []);
+  }, [tuneVideoSenderQuality]);
 
   const startScreenShare = useCallback(async () => {
     const pc = peerConnectionRef.current;
@@ -1679,14 +1699,19 @@ function CallProviderComponent({
       return;
     }
 
-    if (!navigator.mediaDevices?.getDisplayMedia) {
-      toast.error('Screen sharing isn’t supported on this device.');
+    const cap = (window as unknown as { Capacitor?: { isNativePlatform?: () => boolean } }).Capacitor;
+    if (cap?.isNativePlatform?.() || /Android|iPhone|iPad|iPod|wv/i.test(navigator.userAgent) || !navigator.mediaDevices?.getDisplayMedia) {
+      toast.error('Screen sharing is available on PC browsers.');
       return;
     }
 
     try {
       const displayStream = await navigator.mediaDevices.getDisplayMedia({
-        video: true,
+        video: {
+          width: { ideal: 1920, max: 2560 },
+          height: { ideal: 1080, max: 1440 },
+          frameRate: { ideal: 60, max: 60 },
+        },
         audio: false,
       });
       const displayTrack = displayStream.getVideoTracks()[0];
@@ -1694,13 +1719,18 @@ function CallProviderComponent({
         displayStream.getTracks().forEach((t) => t.stop());
         return;
       }
+      try {
+        displayTrack.contentHint = 'detail';
+      } catch {
+        /* ignore */
+      }
 
-      const sender = pc.getSenders().find((s) => s.track?.kind === 'video');
+      let sender = pc.getSenders().find((s) => s.track?.kind === 'video');
 
       if (sender) {
         await sender.replaceTrack(displayTrack);
       } else {
-        pc.addTrack(displayTrack, displayStream);
+        sender = pc.addTrack(displayTrack, displayStream);
         const offer = await pc.createOffer();
         await pc.setLocalDescription(offer);
         const sessionId = sessionRef.current?.sessionId;
@@ -1713,6 +1743,8 @@ function CallProviderComponent({
         }
       }
 
+      await tuneVideoSenderQuality(sender, true);
+
       screenStreamRef.current = displayStream;
       setIsScreenSharing(true);
 
@@ -1721,9 +1753,9 @@ function CallProviderComponent({
       });
     } catch (err) {
       console.warn('[Call] Screen share cancelled or failed:', err);
-      toast.error('Screen sharing couldn’t start.');
+      toast.error("Screen sharing couldn't start.");
     }
-  }, [stopScreenShare]);
+  }, [stopScreenShare, tuneVideoSenderQuality]);
 
   const replaceVideoTrack = useCallback((track: MediaStreamTrack) => {
     const pc = peerConnectionRef.current;
