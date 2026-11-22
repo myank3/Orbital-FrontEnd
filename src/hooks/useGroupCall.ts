@@ -5,27 +5,16 @@ import { activeCallRegistry } from '../services/activeCallRegistry';
 
 const PREFIX = '[call:';
 
-/** SFU topology — safe to go higher than mesh. 10 keeps UI readable. */
 export const MAX_PARTICIPANTS = 10;
-
-/**
- * Minimum gap between publishes triggered by probe responses.
- * Was 30s — lowered to 3s so a fresh joiner can hear existing
- * participants who published moments ago (they'd otherwise be skipped
- * by the rate-limit and never re-published).
- *
- * NOTE: `probe` and `join` responses now bypass this entirely
- * (force = true) — see sendPublish / probe / join handlers below.
- * This constant only applies to dedupe for other background publishes.
- */
 const PROBE_RESPONSE_MIN_MS = 3_000;
-
-/** SFU session disconnected if we don't hear anything for this long. */
 const STALE_CALLER_MS = 90_000;
 
 type CallEvent =
   | { type: 'join'; userId: string; displayName: string; sessionId: string; muted: boolean }
   | { type: 'publish'; userId: string; displayName: string; sessionId: string; trackName: string; muted: boolean }
+  | { type: 'screen-publish'; userId: string; displayName: string; sessionId: string; videoTrackName: string; audioTrackName?: string }
+  | { type: 'screen-stop'; userId: string }
+  | { type: 'screen-react'; userId: string; displayName: string; emoji: string }
   | { type: 'mute'; userId: string; muted: boolean }
   | { type: 'leave'; userId: string }
   | { type: 'probe'; userId: string };
@@ -42,30 +31,53 @@ export interface ActiveCaller {
   displayName: string;
 }
 
+export interface ScreenShareState {
+  userId: string;
+  displayName: string;
+  stream: MediaStream | null;
+  isLocal: boolean;
+  closedByMe: boolean;
+}
+
+export interface ScreenReactionBurst {
+  id: string;
+  emoji: string;
+  senderName: string;
+  x: number;
+}
+
 export interface UseGroupCallResult {
   inCall: boolean;
-  /**
-   * Which group the active call belongs to. `null` when not in a call.
-   * NOTE: this can differ from the groupId you passed in — after a
-   * group switch the teardown effect may not have fired yet in the
-   * same tick. Consumers should treat `callGroupId === groupId` as
-   * "in THIS group's call" and `callGroupId != null && callGroupId !== groupId`
-   * as "in another group's call".
-   */
   callGroupId: number | null;
-  /** Mic stream. Null when not in a call. */
   localStream: MediaStream | null;
   participants: CallParticipant[];
   activeCallers: ActiveCaller[];
   muted: boolean;
   error: string | null;
+  canShareScreen: boolean;
+  isSharingScreen: boolean;
+  screenShare: ScreenShareState | null;
+  screenReactions: ScreenReactionBurst[];
   join: () => Promise<void>;
   leave: () => void;
   toggleMute: () => void;
+  startScreenShare: () => Promise<void>;
+  stopScreenShare: () => void;
+  closeRemoteScreenForMe: () => void;
+  reopenRemoteScreenForMe: () => void;
+  sendScreenReaction: (emoji: string) => void;
 }
 
 export function isCallSignal(content: string | null | undefined): boolean {
   return !!content && content.startsWith(PREFIX) && content.endsWith(']');
+}
+
+function detectDesktopScreenShareSupport(): boolean {
+  if (typeof window === 'undefined') return false;
+  const cap = (window as unknown as { Capacitor?: { isNativePlatform?: () => boolean } }).Capacitor;
+  if (cap?.isNativePlatform?.()) return false;
+  if (typeof navigator !== 'undefined' && /Android|iPhone|iPad|iPod|wv/i.test(navigator.userAgent)) return false;
+  return true;
 }
 
 export function useGroupCall(
@@ -80,14 +92,30 @@ export function useGroupCall(
   const [activeCallers, setActiveCallers] = useState<ActiveCaller[]>([]);
   const [muted, setMuted] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [screenShare, setScreenShare] = useState<ScreenShareState | null>(null);
+  const [screenReactions, setScreenReactions] = useState<ScreenReactionBurst[]>([]);
+
+  const canShareScreen = detectDesktopScreenShareSupport();
 
   const pcRef = useRef<RTCPeerConnection | null>(null);
   const sessionIdRef = useRef<string | null>(null);
   const localStreamRef = useRef<MediaStream | null>(null);
   const localTrackRef = useRef<MediaStreamTrack | null>(null);
+
+  const screenStreamRef = useRef<MediaStream | null>(null);
+  const screenVideoTrackIdRef = useRef<string | null>(null);
+  const screenAudioTrackIdRef = useRef<string | null>(null);
+  const remoteScreenStreamRef = useRef<MediaStream | null>(null);
+  const remoteScreenTransceiversRef = useRef<RTCRtpTransceiver[]>([]);
+  const activeRemoteScreenEvtRef = useRef<Extract<CallEvent, { type: 'screen-publish' }> | null>(null);
+  const closedByMeUserIdRef = useRef<string | null>(null);
+
+  const screenShareRef = useRef<ScreenShareState | null>(null);
+  useEffect(() => { screenShareRef.current = screenShare; }, [screenShare]);
+
   const pulledKeysRef = useRef<Set<string>>(new Set());
   const participantsRef = useRef<Map<string, CallParticipant>>(new Map());
-  const pendingPullsRef = useRef<Array<{ userId: string; displayName: string }>>([]);
+  const pendingPullsRef = useRef<Array<{ userId: string; displayName: string; kind: 'audio' | 'screen-video' | 'screen-audio' }>>([]);
   const pullChainRef = useRef<Promise<void>>(Promise.resolve());
   const activeCallersRef = useRef<Map<string, { displayName: string; lastSeen: number }>>(new Map());
   const mutedRef = useRef(false);
@@ -95,20 +123,20 @@ export function useGroupCall(
 
   const lastPublishKeyRef = useRef<string>('');
   const lastPublishAtRef = useRef<number>(0);
-    /** Synchronous sentinel: true from the moment join() starts until it
-   *  succeeds or fails. Blocks the getUserMedia window where pcRef is
-   *  still null, closing the double-click race. */
   const joiningRef = useRef(false);
-
-  /**
-   * Tracks the group we last saw. Used by the groupId-change teardown
-   * effect (#1) to know whether to send a leave to the previous group.
-   * Initialised to `groupId` so the very first render is a no-op.
-   */
   const prevGroupIdRef = useRef<number | undefined>(groupId);
 
   useEffect(() => { mutedRef.current = muted; }, [muted]);
   useEffect(() => { inCallRef.current = inCall; }, [inCall]);
+
+  const pushReactionBurst = useCallback((emoji: string, senderName: string) => {
+    const id = `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+    const x = 15 + Math.round(Math.random() * 70);
+    setScreenReactions((prev) => [...prev.slice(-18), { id, emoji, senderName, x }]);
+    window.setTimeout(() => {
+      setScreenReactions((prev) => prev.filter((item) => item.id !== id));
+    }, 2600);
+  }, []);
 
   const refreshActiveCallers = useCallback(() => {
     const list = Array.from(activeCallersRef.current.entries())
@@ -134,12 +162,17 @@ export function useGroupCall(
     [groupId],
   );
 
-  /**
-   * Publish our current track+session+mute state.
-   *
-   * - `force = true` bypasses the dedupe (used on join, mute toggle, initial publish)
-   * - `force = false` respects dedupe: same state within PROBE_RESPONSE_MIN_MS is skipped
-   */
+  const sendScreenReaction = useCallback((emoji: string) => {
+    if (!me || !inCallRef.current || !screenShareRef.current) return;
+    pushReactionBurst(emoji, me.displayName || 'You');
+    void send({
+      type: 'screen-react',
+      userId: me.id,
+      displayName: me.displayName || 'User',
+      emoji,
+    }).catch(() => {});
+  }, [me, send, pushReactionBurst]);
+
   const sendPublish = useCallback((force = false) => {
     if (!me) return;
     const sid = sessionIdRef.current;
@@ -150,12 +183,8 @@ export function useGroupCall(
     const now = Date.now();
 
     if (!force) {
-      if (lastPublishKeyRef.current === stateKey && now - lastPublishAtRef.current < PROBE_RESPONSE_MIN_MS) {
-        return;
-      }
-      if (now - lastPublishAtRef.current < PROBE_RESPONSE_MIN_MS) {
-        return;
-      }
+      if (lastPublishKeyRef.current === stateKey && now - lastPublishAtRef.current < PROBE_RESPONSE_MIN_MS) return;
+      if (now - lastPublishAtRef.current < PROBE_RESPONSE_MIN_MS) return;
     }
 
     lastPublishKeyRef.current = stateKey;
@@ -171,8 +200,205 @@ export function useGroupCall(
     }).catch(() => {});
   }, [me, send]);
 
+  const sendScreenPublish = useCallback(() => {
+    if (!me) return;
+    const sid = sessionIdRef.current;
+    const vTid = screenVideoTrackIdRef.current;
+    if (!sid || !vTid) return;
+    void send({
+      type: 'screen-publish',
+      userId: me.id,
+      displayName: me.displayName,
+      sessionId: sid,
+      videoTrackName: vTid,
+      audioTrackName: screenAudioTrackIdRef.current ?? undefined,
+    }).catch(() => {});
+  }, [me, send]);
+
+  const cleanupRemoteScreenMedia = useCallback(() => {
+    try {
+      remoteScreenStreamRef.current?.getTracks().forEach((t) => t.stop());
+    } catch { /* noop */ }
+    remoteScreenStreamRef.current = null;
+    for (const tx of remoteScreenTransceiversRef.current) {
+      try {
+        tx.direction = 'inactive';
+        tx.receiver?.track?.stop();
+      } catch { /* noop */ }
+    }
+    remoteScreenTransceiversRef.current = [];
+  }, []);
+
+  const closeRemoteScreenForMe = useCallback(() => {
+    const cur = screenShareRef.current;
+    if (!cur || cur.isLocal) return;
+    closedByMeUserIdRef.current = cur.userId;
+    const evt = activeRemoteScreenEvtRef.current;
+    if (evt) {
+      pulledKeysRef.current.delete(`${evt.sessionId}:${evt.videoTrackName}`);
+      if (evt.audioTrackName) pulledKeysRef.current.delete(`${evt.sessionId}:${evt.audioTrackName}`);
+    }
+    cleanupRemoteScreenMedia();
+    setScreenShare({
+      userId: cur.userId,
+      displayName: cur.displayName,
+      stream: null,
+      isLocal: false,
+      closedByMe: true,
+    });
+  }, [cleanupRemoteScreenMedia]);
+
+  const stopScreenShare = useCallback(() => {
+    const hadLocal = Boolean(screenStreamRef.current);
+    try { screenStreamRef.current?.getTracks().forEach((t) => t.stop()); } catch { /* noop */ }
+    screenStreamRef.current = null;
+    screenVideoTrackIdRef.current = null;
+    screenAudioTrackIdRef.current = null;
+    if (hadLocal && me) {
+      void send({ type: 'screen-stop', userId: me.id }).catch(() => {});
+    }
+    setScreenShare((prev) => (prev?.isLocal ? null : prev));
+  }, [me, send]);
+
+  const startScreenShare = useCallback(async () => {
+    if (!canShareScreen || !me || !inCallRef.current) return;
+    if (screenShareRef.current && !screenShareRef.current.isLocal && !screenShareRef.current.closedByMe) {
+      setError(`${screenShareRef.current.displayName} is already sharing their screen.`);
+      return;
+    }
+    const pc = pcRef.current;
+    const sid = sessionIdRef.current;
+    if (!pc || !sid) return;
+
+    if (screenStreamRef.current) {
+      stopScreenShare();
+    }
+
+    try {
+      let displayStream: MediaStream;
+      try {
+        displayStream = await navigator.mediaDevices.getDisplayMedia({
+          video: {
+            width: { ideal: 1920, max: 2560 },
+            height: { ideal: 1080, max: 1440 },
+            frameRate: { ideal: 60, max: 60 },
+          },
+          audio: true,
+        });
+      } catch (firstErr) {
+        if (firstErr instanceof Error && firstErr.name === 'NotAllowedError') throw firstErr;
+        displayStream = await navigator.mediaDevices.getDisplayMedia({
+          video: true,
+          audio: false,
+        });
+      }
+
+      const videoTrack = displayStream.getVideoTracks()[0];
+      if (!videoTrack) {
+        displayStream.getTracks().forEach((t) => t.stop());
+        return;
+      }
+
+      try {
+        videoTrack.contentHint = 'detail';
+      } catch { /* unsupported browser */ }
+
+      const audioTrack = displayStream.getAudioTracks()[0] ?? null;
+
+      videoTrack.onended = () => {
+        stopScreenShare();
+      };
+
+      cleanupRemoteScreenMedia();
+      closedByMeUserIdRef.current = null;
+      activeRemoteScreenEvtRef.current = null;
+
+      await (pullChainRef.current = pullChainRef.current.then(async () => {
+        const currentPc = pcRef.current;
+        const currentSid = sessionIdRef.current;
+        if (!currentPc || !currentSid) return;
+
+        const vTx = currentPc.addTransceiver(videoTrack, { direction: 'sendonly' });
+        await currentPc.setLocalDescription(await currentPc.createOffer());
+        const vPub = await sfu.publishTrack(
+          currentSid,
+          vTx.mid!,
+          videoTrack.id,
+          currentPc.localDescription!.sdp,
+        );
+        if (vPub?.sessionDescription) {
+          await currentPc.setRemoteDescription(vPub.sessionDescription);
+        }
+
+        try {
+          const params = vTx.sender.getParameters();
+          if (!params.encodings || params.encodings.length === 0) {
+            params.encodings = [{}];
+          }
+          params.encodings[0].maxBitrate = 4_000_000;
+          params.encodings[0].maxFramerate = 60;
+          params.degradationPreference = 'maintain-resolution';
+          await vTx.sender.setParameters(params);
+        } catch (bitrateErr) {
+          console.warn('[call] HD bitrate hint skipped', bitrateErr);
+        }
+
+        if (audioTrack) {
+          try {
+            const aTx = currentPc.addTransceiver(audioTrack, { direction: 'sendonly' });
+            await currentPc.setLocalDescription(await currentPc.createOffer());
+            const aPub = await sfu.publishTrack(
+              currentSid,
+              aTx.mid!,
+              audioTrack.id,
+              currentPc.localDescription!.sdp,
+            );
+            if (aPub?.sessionDescription) {
+              await currentPc.setRemoteDescription(aPub.sessionDescription);
+            }
+          } catch (audioErr) {
+            console.warn('[call] screen audio publish skipped', audioErr);
+          }
+        }
+      }));
+
+      screenStreamRef.current = displayStream;
+      screenVideoTrackIdRef.current = videoTrack.id;
+      screenAudioTrackIdRef.current = audioTrack?.id ?? null;
+
+      setScreenShare({
+        userId: me.id,
+        displayName: me.displayName || 'You',
+        stream: displayStream,
+        isLocal: true,
+        closedByMe: false,
+      });
+
+      sendScreenPublish();
+    } catch (err) {
+      if (err instanceof Error && err.name === 'NotAllowedError') {
+        return;
+      }
+      console.warn('[call] startScreenShare failed', err);
+      setError('Could not start screen sharing.');
+    }
+  }, [canShareScreen, me, sendScreenPublish, stopScreenShare, cleanupRemoteScreenMedia]);
+
   const leave = useCallback(() => {
-    if (me) void send({ type: 'leave', userId: me.id }).catch(() => {});
+    if (me) {
+      if (screenStreamRef.current) {
+        void send({ type: 'screen-stop', userId: me.id }).catch(() => {});
+      }
+      void send({ type: 'leave', userId: me.id }).catch(() => {});
+    }
+    try { screenStreamRef.current?.getTracks().forEach((t) => t.stop()); } catch { /* noop */ }
+    screenStreamRef.current = null;
+    screenVideoTrackIdRef.current = null;
+    screenAudioTrackIdRef.current = null;
+    cleanupRemoteScreenMedia();
+    activeRemoteScreenEvtRef.current = null;
+    closedByMeUserIdRef.current = null;
+
     try { pcRef.current?.close(); } catch { /* noop */ }
     pcRef.current = null;
     sessionIdRef.current = null;
@@ -185,24 +411,19 @@ export function useGroupCall(
     lastPublishKeyRef.current = '';
     lastPublishAtRef.current = 0;
 
-    // FIX #3: flip the ref synchronously *before* setInCall so any
-    // in-flight publish handlers see the correct state immediately.
     inCallRef.current = false;
     setParticipants([]);
+    setScreenShare(null);
+    setScreenReactions([]);
     setInCall(false);
     setCallGroupId(null);
     setLocalStream(null);
     setMuted(false);
     setError(null);
-inCallRef.current = false;
-  }, [me, send]);
+  }, [me, send, cleanupRemoteScreenMedia]);
 
-    const join = useCallback(async () => {
+  const join = useCallback(async () => {
     if (!groupId || !me || inCall) return;
-    // Guard against concurrent join() invocations (double-click, tab
-    // focus loss during the mic prompt, etc.). joiningRef is
-    // synchronous and closes the getUserMedia window where pcRef is
-    // still null.
     if (joiningRef.current || pcRef.current) {
       console.warn('[call] join already in progress');
       return;
@@ -216,12 +437,6 @@ inCallRef.current = false;
       return;
     }
 
-    // ── FIX #3: announce presence immediately ────────────────────────
-    // getUserMedia + SFU handshake can take several seconds. Sending
-    // `join` first means others see us in the pill within ~100ms,
-    // instead of staring at "1 in call" until our media is live.
-    // sessionId/track aren't ready yet — peers treat `join` as a
-    // presence-only event, so an empty sessionId is harmless.
     void send({
       type: 'join',
       userId: me.id,
@@ -249,6 +464,31 @@ inCallRef.current = false;
       pc.ontrack = (e) => {
         const meta = pendingPullsRef.current.shift();
         if (!meta) return;
+
+        if (meta.kind === 'screen-video' || meta.kind === 'screen-audio') {
+          if (closedByMeUserIdRef.current === meta.userId) {
+            try { e.track.stop(); } catch { /* noop */ }
+            return;
+          }
+          if (e.transceiver) {
+            remoteScreenTransceiversRef.current.push(e.transceiver);
+          }
+          let scr = remoteScreenStreamRef.current;
+          if (!scr) {
+            scr = new MediaStream();
+            remoteScreenStreamRef.current = scr;
+          }
+          scr.addTrack(e.track);
+          setScreenShare({
+            userId: meta.userId,
+            displayName: meta.displayName || 'User',
+            stream: scr,
+            isLocal: false,
+            closedByMe: false,
+          });
+          return;
+        }
+
         const mediaStream = new MediaStream([e.track]);
         const existing = participantsRef.current.get(meta.userId);
         participantsRef.current.set(meta.userId, {
@@ -288,31 +528,16 @@ inCallRef.current = false;
         pc.localDescription!.sdp,
       );
 
-      // ── FIX #2: apply the SFU's answer to our publish offer ──────
-      // Previously this return value was discarded, leaving the
-      // RTCPeerConnection stuck in `have-local-offer`. Any later
-      // pull would then trigger an implicit rollback, which drops
-      // the publish entirely on some browser/SFU combinations.
       if (pub?.sessionDescription) {
         await pc.setRemoteDescription(pub.sessionDescription);
-      } else if (pc.signalingState === 'have-local-offer') {
-        console.warn(
-          '[call] publishTrack returned no answer — signaling state is', pc.signalingState,
-        );
       }
 
-      // FIX #3: set the ref synchronously so any publish arriving in
-      // the next few ms is not dropped by the inCallRef guard in the
-      // receive handler below.
       inCallRef.current = true;
       setInCall(true);
       setCallGroupId(groupId);
 
-      // Publish announces our track so existing peers can pull it.
       sendPublish(true);
 
-      // Probe for existing participants we didn't see yet.
-            // Probe for existing participants we didn't see yet.
       window.setTimeout(() => {
         if (inCallRef.current) {
           void send({ type: 'probe', userId: me.id }).catch(() => {});
@@ -329,11 +554,12 @@ inCallRef.current = false;
         setError(msg);
       }
       leave();
-      throw err; // surface to caller so the UI can toast
+      throw err;
     } finally {
       joiningRef.current = false;
     }
   }, [groupId, me, inCall, send, sendPublish, leave]);
+
   const pullFor = useCallback(
     (evt: Extract<CallEvent, { type: 'publish' }>) => {
       if (!me || evt.userId === me.id) return;
@@ -357,9 +583,7 @@ inCallRef.current = false;
         const mySid = sessionIdRef.current;
         if (!pc || !mySid) return;
 
-        // Hold a reference to our queue entry so a failure removes the
-        // RIGHT one, not whatever happens to be last.
-        const meta = { userId: evt.userId, displayName: evt.displayName };
+        const meta = { userId: evt.userId, displayName: evt.displayName, kind: 'audio' as const };
         pendingPullsRef.current.push(meta);
 
         try {
@@ -376,8 +600,90 @@ inCallRef.current = false;
           if (idx >= 0) pendingPullsRef.current.splice(idx, 1);
         }
       });
-    }, [me],
+    },
+    [me],
   );
+
+  const pullScreenFor = useCallback(
+    (evt: Extract<CallEvent, { type: 'screen-publish' }>, forceReopen = false) => {
+      if (!me || evt.userId === me.id) return;
+      if (screenShareRef.current && screenShareRef.current.userId !== evt.userId) return;
+
+      activeRemoteScreenEvtRef.current = evt;
+
+      if (!forceReopen && closedByMeUserIdRef.current === evt.userId) {
+        setScreenShare({
+          userId: evt.userId,
+          displayName: evt.displayName || 'User',
+          stream: null,
+          isLocal: false,
+          closedByMe: true,
+        });
+        return;
+      }
+
+      const vKey = `${evt.sessionId}:${evt.videoTrackName}`;
+      if (pulledKeysRef.current.has(vKey)) return;
+      if (!pcRef.current || !sessionIdRef.current) return;
+      pulledKeysRef.current.add(vKey);
+
+      cleanupRemoteScreenMedia();
+      remoteScreenStreamRef.current = new MediaStream();
+
+      pullChainRef.current = pullChainRef.current.then(async () => {
+        const pc = pcRef.current;
+        const mySid = sessionIdRef.current;
+        if (!pc || !mySid) return;
+
+        const vMeta = { userId: evt.userId, displayName: evt.displayName || 'User', kind: 'screen-video' as const };
+        pendingPullsRef.current.push(vMeta);
+
+        try {
+          const r = await sfu.pullTrack(mySid, evt.sessionId, evt.videoTrackName);
+          if (r.requiresImmediateRenegotiation && r.sessionDescription) {
+            await pc.setRemoteDescription(r.sessionDescription);
+            await pc.setLocalDescription(await pc.createAnswer());
+            await sfu.sendAnswer(mySid, pc.localDescription!.sdp);
+          }
+
+          if (evt.audioTrackName) {
+            const aKey = `${evt.sessionId}:${evt.audioTrackName}`;
+            if (!pulledKeysRef.current.has(aKey)) {
+              pulledKeysRef.current.add(aKey);
+              const aMeta = { userId: evt.userId, displayName: evt.displayName || 'User', kind: 'screen-audio' as const };
+              pendingPullsRef.current.push(aMeta);
+              try {
+                const ar = await sfu.pullTrack(mySid, evt.sessionId, evt.audioTrackName);
+                if (ar.requiresImmediateRenegotiation && ar.sessionDescription) {
+                  await pc.setRemoteDescription(ar.sessionDescription);
+                  await pc.setLocalDescription(await pc.createAnswer());
+                  await sfu.sendAnswer(mySid, pc.localDescription!.sdp);
+                }
+              } catch {
+                pulledKeysRef.current.delete(aKey);
+                const aIdx = pendingPullsRef.current.indexOf(aMeta);
+                if (aIdx >= 0) pendingPullsRef.current.splice(aIdx, 1);
+              }
+            }
+          }
+        } catch (err) {
+          console.warn('[call] screen pull failed', err);
+          pulledKeysRef.current.delete(vKey);
+          const idx = pendingPullsRef.current.indexOf(vMeta);
+          if (idx >= 0) pendingPullsRef.current.splice(idx, 1);
+        }
+      });
+    },
+    [me, cleanupRemoteScreenMedia],
+  );
+
+  const reopenRemoteScreenForMe = useCallback(() => {
+    const evt = activeRemoteScreenEvtRef.current;
+    closedByMeUserIdRef.current = null;
+    if (evt) {
+      pullScreenFor(evt, true);
+    }
+  }, [pullScreenFor]);
 
   const toggleMute = useCallback(() => {
     try {
@@ -391,29 +697,18 @@ inCallRef.current = false;
 
       if (inCallRef.current) sendPublish(true);
       if (me) {
-        void send({ type: 'mute', userId: me.id, muted: nowMuted }).catch(() => { /* silent */ });
+        void send({ type: 'mute', userId: me.id, muted: nowMuted }).catch(() => {});
       }
     } catch (err) {
       console.warn('[call] toggleMute failed', err);
     }
   }, [me, send, sendPublish]);
 
-  // ── FIX #1: tear down the SFU session when the group changes. ──────
-  //
-  // The previous implementation only cleared the roster *display*,
-  // leaving pcRef/sessionIdRef/localTrackRef pointing at the previous
-  // group's SFU session. Then `inCall` stayed true and `join()` in the
-  // new group returned early (`if (inCall) return`), so the user was
-  // "in a call" in group B while the audio was still A's call.
-  // This effect closes the loop: leave A (send leave to A's channel),
-  // tear down everything, and reset state so B starts clean.
   useEffect(() => {
     if (prevGroupIdRef.current === groupId) return;
     const prev = prevGroupIdRef.current;
     prevGroupIdRef.current = groupId;
 
-    // Send leave to the OLD group. `send()` closes over the current
-    // (new) groupId so we can't reuse it — go direct.
     if (inCallRef.current && prev != null && me) {
       void signalRService.sendGroupMessage({
         groupId: prev,
@@ -422,6 +717,14 @@ inCallRef.current = false;
         mediaType: undefined,
       }).catch(() => {});
     }
+
+    try { screenStreamRef.current?.getTracks().forEach((t) => t.stop()); } catch { /* noop */ }
+    screenStreamRef.current = null;
+    screenVideoTrackIdRef.current = null;
+    screenAudioTrackIdRef.current = null;
+    cleanupRemoteScreenMedia();
+    activeRemoteScreenEvtRef.current = null;
+    closedByMeUserIdRef.current = null;
 
     try { pcRef.current?.close(); } catch { /* noop */ }
     pcRef.current = null;
@@ -436,18 +739,19 @@ inCallRef.current = false;
     lastPublishKeyRef.current = '';
     lastPublishAtRef.current = 0;
 
-        inCallRef.current = false;
+    inCallRef.current = false;
     joiningRef.current = false;
     setInCall(false);
     setCallGroupId(null);
     setLocalStream(null);
     setParticipants([]);
     setActiveCallers([]);
+    setScreenShare(null);
+    setScreenReactions([]);
     setMuted(false);
     setError(null);
-  }, [groupId, me]);
+  }, [groupId, me, cleanupRemoteScreenMedia]);
 
-  // ── Registry publish (feeds CallContext blocking). ─────────────────
   useEffect(() => {
     if (inCall && callGroupId != null) {
       activeCallRegistry.register({
@@ -460,12 +764,11 @@ inCallRef.current = false;
     }
   }, [inCall, callGroupId, groupName, leave]);
 
-  // Cleanup on unmount — clears the registry AND closes the SFU
-  // session so navigation away doesn't leave a phantom call.
   useEffect(() => {
     return () => {
       activeCallRegistry.unregister('group');
-            joiningRef.current = false;
+      joiningRef.current = false;
+      try { screenStreamRef.current?.getTracks().forEach((t) => t.stop()); } catch { /* noop */ }
       if (pcRef.current) {
         const leaveGroupId = prevGroupIdRef.current ?? groupId;
         if (me && leaveGroupId != null) {
@@ -482,7 +785,6 @@ inCallRef.current = false;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Probe existing callers on mount / group switch
   useEffect(() => {
     if (!groupId || !me) return;
     const t = window.setTimeout(() => {
@@ -491,7 +793,6 @@ inCallRef.current = false;
     return () => window.clearTimeout(t);
   }, [groupId, me?.id, send]);
 
-  // Expiry sweep — drop stale callers who stopped publishing
   useEffect(() => {
     const id = window.setInterval(() => {
       const now = Date.now();
@@ -507,7 +808,6 @@ inCallRef.current = false;
     return () => window.clearInterval(id);
   }, [refreshActiveCallers]);
 
-  // Real-time handlers
   useEffect(() => {
     if (!groupId || !me) return;
     const unsub = signalRService.onReceiveGroupMessage((msg) => {
@@ -531,6 +831,12 @@ inCallRef.current = false;
         activeCallersRef.current.delete(evt.userId);
         participantsRef.current.delete(evt.userId);
         setParticipants(Array.from(participantsRef.current.values()));
+        if (screenShareRef.current?.userId === evt.userId) {
+          cleanupRemoteScreenMedia();
+          activeRemoteScreenEvtRef.current = null;
+          closedByMeUserIdRef.current = null;
+          setScreenShare(null);
+        }
         refreshActiveCallers();
       } else if (evt.type === 'mute') {
         const p = participantsRef.current.get(evt.userId);
@@ -538,29 +844,35 @@ inCallRef.current = false;
           p.muted = evt.muted;
           setParticipants(Array.from(participantsRef.current.values()));
         }
+      } else if (evt.type === 'screen-stop') {
+        if (screenShareRef.current?.userId === evt.userId) {
+          cleanupRemoteScreenMedia();
+          activeRemoteScreenEvtRef.current = null;
+          closedByMeUserIdRef.current = null;
+          setScreenShare(null);
+        }
+      } else if (evt.type === 'screen-react' && evt.userId !== me.id && inCallRef.current) {
+        pushReactionBurst(evt.emoji, evt.displayName || 'User');
       } else if (evt.type === 'probe' && evt.userId !== me.id && inCallRef.current) {
-        // ── FIX #1: FORCE the publish. A fresh joiner may have missed
-        // our earlier publish because they weren't `inCall` yet when
-        // it arrived. If we respect the rate limit here, they'll
-        // never hear us and never pull our track. A probe is a
-        // one-shot per-peer request — no spam risk.
         sendPublish(true);
+        if (screenStreamRef.current) sendScreenPublish();
       }
 
       if (evt.type === 'publish' && evt.userId !== me.id && inCallRef.current) {
         pullFor(evt);
       }
 
+      if (evt.type === 'screen-publish' && evt.userId !== me.id && inCallRef.current) {
+        pullScreenFor(evt);
+      }
+
       if (evt.type === 'join' && evt.userId !== me.id && inCallRef.current) {
-        // ── FIX #1b: Someone joined — re-publish so they can pull
-        // our track. Force it so the rate limiter can't block a fresh
-        // joiner from hearing us. If they aren't inCall yet, their own
-        // probe (500ms later) will still recover the situation.
         sendPublish(true);
+        if (screenStreamRef.current) sendScreenPublish();
       }
     });
     return () => unsub();
-  }, [groupId, me, pullFor, refreshActiveCallers, sendPublish]);
+  }, [groupId, me, pullFor, pullScreenFor, refreshActiveCallers, sendPublish, sendScreenPublish, cleanupRemoteScreenMedia, pushReactionBurst]);
 
   return {
     inCall,
@@ -570,8 +882,17 @@ inCallRef.current = false;
     activeCallers,
     muted,
     error,
+    canShareScreen,
+    isSharingScreen: Boolean(screenShare?.isLocal),
+    screenShare,
+    screenReactions,
     join,
     leave,
     toggleMute,
+    startScreenShare,
+    stopScreenShare,
+    closeRemoteScreenForMe,
+    reopenRemoteScreenForMe,
+    sendScreenReaction,
   };
 }

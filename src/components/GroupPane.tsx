@@ -21,8 +21,8 @@ import { signalRService } from '../services/signalr';
 import { useAuth } from '../context/AuthContext';
 import { useCall } from '../context/CallContext';
 import { presenceStore } from '../services/presenceStore';
-import { useGroupCall, isCallSignal, MAX_PARTICIPANTS } from '../hooks/useGroupCall';
-import { Phone, PhoneOff, MicOff, Mic, Volume2, VolumeX, MessageSquare } from 'lucide-react';
+import { useGroupCall, isCallSignal, MAX_PARTICIPANTS, ScreenShareState, ScreenReactionBurst } from '../hooks/useGroupCall';
+import { Phone, PhoneOff, MicOff, Mic, Volume2, VolumeX, MessageSquare, MonitorUp, MonitorOff, Maximize2 } from 'lucide-react';
 import { playReceive, playSend, unlockSounds } from '../services/sounds';
 
 import {
@@ -378,61 +378,23 @@ function mulberry32(seed: number) {
   };
 }
 
-const PALETTES: Array<[string, string, string]> = [
-  ['#FB923C', '#EA580C', '#FEF3C7'],
-  ['#34D399', '#059669', '#ECFDF5'],
-  ['#60A5FA', '#4F46E5', '#E0E7FF'],
-  ['#A78BFA', '#DB2777', '#FCE7F3'],
-  ['#C084FC', '#7C3AED', '#EDE9FE'],
-  ['#2DD4BF', '#0F766E', '#CCFBF1'],
-  ['#F87171', '#B91C1C', '#FEE2E2'],
-  ['#A3E635', '#65A30D', '#F7FEE7'],
-  ['#FB7185', '#BE123C', '#FFE4E6'],
-  ['#38BDF8', '#0284C7', '#E0F2FE'],
-  ['#FBBF24', '#B45309', '#FEF3C7'],
-  ['#4ADE80', '#047857', '#DCFCE7'],
+const GENZ_MESHES: Array<{ bg: string; glow: string; text: string }> = [
+  { bg: 'radial-gradient(120% 120% at 15% 10%, #FF6B6B 0%, #845EC2 52%, #1E1B4B 100%)', glow: 'rgba(132,94,194,0.45)', text: '#FFFFFF' },
+  { bg: 'radial-gradient(120% 120% at 85% 15%, #A3E635 0%, #10B981 48%, #064E3B 100%)', glow: 'rgba(16,185,129,0.42)', text: '#FFFFFF' },
+  { bg: 'radial-gradient(120% 120% at 10% 85%, #38BDF8 0%, #6366F1 52%, #1E1B4B 100%)', glow: 'rgba(99,102,241,0.45)', text: '#FFFFFF' },
+  { bg: 'radial-gradient(120% 120% at 80% 80%, #FB923C 0%, #F43F5E 50%, #4C0519 100%)', glow: 'rgba(244,63,94,0.45)', text: '#FFFFFF' },
+  { bg: 'radial-gradient(120% 120% at 20% 20%, #F472B6 0%, #A855F7 50%, #2E1065 100%)', glow: 'rgba(168,85,247,0.45)', text: '#FFFFFF' },
+  { bg: 'radial-gradient(120% 120% at 85% 20%, #FACC15 0%, #F97316 52%, #431407 100%)', glow: 'rgba(249,115,22,0.45)', text: '#FFFFFF' },
+  { bg: 'radial-gradient(120% 120% at 15% 80%, #2DD4BF 0%, #0284C7 52%, #082F49 100%)', glow: 'rgba(2,132,199,0.45)', text: '#FFFFFF' },
+  { bg: 'radial-gradient(120% 120% at 50% 10%, #E879F9 0%, #4F46E5 55%, #09090B 100%)', glow: 'rgba(232,121,249,0.42)', text: '#FFFFFF' },
 ];
-
-type ShapeKind = 'orb' | 'ring' | 'tri' | 'wave';
-const SHAPES: ShapeKind[] = ['orb', 'ring', 'tri', 'wave'];
 
 function initialsOf(name: string): string {
   const clean = name.trim().replace(/[^\p{L}\p{N}\s]/gu, ' ');
   const parts = clean.split(/\s+/).filter(Boolean);
   if (parts.length === 0) return '#';
-  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
-  return (parts[0][0] + parts[1][0]).toUpperCase();
-}
-
-interface AvatarConfig {
-  c1: string; c2: string; c3: string;
-  shape: ShapeKind;
-  rot: number; offX: number; offY: number;
-  uid: string;
-  orb1R: number; orb2R: number;
-}
-
-const AVATAR_CACHE = new Map<string, AvatarConfig>();
-
-function getAvatarConfig(groupId: number | string, name: string): AvatarConfig {
-  const key = `${groupId}:${name}`;
-  let cfg = AVATAR_CACHE.get(key);
-  if (cfg) return cfg;
-  const seed = hash32(key);
-  const rand = mulberry32(seed);
-  const [c1, c2, c3] = PALETTES[seed % PALETTES.length];
-  const shape = SHAPES[(seed >>> 3) % SHAPES.length];
-  cfg = {
-    c1, c2, c3, shape,
-    rot: Math.floor(rand() * 360),
-    offX: (rand() - 0.5) * 0.22,
-    offY: (rand() - 0.5) * 0.22,
-    uid: `ga-${seed.toString(36)}`,
-    orb1R: 38 + rand() * 18,
-    orb2R: 24 + rand() * 14,
-  };
-  AVATAR_CACHE.set(key, cfg);
-  return cfg;
+  if (parts.length === 1) return parts[0].slice(0, 2);
+  return parts[0][0] + parts[1][0];
 }
 
 interface GroupAvatarProps {
@@ -446,76 +408,32 @@ interface GroupAvatarProps {
 const GroupAvatar = React.memo(function GroupAvatar({ name, groupId, src, size = 'md', rounded = 'lg' }: GroupAvatarProps) {
   if (src) return <Avatar name={name} src={src} size={size === 'xl' ? 'lg' : size} />;
 
-  const { c1, c2, c3, shape, rot, offX, offY, uid, orb1R, orb2R } = getAvatarConfig(groupId, name);
-  const initials = initialsOf(name);
-
-  const px = size === 'sm' ? 32 : size === 'md' ? 36 : size === 'lg' ? 56 : 72;
-  const radius = rounded === 'full' ? px / 2 : Math.max(8, px * 0.3);
-  const viewRadius = radius * (100 / px);
-  const fontSize = initials.length >= 2 ? px * 0.36 : px * 0.44;
+  const seed = hash32(`${groupId}:${name}`);
+  const mesh = GENZ_MESHES[seed % GENZ_MESHES.length];
+  const label = initialsOf(name);
 
   const sizeClass =
-    size === 'sm' ? 'w-8 h-8' :
-    size === 'md' ? 'w-9 h-9' :
-    size === 'lg' ? 'w-14 h-14' :
-    'w-[72px] h-[72px]';
+    size === 'sm' ? 'w-8 h-8 text-[12px]' :
+    size === 'md' ? 'w-9 h-9 text-[13.5px]' :
+    size === 'lg' ? 'w-14 h-14 text-[21px]' :
+    'w-[72px] h-[72px] text-[26px]';
+
+  const shapeClass =
+    rounded === 'full' ? 'rounded-full' :
+    size === 'sm' || size === 'md' ? 'rounded-[12px]' : 'rounded-[20px]';
 
   return (
-    <span className={`inline-block shrink-0 select-none ${sizeClass}`} aria-hidden>
-      <svg viewBox="0 0 100 100" width="100%" height="100%" style={{ display: 'block', contain: 'strict' }}>
-        <defs>
-          <linearGradient id={`${uid}-base`} x1="0" y1="0" x2="1" y2="1">
-            <stop offset="0%" stopColor={c1} />
-            <stop offset="100%" stopColor={c2} />
-          </linearGradient>
-          <radialGradient id={`${uid}-halo`} cx="0.3" cy="0.15" r="0.85">
-            <stop offset="0%" stopColor="#ffffff" stopOpacity="0.35" />
-            <stop offset="55%" stopColor="#ffffff" stopOpacity="0.08" />
-            <stop offset="100%" stopColor="#ffffff" stopOpacity="0" />
-          </radialGradient>
-          <radialGradient id={`${uid}-orb1`} cx="0.5" cy="0.5" r="0.5">
-            <stop offset="0%" stopColor={c3} stopOpacity="0.85" />
-            <stop offset="100%" stopColor={c3} stopOpacity="0" />
-          </radialGradient>
-          <radialGradient id={`${uid}-orb2`} cx="0.5" cy="0.5" r="0.5">
-            <stop offset="0%" stopColor="#ffffff" stopOpacity="0.5" />
-            <stop offset="100%" stopColor="#ffffff" stopOpacity="0" />
-          </radialGradient>
-          <clipPath id={`${uid}-clip`}>
-            <rect x="0" y="0" width="100" height="100" rx={viewRadius} />
-          </clipPath>
-        </defs>
-
-        <g clipPath={`url(#${uid}-clip)`}>
-          <rect x="0" y="0" width="100" height="100" fill={`url(#${uid}-base)`} />
-          <circle cx={50 + offX * 80} cy={50 + offY * 80} r={orb1R} fill={`url(#${uid}-orb1)`} />
-          <circle cx={50 - offX * 70} cy={50 - offY * 55} r={orb2R} fill={`url(#${uid}-orb2)`} />
-
-          {shape === 'orb' && (<circle cx="50" cy="50" r="36" fill="none" stroke="#ffffff" strokeOpacity="0.12" strokeWidth="1.5" />)}
-          {shape === 'ring' && (<circle cx={50 + offX * 20} cy={50 + offY * 20} r="34" fill="none" stroke="#ffffff" strokeOpacity="0.18" strokeWidth="2" />)}
-          {shape === 'tri' && (<g transform={`rotate(${rot} 50 50)`}><polygon points="50,16 84,78 16,78" fill="#ffffff" fillOpacity="0.09" /></g>)}
-          {shape === 'wave' && (
-            <g transform={`rotate(${rot} 50 50)`}>
-              <path d="M 8 60 Q 25 42 50 52 T 92 42" fill="none" stroke="#ffffff" strokeOpacity="0.15" strokeWidth="2" />
-              <path d="M 8 70 Q 25 52 50 62 T 92 52" fill="none" stroke="#ffffff" strokeOpacity="0.08" strokeWidth="2" />
-            </g>
-          )}
-
-          <rect x="0" y="0" width="100" height="100" fill={`url(#${uid}-halo)`} />
-          <rect x="0.5" y="0.5" width="99" height="99" rx={Math.max(0, viewRadius - 0.5)} fill="none"
-            stroke="#ffffff" strokeOpacity="0.12" strokeWidth="1" />
-        </g>
-
-        <text x="50" y="50" textAnchor="middle" dominantBaseline="central"
-          fontSize={fontSize * (100 / px)} fontWeight={800} fill="#ffffff"
-          style={{
-            fontFamily: 'ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif',
-            letterSpacing: initials.length > 1 ? '-0.03em' : '0',
-            paintOrder: 'stroke', stroke: 'rgba(0,0,0,0.22)', strokeWidth: 0.8,
-          }}>
-          {initials}
-        </text>
-      </svg>
+    <span
+      aria-hidden
+      style={{ background: mesh.bg, color: mesh.text }}
+      className={`relative inline-flex items-center justify-center shrink-0 select-none overflow-hidden font-extrabold tracking-[-0.04em] lowercase ring-1 ring-inset ring-white/20 shadow-[inset_0_1px_1px_rgba(255,255,255,0.35)] ${sizeClass} ${shapeClass}`}
+    >
+      <span
+        className="pointer-events-none absolute -top-1/2 -left-1/2 w-full h-full rounded-full bg-white/20 blur-md"
+      />
+      <span className="relative z-10 drop-shadow-[0_1px_2px_rgba(0,0,0,0.45)]">
+        {label}
+      </span>
     </span>
   );
 }, (a, b) =>
@@ -525,7 +443,6 @@ const GroupAvatar = React.memo(function GroupAvatar({ name, groupId, src, size =
   a.size === b.size &&
   a.rounded === b.rounded
 );
-
 /* ────────────────────────────────────────────────────────── */
 /* Helpers                                                    */
 /* ────────────────────────────────────────────────────────── */
@@ -672,12 +589,12 @@ const LazyGroupVideo = React.memo(function LazyGroupVideo({ src }: { src: string
   }, [inView]);
 
   return (
-    <div ref={wrapRef} className="rounded-xl max-h-72 w-full bg-black overflow-hidden">
+    <div ref={wrapRef} className="rounded-[22px] max-h-[380px] w-full bg-black overflow-hidden">
       <video
         src={inView ? (src ?? undefined) : undefined}
         controls
         preload="none"
-        className="rounded-xl max-h-72 w-full bg-black"
+        className="rounded-[22px] max-h-[380px] w-full bg-black block"
       />
     </div>
   );
@@ -1047,7 +964,14 @@ const GroupMessageItem = React.memo(function GroupMessageItem({
     touchStartRef.current = null;
   };
 
-  const tailClass = isLastOfGroup ? (isMe ? 'rounded-br-md' : 'rounded-bl-md') : '';
+  const isMediaOnly = hasMedia && !isVoice && !message.content && !replyTarget;
+  const bubbleRadius = isMe
+    ? grouped
+      ? (isLastOfGroup ? 'rounded-[22px] rounded-tr-[5px] rounded-br-[5px]' : 'rounded-[22px] rounded-r-[5px]')
+      : (isLastOfGroup ? 'rounded-[22px] rounded-br-[5px]' : 'rounded-[22px]')
+    : grouped
+      ? (isLastOfGroup ? 'rounded-[22px] rounded-tl-[5px] rounded-bl-[5px]' : 'rounded-[22px] rounded-l-[5px]')
+      : (isLastOfGroup ? 'rounded-[22px] rounded-bl-[5px]' : 'rounded-[22px]');
 
   const groupedReactions = useMemo(() => {
     const map = new Map<string, ReactionEntry[]>();
@@ -1097,21 +1021,21 @@ const GroupMessageItem = React.memo(function GroupMessageItem({
         )}
 
         {canAct && (
-          <div className={`hidden sm:flex absolute -top-3 ${isMe ? 'right-0' : 'left-0'} items-center gap-0.5 opacity-0 group-hover/row:opacity-100 transition-opacity z-10`}>
-            <div className="flex items-center gap-0.5 rounded-full bg-[#1C1A17] border border-white/[0.08] shadow-[0_4px_14px_-2px_rgba(0,0,0,0.6)] px-1 py-0.5">
+          <div className={`hidden sm:flex absolute -top-10 ${isMe ? 'right-0' : 'left-0'} items-center pointer-events-none opacity-0 translate-y-1 group-hover/row:pointer-events-auto group-hover/row:opacity-100 group-hover/row:translate-y-0 transition-all duration-150 z-20`}>
+            <div className="flex items-center gap-1 rounded-full bg-[#1C1C1F]/95 backdrop-blur-xl border border-white/[0.12] shadow-xl px-2 py-1 whitespace-nowrap">
               {QUICK_REACT_EMOJIS.map((e) => (
                 <button key={e} type="button" onClick={() => onReact(message.id as number, e)} title={`React ${e}`}
-                  className={`w-7 h-7 rounded-full flex items-center justify-center text-[15px] leading-none transition-colors ${myReactions.has(e) ? 'bg-[#D97706]/[0.18]' : 'hover:bg-white/[0.08]'}`}>
+                  className={`w-7 h-7 rounded-full flex items-center justify-center text-[15px] leading-none shrink-0 transition-transform hover:scale-110 ${myReactions.has(e) ? 'bg-white/[0.15] ring-1 ring-white/25' : 'hover:bg-white/[0.08]'}`}>
                   {e}
                 </button>
               ))}
-              <span className="w-px h-4 bg-white/[0.08] mx-0.5" aria-hidden />
+              <span className="w-px h-4 bg-white/[0.1] mx-0.5 shrink-0" aria-hidden />
               <button type="button" onClick={() => onStartReply(message)} title="Reply"
-                className="w-7 h-7 rounded-full flex items-center justify-center text-[#A8A29E] hover:bg-white/[0.08] transition-colors">
+                className="w-7 h-7 rounded-full flex items-center justify-center text-[#A1A1AA] hover:text-white hover:bg-white/[0.08] shrink-0 transition-colors">
                 <Reply className="w-3.5 h-3.5" />
               </button>
               <button type="button" onClick={() => onOpenMenu(message)} title="More"
-                className="w-7 h-7 rounded-full flex items-center justify-center text-[#A8A29E] hover:bg-white/[0.08] transition-colors">
+                className="w-7 h-7 rounded-full flex items-center justify-center text-[#A1A1AA] hover:text-white hover:bg-white/[0.08] shrink-0 transition-colors">
                 <MoreHorizontal className="w-3.5 h-3.5" />
               </button>
             </div>
@@ -1119,9 +1043,13 @@ const GroupMessageItem = React.memo(function GroupMessageItem({
         )}
 
         <div id={`msg-${message.id}`}
-          className={`inline-block max-w-full px-3 py-1.5 text-[13.5px] leading-[1.55] break-words rounded-2xl ${tailClass} ${
-            isMe ? 'bg-[#D97706] text-[#0F0D0A] font-medium' : 'bg-[#1A1816] text-[#EDE5D4] border border-white/[0.04]'
-          }`}>
+          className={isMediaOnly
+            ? 'inline-block max-w-full overflow-hidden rounded-[22px]'
+            : `inline-block max-w-full px-4 py-2 text-[14.5px] leading-[1.48] tracking-[-0.01em] break-words ${bubbleRadius} ${
+                isMe
+                  ? 'bg-[#262629] text-white'
+                  : 'bg-[#151517] text-[#F2F2F2] border border-white/[0.06]'
+              }`}>
           {replyTarget && (
             <button type="button"
               onClick={(e) => { e.stopPropagation(); if (typeof replyTarget.id === 'number' && replyTarget.id > 0) onJumpToReply(replyTarget.id); }}
@@ -1136,12 +1064,12 @@ const GroupMessageItem = React.memo(function GroupMessageItem({
           {isVoice && <VoiceBubble url={message.mediaUrl as string} isMe={isMe} />}
 
           {hasMedia && !isVoice && (
-            <div className={isSticker ? '' : 'mb-2 -mx-1'}>
+            <div className={isSticker ? '' : isMediaOnly ? 'overflow-hidden rounded-[22px]' : 'mb-2 -mx-1 overflow-hidden rounded-[16px]'}>
               {message.mediaType === MediaType.Image && (
                 isSticker ? (
                   <img src={message.mediaUrl ?? undefined} alt="" className="w-[120px] h-[120px] object-contain select-none" loading="lazy" decoding="async" />
                 ) : (
-                  <img src={message.mediaUrl ?? undefined} alt="Attachment" className="rounded-xl max-h-72 w-auto object-cover" loading="lazy" decoding="async" />
+                  <img src={message.mediaUrl ?? undefined} alt="Attachment" className="rounded-[22px] max-h-[380px] w-auto object-cover block" loading="lazy" decoding="async" />
                 )
               )}
               {message.mediaType === MediaType.Video && (<LazyGroupVideo src={message.mediaUrl} />)}
@@ -1162,16 +1090,16 @@ const GroupMessageItem = React.memo(function GroupMessageItem({
         </div>
 
         {groupedReactions.length > 0 && (
-          <div className={`flex items-center gap-1.5 mt-1.5 px-1 flex-wrap ${isMe ? 'justify-end' : 'justify-start'}`}>
+          <div className={`flex items-center gap-1.5 mt-1.5 px-0.5 flex-wrap ${isMe ? 'justify-end' : 'justify-start'}`}>
             {groupedReactions.map(([emoji, entries]) => {
               const mine = entries.some((e) => e.userId === currentUserId);
               return (
-                <button key={emoji} onClick={() => { if (canAct) onReact(message.id as number, emoji); }}
-                  className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[12px] font-medium border transition-colors ${
-                    mine ? 'bg-[#D97706]/[0.18] border-[#D97706]/50 text-[#F59E0B]' : 'bg-white/[0.06] border-white/[0.10] text-[#EDE5D4] hover:bg-white/[0.1]'
+                <button key={emoji} type="button" onClick={() => { if (canAct) onReact(message.id as number, emoji); }}
+                  className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[12px] font-medium border leading-none transition-all active:scale-95 ${
+                    mine ? 'bg-white/[0.14] border-white/25 text-white' : 'bg-[#151517] border-white/[0.08] text-[#D4D4D8] hover:bg-[#202024]'
                   }`}>
-                  <span className="text-[13px] leading-none">{emoji}</span>
-                  {entries.length > 1 && (<span className="tabular-nums text-[11px] opacity-90 font-semibold">{entries.length}</span>)}
+                  <span className="text-[14px] leading-none inline-block">{emoji}</span>
+                  {entries.length > 1 && (<span className="tabular-nums text-[11px] opacity-85 font-semibold leading-none">{entries.length}</span>)}
                 </button>
               );
             })}
@@ -1415,7 +1343,7 @@ function GroupInfoModal({
                 {isAddingMember && (
                   <div className="border-b border-white/[0.06] bg-black/20">
                     <div className="p-3 flex items-center gap-2">
-                      <div className="flex-1 flex items-center gap-2 px-2.5 py-1.5 rounded-lg bg-[#0F0D0A] border border-white/[0.08] focus-within:border-[#D97706]/50 transition-colors">
+                      <div className="flex-1 flex items-center gap-2 px-2.5 py-1.5 rounded-lg bg-[#0E0E0E] border border-white/[0.08] focus-within:border-[#D97706]/50 transition-colors">
                         <Search className="w-3.5 h-3.5 text-[#6B6259] shrink-0" />
                         <input type="text" autoFocus value={friendQuery} onChange={(e) => setFriendQuery(e.target.value)}
                           placeholder="Search friends by @handle or name..."
@@ -1640,7 +1568,7 @@ const GroupComposer = React.memo(function GroupComposer({
 
   return (
     <div className="shrink-0 relative z-20">
-      <div className="border-t border-white/[0.05] bg-[#0F0D0A]">
+      <div className="border-t border-white/[0.05] bg-[#0E0E0E]">
         <div className="px-2 sm:px-4 py-2.5">
           {voiceOpen ? (
             <div className="relative">
@@ -1769,11 +1697,12 @@ interface CallPillProps {
   onJoin: () => void;
   onOpenStage: () => void;
   joining?: boolean;
+  screenSharingBy?: string | null;
 }
 
 const CallPill = React.memo(function CallPill({
   inCall, activeCallers, participants, muted, deafened, myName, myAvatarUrl, maxParticipants, bannerText,
-    onToggleMute, onToggleDeafen, onLeave, onJoin, onOpenStage, joining = false,
+    onToggleMute, onToggleDeafen, onLeave, onJoin, onOpenStage, joining = false, screenSharingBy = null,
 }: CallPillProps) {
   if (!inCall && activeCallers.length === 0) return null;
 
@@ -1840,7 +1769,7 @@ const CallPill = React.memo(function CallPill({
               </span>
             </div>
             <span className="text-[10.5px] text-[#A8A29E] leading-tight tabular-nums">
-              {participants.length + 1} / {maxParticipants} · tap to open
+              {screenSharingBy ? `${screenSharingBy} sharing screen` : `${participants.length + 1} / ${maxParticipants} · tap to open`}
             </span>
           </div>
 
@@ -1923,9 +1852,18 @@ interface VoiceStageProps {
   locallyMuted: Set<string>;
   currentUser: { id: string; displayName: string | null | undefined; avatarUrl?: string | null } | undefined;
   messages: GroupMessageDto[];
+  canShareScreen: boolean;
+  isSharingScreen: boolean;
+  screenShare: ScreenShareState | null;
+  screenReactions: ScreenReactionBurst[];
   onToggleMute: () => void;
   onToggleDeafen: () => void;
   onToggleLocalMute: (userId: string) => void;
+  onStartScreenShare: () => Promise<void>;
+  onStopScreenShare: () => void;
+  onCloseRemoteScreenForMe: () => void;
+  onReopenRemoteScreenForMe: () => void;
+  onSendScreenReaction: (emoji: string) => void;
   onLeave: () => void;
   onSendMessage: (text: string, replyId: number | null) => Promise<void>;
 }
@@ -2144,7 +2082,9 @@ const StageTile = React.memo(function StageTile({
 
 function VoiceStage({
   open, onClose, groupId, groupName, inCall, participants, muted, deafened, localStream, locallyMuted,
-  currentUser, messages, onToggleMute, onToggleDeafen, onToggleLocalMute, onLeave, onSendMessage,
+  currentUser, messages, canShareScreen, isSharingScreen, screenShare, screenReactions,
+  onToggleMute, onToggleDeafen, onToggleLocalMute, onStartScreenShare, onStopScreenShare,
+  onCloseRemoteScreenForMe, onReopenRemoteScreenForMe, onSendScreenReaction, onLeave, onSendMessage,
 }: VoiceStageProps) {
   const [chatOpen, setChatOpen] = useState(false);
   const [draft, setDraft] = useState('');
@@ -2152,8 +2092,41 @@ function VoiceStage({
   const [elapsed, setElapsed] = useState(0);
   const startRef = useRef<number | null>(null);
   const chatScrollRef = useRef<HTMLDivElement | null>(null);
+  const screenContainerRef = useRef<HTMLDivElement | null>(null);
+  const screenVideoRef = useRef<HTMLVideoElement | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
+  const [isScreenFs, setIsScreenFs] = useState(false);
 
+  useEffect(() => {
+    const onFsChange = () => setIsScreenFs(Boolean(document.fullscreenElement));
+    document.addEventListener('fullscreenchange', onFsChange);
+    return () => document.removeEventListener('fullscreenchange', onFsChange);
+  }, []);
+
+  useEffect(() => {
+    const el = screenVideoRef.current;
+    if (!el) return;
+    if (screenShare?.stream && !screenShare.closedByMe) {
+      if (el.srcObject !== screenShare.stream) {
+        el.srcObject = screenShare.stream;
+        void el.play().catch(() => {});
+      }
+      el.muted = screenShare.isLocal || deafened;
+    } else {
+      el.srcObject = null;
+    }
+  }, [screenShare, deafened]);
+
+  const toggleScreenFullscreen = useCallback(() => {
+    const container = screenContainerRef.current;
+    if (document.fullscreenElement) {
+      void document.exitFullscreen().catch(() => {});
+      return;
+    }
+    if (container?.requestFullscreen) {
+      void container.requestFullscreen().catch(() => {});
+    }
+  }, []);
   const [toast, setToast] = useState<{ id: number; sender: string; text: string; sentAt: string } | null>(null);
   const lastSeenIdRef = useRef<number>(-1);
 
@@ -2272,7 +2245,7 @@ function VoiceStage({
           animate={{ opacity: 1, y: 0 }}
           exit={{ opacity: 0, y: 40 }}
           transition={{ duration: 0.22, ease: [0.16, 1, 0.3, 1] }}
-          className="fixed inset-x-0 bottom-0 z-[200] bg-[#0B0A08] flex flex-col rounded-t-2xl overflow-hidden ring-1 ring-white/[0.06] shadow-[0_-20px_60px_-12px_rgba(0,0,0,0.8)]"
+          className="fixed inset-x-0 bottom-0 z-[200] bg-[#080808] flex flex-col rounded-t-2xl overflow-hidden ring-1 ring-white/[0.06] shadow-[0_-20px_60px_-12px_rgba(0,0,0,0.8)]"
           style={{ top: 'max(env(safe-area-inset-top, 0px), 12px)' }}
         >
           <div className="pointer-events-none absolute inset-0 overflow-hidden">
@@ -2280,7 +2253,7 @@ function VoiceStage({
             <div className="absolute -bottom-40 right-1/4 w-[600px] h-[600px] rounded-full bg-[#7C3AED]/[0.06] blur-3xl" />
           </div>
 
-          <header className="relative shrink-0 h-16 px-3 sm:px-5 border-b border-white/[0.06] flex items-center gap-3 bg-[#0B0A08]/80 backdrop-blur-xl">
+          <header className="relative shrink-0 h-16 px-3 sm:px-5 border-b border-white/[0.06] flex items-center gap-3 bg-[#080808]/80 backdrop-blur-xl">
             <button type="button" onClick={onClose}
               className="shrink-0 w-9 h-9 rounded-xl flex items-center justify-center text-[#A8A29E] hover:text-[#EDE5D4] hover:bg-white/[0.06] transition-colors"
               aria-label="Minimize voice room" title="Minimize">
@@ -2316,10 +2289,120 @@ function VoiceStage({
           </header>
 
           <div className="relative flex-1 flex flex-col min-h-0">
-            <div className="flex-1 min-h-0 overflow-y-auto px-3 sm:px-6 py-4 sm:py-6">
+            <div className="flex-1 min-h-0 overflow-y-auto px-3 sm:px-6 py-4 sm:py-6 flex flex-col gap-4">
+              {screenShare && screenShare.closedByMe && (
+                <div className="w-full max-w-5xl mx-auto px-4 py-2.5 rounded-2xl bg-[#141416] border border-white/[0.08] flex items-center justify-between gap-3 shrink-0">
+                  <div className="flex items-center gap-2.5 min-w-0">
+                    <span className="w-2 h-2 rounded-full bg-[#22C55E] animate-pulse shrink-0" />
+                    <span className="text-[12.5px] text-[#EDE5D4] truncate">
+                      {screenShare.displayName || 'Someone'} is sharing their screen
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={onReopenRemoteScreenForMe}
+                    className="h-7 px-3.5 rounded-lg bg-[#22C55E]/20 hover:bg-[#22C55E]/30 text-[#4ADE80] text-[11.5px] font-semibold shrink-0 transition-colors"
+                  >
+                    Watch stream
+                  </button>
+                </div>
+              )}
+              {screenShare && !screenShare.closedByMe && (
+                <div
+                  ref={screenContainerRef}
+                  style={isScreenFs ? { width: '100vw', height: '100vh', maxWidth: 'none', borderRadius: 0 } : undefined}
+                  className="w-full max-w-5xl mx-auto rounded-2xl bg-[#050506] border border-white/[0.1] overflow-hidden shadow-2xl shrink-0 flex flex-col"
+                >
+                  <div className="px-3.5 py-2 bg-[#121215] border-b border-white/[0.07] flex items-center justify-between gap-2 shrink-0 flex-wrap">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-[#22C55E]/15 text-[#4ADE80] text-[10px] font-bold uppercase tracking-wider shrink-0">
+                        <span className="w-1.5 h-1.5 rounded-full bg-[#22C55E] animate-pulse" />
+                        HD Live
+                      </span>
+                      <span className="text-[12.5px] font-semibold text-[#F4F4F5] truncate">
+                        {screenShare.isLocal ? 'You are sharing your screen' : (screenShare.displayName ? screenShare.displayName + "'s screen" : 'Live screen')}
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      <div className="hidden sm:flex items-center gap-0.5 bg-white/[0.05] rounded-full px-1.5 py-0.5 mr-1">
+                        {['🔥', '😂', '❤️', '👏', '😮'].map((emo) => (
+                          <button
+                            key={emo}
+                            type="button"
+                            onClick={() => onSendScreenReaction(emo)}
+                            className="w-6 h-6 rounded-full hover:bg-white/[0.12] flex items-center justify-center text-[13px] leading-none transition-transform active:scale-125"
+                            title={`Send ${emo}`}
+                          >
+                            {emo}
+                          </button>
+                        ))}
+                      </div>
+                      <button
+                        type="button"
+                        onClick={toggleScreenFullscreen}
+                        className="h-7 px-2.5 rounded-lg bg-white/[0.06] hover:bg-white/[0.12] flex items-center gap-1.5 text-[11px] font-medium text-[#E4E4E7] hover:text-white transition-colors"
+                        title="Toggle fullscreen"
+                        aria-label="Toggle fullscreen"
+                      >
+                        <Maximize2 className="w-3.5 h-3.5" />
+                        <span className="hidden sm:inline">{isScreenFs ? 'Exit' : 'Fullscreen'}</span>
+                      </button>
+                      {screenShare.isLocal ? (
+                        <button
+                          type="button"
+                          onClick={onStopScreenShare}
+                          className="h-7 px-2.5 rounded-lg bg-[#B91C1C] hover:bg-[#991B1B] text-white text-[11px] font-semibold"
+                        >
+                          Stop sharing
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={onCloseRemoteScreenForMe}
+                          className="h-7 px-2.5 rounded-lg bg-white/[0.08] hover:bg-[#B91C1C]/80 text-[#E4E4E7] hover:text-white text-[11px] font-medium inline-flex items-center gap-1 transition-colors"
+                          title="Disconnect and close stream for you"
+                        >
+                          <X className="w-3.5 h-3.5" />
+                          Close stream
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                  <div
+                    onDoubleClick={toggleScreenFullscreen}
+                    className="relative flex-1 w-full bg-black flex items-center justify-center overflow-hidden"
+                    style={{ minHeight: isScreenFs ? 'calc(100vh - 44px)' : '320px', maxHeight: isScreenFs ? 'calc(100vh - 44px)' : '58vh' }}
+                  >
+                    <video
+                      ref={screenVideoRef}
+                      autoPlay
+                      playsInline
+                      className="w-full h-full object-contain"
+                      style={{ maxHeight: isScreenFs ? 'calc(100vh - 44px)' : '58vh' }}
+                    />
+                    <div className="pointer-events-none absolute inset-0 overflow-hidden">
+                      {screenReactions.map((r) => (
+                        <motion.div
+                          key={r.id}
+                          initial={{ opacity: 0, y: 20, scale: 0.7 }}
+                          animate={{ opacity: [0, 1, 1, 0], y: -180, scale: [0.8, 1.2, 1.05] }}
+                          transition={{ duration: 2.4, ease: 'easeOut' }}
+                          style={{ left: `${r.x}%` }}
+                          className="absolute bottom-6 flex flex-col items-center gap-0.5"
+                        >
+                          <span className="text-[28px] drop-shadow-[0_4px_12px_rgba(0,0,0,0.8)]">{r.emoji}</span>
+                          <span className="px-1.5 py-0.5 rounded-full bg-black/70 text-[9.5px] font-semibold text-white/90 whitespace-nowrap">
+                            {r.senderName}
+                          </span>
+                        </motion.div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              )}
               <div
-                className={`grid gap-2 sm:gap-3 ${gridClass}`}
-                style={{ gridAutoRows: tiles.length >= 5 ? 'minmax(120px, 1fr)' : 'minmax(150px, 1fr)' }}
+                className={`w-full grid gap-2 sm:gap-3 ${screenShare && !screenShare.closedByMe ? 'grid-cols-2 sm:grid-cols-4 max-w-5xl mx-auto' : gridClass + ' flex-1'}`}
+                style={{ gridAutoRows: screenShare && !screenShare.closedByMe ? 'minmax(112px, 128px)' : (tiles.length >= 5 ? 'minmax(120px, 1fr)' : 'minmax(150px, 1fr)') }}
               >
                 {tiles.map((tile, idx) => (
                   <StageTile
@@ -2340,7 +2423,7 @@ function VoiceStage({
                 <motion.div
                   initial={{ height: 0, opacity: 0 }} animate={{ height: 'min(40vh, 340px)', opacity: 1 }} exit={{ height: 0, opacity: 0 }}
                   transition={{ type: 'spring', stiffness: 300, damping: 32 }}
-                  className="shrink-0 border-t border-white/[0.08] bg-[#0B0A08]/95 backdrop-blur-xl overflow-hidden"
+                  className="shrink-0 border-t border-white/[0.08] bg-[#080808]/95 backdrop-blur-xl overflow-hidden"
                 >
                   <div className="flex flex-col" style={{ height: 'min(40vh, 340px)' }}>
                     <div className="shrink-0 px-4 py-2 flex items-center justify-between border-b border-white/[0.05]">
@@ -2420,6 +2503,28 @@ function VoiceStage({
                   aria-label={deafened ? 'Undeafen' : 'Deafen (mute everyone)'}>
                   {deafened ? <VolumeX className="w-5 h-5" /> : <Volume2 className="w-5 h-5" />}
                 </button>
+                {canShareScreen && (
+                  <button
+                    type="button"
+                    disabled={Boolean(screenShare && !isSharingScreen && !screenShare.closedByMe)}
+                    onClick={() => { if (isSharingScreen) onStopScreenShare(); else void onStartScreenShare(); }}
+                    className={`h-12 w-12 rounded-full flex items-center justify-center transition-colors disabled:opacity-35 disabled:cursor-not-allowed ${
+                      isSharingScreen
+                        ? 'bg-[#22C55E] text-[#080808] shadow-[0_0_20px_-4px_rgba(34,197,94,0.75)]'
+                        : 'bg-white/[0.06] text-[#EDE5D4] hover:bg-white/[0.12]'
+                    }`}
+                    title={
+                      isSharingScreen
+                        ? 'Stop sharing screen'
+                        : (screenShare && !screenShare.closedByMe)
+                        ? `${screenShare.displayName} is already sharing`
+                        : 'Share screen (PC)'
+                    }
+                    aria-label={isSharingScreen ? 'Stop sharing screen' : 'Share screen'}
+                  >
+                    {isSharingScreen ? <MonitorOff className="w-5 h-5" /> : <MonitorUp className="w-5 h-5" />}
+                  </button>
+                )}
                 <button type="button" onClick={onLeave}
                   className="h-12 px-5 rounded-full bg-[#B91C1C] hover:bg-[#991B1B] text-white flex items-center justify-center gap-2 text-[13px] font-semibold transition-colors">
                   <PhoneOff className="w-4 h-4" /> Leave
@@ -2506,7 +2611,7 @@ const TypingIndicator = React.memo(function TypingIndicator({
     <div className="px-4 sm:px-6 pb-2 flex items-center gap-2">
       <div className="flex -space-x-2">
         {users.slice(0, 3).map((u) => (
-          <div key={u.userId} className="rounded-full ring-2 ring-[#0B0A08]">
+          <div key={u.userId} className="rounded-full ring-2 ring-[#080808]">
             <Avatar name={u.handle || 'User'} size="sm" />
           </div>
         ))}
@@ -3461,10 +3566,10 @@ export default function GroupPane(): React.JSX.Element {
   const openMenu = useCallback((g: GroupDto) => setChatMenuGroup(g), []);
 
   return (
-    <div className="flex h-full w-full bg-[#0B0A08] text-[#EDE5D4] overflow-hidden">
+    <div className="flex h-full w-full bg-[#080808] text-[#EDE5D4] overflow-hidden">
       {/* ─── LEFT: Groups list ────────────────────────────── */}
       <div
-        className={`${hasActiveGroup ? 'hidden md:flex' : 'flex'} groups-sidebar w-full md:w-[340px] md:shrink-0 border-r border-white/[0.05] bg-[#0F0D0A] flex-col h-full relative overflow-hidden`}
+        className={`${hasActiveGroup ? 'hidden md:flex' : 'flex'} groups-sidebar w-full md:w-[340px] md:shrink-0 border-r border-white/[0.05] bg-[#0E0E0E] flex-col h-full relative overflow-hidden`}
       >
         <style>{`
           .groups-sidebar-scroll {
@@ -3618,7 +3723,7 @@ export default function GroupPane(): React.JSX.Element {
       </div>
 
       {/* RIGHT: Channel view */}
-      <div className={`${hasActiveGroup ? 'flex' : 'hidden md:flex'} flex-1 flex-col h-full min-w-0 bg-[#0B0A08] relative`}>
+      <div className={`${hasActiveGroup ? 'flex' : 'hidden md:flex'} flex-1 flex-col h-full min-w-0 bg-[#080808] relative`}>
         {activeGroupId && activeGroup ? (
           <>
             <div className="h-16 px-3 sm:px-5 border-b border-white/[0.05] flex items-center justify-between shrink-0 gap-2">
@@ -3654,7 +3759,7 @@ export default function GroupPane(): React.JSX.Element {
                     className="relative w-9 h-9 rounded-xl flex items-center justify-center bg-[#22C55E]/15 text-[#22C55E] ring-1 ring-inset ring-[#22C55E]/40 hover:bg-[#22C55E]/25 transition-colors shrink-0"
                     title="Open voice room" aria-label="Open voice room">
                     <Phone className="w-[17px] h-[17px]" />
-                    <span className="absolute -top-1 -right-1 min-w-[16px] h-[16px] px-1 rounded-full bg-[#22C55E] text-[9px] font-bold text-white flex items-center justify-center ring-2 ring-[#0B0A08]">
+                    <span className="absolute -top-1 -right-1 min-w-[16px] h-[16px] px-1 rounded-full bg-[#22C55E] text-[9px] font-bold text-white flex items-center justify-center ring-2 ring-[#080808]">
                       {call.participants.length + 1}
                     </span>
                   </button>
@@ -3663,7 +3768,7 @@ export default function GroupPane(): React.JSX.Element {
                     className="relative w-9 h-9 rounded-xl flex items-center justify-center text-[#22C55E] bg-[#22C55E]/10 hover:bg-[#22C55E]/20 transition-colors shrink-0 ring-1 ring-inset ring-[#22C55E]/30"
                     title="Join call" aria-label="Join call">
                     <Phone className="w-[17px] h-[17px]" />
-                    <span className="absolute -top-1 -right-1 min-w-[16px] h-[16px] px-1 rounded-full bg-[#22C55E] text-[9px] font-bold text-white flex items-center justify-center ring-2 ring-[#0B0A08]">
+                    <span className="absolute -top-1 -right-1 min-w-[16px] h-[16px] px-1 rounded-full bg-[#22C55E] text-[9px] font-bold text-white flex items-center justify-center ring-2 ring-[#080808]">
                       {call.activeCallers.length + 1}
                     </span>
                   </button>
@@ -3725,7 +3830,7 @@ export default function GroupPane(): React.JSX.Element {
                       if (item.type === 'date') {
                         return (
                           <div key={item.key} className="sticky top-0 z-10 flex justify-center py-2 select-none pointer-events-none">
-                            <span className="px-3.5 py-1 rounded-full bg-[#0B0A08]/90 backdrop-blur-sm border border-white/[0.06] text-[10.5px] uppercase tracking-[0.14em] text-[#6B6259] font-bold shadow-[0_4px_12px_-2px_rgba(0,0,0,0.4)]">
+                            <span className="px-3.5 py-1 rounded-full bg-[#080808]/90 backdrop-blur-sm border border-white/[0.06] text-[10.5px] uppercase tracking-[0.14em] text-[#6B6259] font-bold shadow-[0_4px_12px_-2px_rgba(0,0,0,0.4)]">
                               {item.label}
                             </span>
                           </div>
@@ -3774,6 +3879,7 @@ export default function GroupPane(): React.JSX.Element {
                 onToggleDeafen={toggleDeafen}
                 onLeave={call.leave}
                 onJoin={() => void handleGroupCallClick()}
+                screenSharingBy={call.screenShare ? (call.screenShare.isLocal ? 'You' : call.screenShare.displayName) : null}
                 onOpenStage={() => setCallExpanded(true)}
               />
             </div>
@@ -3784,7 +3890,7 @@ export default function GroupPane(): React.JSX.Element {
                 aria-label="Jump to latest">
                 <ChevronDown className="w-5 h-5" />
                 {unreadWhileScrolled > 0 && (
-                  <span className="absolute -top-1 -right-1 min-w-[18px] h-[18px] px-1 rounded-full bg-[#22C55E] text-[10px] font-bold text-white flex items-center justify-center ring-2 ring-[#0B0A08]">
+                  <span className="absolute -top-1 -right-1 min-w-[18px] h-[18px] px-1 rounded-full bg-[#22C55E] text-[10px] font-bold text-white flex items-center justify-center ring-2 ring-[#080808]">
                     {unreadWhileScrolled > 99 ? '99+' : unreadWhileScrolled}
                   </span>
                 )}
@@ -3893,9 +3999,18 @@ export default function GroupPane(): React.JSX.Element {
             avatarUrl: myFreshProfile?.avatarUrl ?? user.avatarUrl ?? null,
           } : undefined}
           messages={visibleMessages}
+          canShareScreen={call.canShareScreen}
+          isSharingScreen={call.isSharingScreen}
+          screenShare={call.screenShare}
+          screenReactions={call.screenReactions}
           onToggleMute={call.toggleMute}
           onToggleDeafen={toggleDeafen}
           onToggleLocalMute={toggleLocalMute}
+          onStartScreenShare={call.startScreenShare}
+          onStopScreenShare={call.stopScreenShare}
+          onCloseRemoteScreenForMe={call.closeRemoteScreenForMe}
+          onReopenRemoteScreenForMe={call.reopenRemoteScreenForMe}
+          onSendScreenReaction={call.sendScreenReaction}
           onLeave={call.leave}
           onSendMessage={handleSendText}
         />
@@ -3920,13 +4035,13 @@ export default function GroupPane(): React.JSX.Element {
                   <label className="block text-[11px] uppercase tracking-wider text-[#A8A29E] font-medium mb-1.5">Channel Name</label>
                   <input type="text" required value={newGroupName} onChange={(e) => setNewGroupName(e.target.value)}
                     placeholder="e.g. general-discussion"
-                    className="w-full px-3 py-2 rounded-lg bg-[#0F0D0A] border border-white/[0.08] text-[#EDE5D4] text-[13px] outline-none focus:border-[#D97706]/60 transition-colors" />
+                    className="w-full px-3 py-2 rounded-lg bg-[#0E0E0E] border border-white/[0.08] text-[#EDE5D4] text-[13px] outline-none focus:border-[#D97706]/60 transition-colors" />
                 </div>
                 <div>
                   <label className="block text-[11px] uppercase tracking-wider text-[#A8A29E] font-medium mb-1.5">Description (optional)</label>
                   <input type="text" value={newGroupDescription} onChange={(e) => setNewGroupDescription(e.target.value)}
                     placeholder="What is this channel about?"
-                    className="w-full px-3 py-2 rounded-lg bg-[#0F0D0A] border border-white/[0.08] text-[#EDE5D4] text-[13px] outline-none focus:border-[#D97706]/60 transition-colors" />
+                    className="w-full px-3 py-2 rounded-lg bg-[#0E0E0E] border border-white/[0.08] text-[#EDE5D4] text-[13px] outline-none focus:border-[#D97706]/60 transition-colors" />
                 </div>
                 <div className="flex items-center justify-end gap-2 pt-2">
                   <button type="button" onClick={() => setCreateModalOpen(false)}
