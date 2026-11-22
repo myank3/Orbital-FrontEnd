@@ -22,7 +22,7 @@ import { useAuth } from '../context/AuthContext';
 import { useCall } from '../context/CallContext';
 import { presenceStore } from '../services/presenceStore';
 import { useGroupCall, isCallSignal, MAX_PARTICIPANTS, ScreenShareState, ScreenReactionBurst } from '../hooks/useGroupCall';
-import { Phone, PhoneOff, MicOff, Mic, Volume2, VolumeX, MessageSquare, MonitorUp, MonitorOff, Maximize2 } from 'lucide-react';
+import { Phone, PhoneOff, MicOff, Mic, Volume2, VolumeX, MessageSquare, MonitorUp, MonitorOff, Maximize2, Minimize2 } from 'lucide-react';
 import { playReceive, playSend, unlockSounds } from '../services/sounds';
 
 import {
@@ -2098,10 +2098,14 @@ function VoiceStage({
   const [isScreenFs, setIsScreenFs] = useState(false);
 
   useEffect(() => {
-    const onFsChange = () => setIsScreenFs(Boolean(document.fullscreenElement));
+    const onFsChange = () => {
+      if (!document.fullscreenElement && isScreenFs) {
+        // Keep CSS fullscreen active if user toggled it via button
+      }
+    };
     document.addEventListener('fullscreenchange', onFsChange);
     return () => document.removeEventListener('fullscreenchange', onFsChange);
-  }, []);
+  }, [isScreenFs]);
 
   useEffect(() => {
     const el = screenVideoRef.current;
@@ -2114,18 +2118,26 @@ function VoiceStage({
       el.muted = screenShare.isLocal || deafened;
     } else {
       el.srcObject = null;
+      setIsScreenFs(false);
     }
   }, [screenShare, deafened]);
 
+
   const toggleScreenFullscreen = useCallback(() => {
-    const container = screenContainerRef.current;
-    if (document.fullscreenElement) {
-      void document.exitFullscreen().catch(() => {});
-      return;
-    }
-    if (container?.requestFullscreen) {
-      void container.requestFullscreen().catch(() => {});
-    }
+    setIsScreenFs((prev) => {
+      const next = !prev;
+      if (!next) {
+          try {
+          (screen as unknown as { orientation?: { unlock?: () => void } }).orientation?.unlock?.();
+        } catch { /* ignore */ }
+        if (document.fullscreenElement) {
+          void document.exitFullscreen().catch(() => {});
+        }
+      } else if (screenContainerRef.current?.requestFullscreen) {
+        void screenContainerRef.current.requestFullscreen().catch(() => {});
+      }
+      return next;
+    });
   }, []);
   const [toast, setToast] = useState<{ id: number; sender: string; text: string; sentAt: string } | null>(null);
   const lastSeenIdRef = useRef<number>(-1);
@@ -2310,76 +2322,47 @@ function VoiceStage({
               {screenShare && !screenShare.closedByMe && (
                 <div
                   ref={screenContainerRef}
-                  style={isScreenFs ? { width: '100vw', height: '100vh', maxWidth: 'none', borderRadius: 0 } : undefined}
-                  className="w-full max-w-5xl mx-auto rounded-2xl bg-[#050506] border border-white/[0.1] overflow-hidden shadow-2xl shrink-0 flex flex-col"
+                  style={
+                    isScreenFs
+                      ? {
+                          paddingTop: 'env(safe-area-inset-top, 12px)',
+                          paddingBottom: 'env(safe-area-inset-bottom, 12px)',
+                          paddingLeft: 'env(safe-area-inset-left, 0px)',
+                          paddingRight: 'env(safe-area-inset-right, 0px)',
+                        }
+                      : undefined
+                  }
+                  className={
+                    isScreenFs
+                      ? 'fixed inset-0 z-[70] bg-[#050506] flex flex-col justify-between overflow-hidden'
+                      : 'w-full max-w-5xl mx-auto rounded-2xl bg-[#050506] border border-white/[0.1] overflow-hidden shadow-2xl shrink-0 flex flex-col'
+                  }
                 >
-                  <div className="px-3.5 py-2 bg-[#121215] border-b border-white/[0.07] flex items-center justify-between gap-2 shrink-0 flex-wrap">
-                    <div className="flex items-center gap-2 min-w-0">
-                      <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-[#22C55E]/15 text-[#4ADE80] text-[10px] font-bold uppercase tracking-wider shrink-0">
-                        <span className="w-1.5 h-1.5 rounded-full bg-[#22C55E] animate-pulse" />
-                        HD Live
-                      </span>
-                      <span className="text-[12.5px] font-semibold text-[#F4F4F5] truncate">
-                        {screenShare.isLocal ? 'You are sharing your screen' : (screenShare.displayName ? screenShare.displayName + "'s screen" : 'Live screen')}
-                      </span>
-                    </div>
-                    <div className="flex items-center gap-1.5 shrink-0">
-                      <div className="hidden sm:flex items-center gap-0.5 bg-white/[0.05] rounded-full px-1.5 py-0.5 mr-1">
-                        {['🔥', '😂', '❤️', '👏', '😮'].map((emo) => (
-                          <button
-                            key={emo}
-                            type="button"
-                            onClick={() => onSendScreenReaction(emo)}
-                            className="w-6 h-6 rounded-full hover:bg-white/[0.12] flex items-center justify-center text-[13px] leading-none transition-transform active:scale-125"
-                            title={`Send ${emo}`}
-                          >
-                            {emo}
-                          </button>
-                        ))}
-                      </div>
-                      <button
-                        type="button"
-                        onClick={toggleScreenFullscreen}
-                        className="h-7 px-2.5 rounded-lg bg-white/[0.06] hover:bg-white/[0.12] flex items-center gap-1.5 text-[11px] font-medium text-[#E4E4E7] hover:text-white transition-colors"
-                        title="Toggle fullscreen"
-                        aria-label="Toggle fullscreen"
-                      >
-                        <Maximize2 className="w-3.5 h-3.5" />
-                        <span className="hidden sm:inline">{isScreenFs ? 'Exit' : 'Fullscreen'}</span>
-                      </button>
-                      {screenShare.isLocal ? (
-                        <button
-                          type="button"
-                          onClick={onStopScreenShare}
-                          className="h-7 px-2.5 rounded-lg bg-[#B91C1C] hover:bg-[#991B1B] text-white text-[11px] font-semibold"
-                        >
-                          Stop sharing
-                        </button>
-                      ) : (
-                        <button
-                          type="button"
-                          onClick={onCloseRemoteScreenForMe}
-                          className="h-7 px-2.5 rounded-lg bg-white/[0.08] hover:bg-[#B91C1C]/80 text-[#E4E4E7] hover:text-white text-[11px] font-medium inline-flex items-center gap-1 transition-colors"
-                          title="Disconnect and close stream for you"
-                        >
-                          <X className="w-3.5 h-3.5" />
-                          Close stream
-                        </button>
-                      )}
-                    </div>
+                  {/* Minimal top label bar (zero buttons near Android notch) */}
+                  <div className="px-4 py-2 bg-[#121215]/90 border-b border-white/[0.07] flex items-center gap-2 shrink-0">
+                    <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-[#22C55E]/15 text-[#4ADE80] text-[10px] font-bold uppercase tracking-wider shrink-0">
+                      <span className="w-1.5 h-1.5 rounded-full bg-[#22C55E] animate-pulse" />
+                      HD Live
+                    </span>
+                    <span className="text-[12.5px] font-semibold text-[#F4F4F5] truncate">
+                      {screenShare.isLocal ? 'You are sharing your screen' : (screenShare.displayName ? screenShare.displayName + "'s screen" : 'Live screen')}
+                    </span>
                   </div>
+
+                  {/* Video viewport + floating emoji reactions */}
                   <div
                     onDoubleClick={toggleScreenFullscreen}
-                    className="relative flex-1 w-full bg-black flex items-center justify-center overflow-hidden"
-                    style={{ minHeight: isScreenFs ? 'calc(100vh - 44px)' : '320px', maxHeight: isScreenFs ? 'calc(100vh - 44px)' : '58vh' }}
+                    className="relative flex-1 w-full bg-black flex items-center justify-center overflow-hidden min-h-0"
+                    style={!isScreenFs ? { minHeight: '240px', maxHeight: '54vh' } : undefined}
                   >
                     <video
                       ref={screenVideoRef}
                       autoPlay
                       playsInline
                       className="w-full h-full object-contain"
-                      style={{ maxHeight: isScreenFs ? 'calc(100vh - 44px)' : '58vh' }}
+                      style={!isScreenFs ? { maxHeight: '54vh' } : undefined}
                     />
+
                     <div className="pointer-events-none absolute inset-0 overflow-hidden">
                       {screenReactions.map((r) => (
                         <motion.div
@@ -2396,6 +2379,56 @@ function VoiceStage({
                           </span>
                         </motion.div>
                       ))}
+                    </div>
+                  </div>
+
+                  {/* Bottom HUD bar (clear of notch): Emojis + Rotate + Fullscreen/Minimize + Close stream */}
+                  <div className="px-3 py-2.5 bg-[#121215] border-t border-white/[0.08] flex items-center justify-between gap-2 shrink-0 flex-wrap">
+                    <div className="flex items-center gap-0.5 bg-white/[0.05] rounded-full px-1.5 py-0.5">
+                      {['🔥', '😂', '❤️', '👏', '😮'].map((emo) => (
+                        <button
+                          key={emo}
+                          type="button"
+                          onClick={() => onSendScreenReaction(emo)}
+                          className="w-7 h-7 rounded-full hover:bg-white/[0.12] flex items-center justify-center text-[14px] leading-none transition-transform active:scale-125"
+                          title={`Send ${emo}`}
+                        >
+                          {emo}
+                        </button>
+                      ))}
+                    </div>
+
+                    <div className="flex items-center gap-1.5 shrink-0 ml-auto">
+                      <button
+                        type="button"
+                        onClick={toggleScreenFullscreen}
+                        className="h-8 px-2.5 rounded-lg bg-white/[0.08] hover:bg-white/[0.15] flex items-center gap-1.5 text-[11px] font-medium text-[#E4E4E7] hover:text-white transition-colors"
+                        title={isScreenFs ? 'Minimize stream' : 'Fullscreen stream'}
+                        aria-label={isScreenFs ? 'Minimize stream' : 'Fullscreen stream'}
+                      >
+                        {isScreenFs ? <Minimize2 className="w-3.5 h-3.5" /> : <Maximize2 className="w-3.5 h-3.5" />}
+                        <span>{isScreenFs ? 'Minimize' : 'Fullscreen'}</span>
+                      </button>
+
+                      {screenShare.isLocal ? (
+                        <button
+                          type="button"
+                          onClick={onStopScreenShare}
+                          className="h-8 px-3 rounded-lg bg-[#B91C1C] hover:bg-[#991B1B] text-white text-[11px] font-semibold"
+                        >
+                          Stop sharing
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={onCloseRemoteScreenForMe}
+                          className="h-8 px-3 rounded-lg bg-[#B91C1C]/90 hover:bg-[#B91C1C] text-white text-[11px] font-semibold inline-flex items-center gap-1 transition-colors"
+                          title="Close stream for you"
+                        >
+                          <X className="w-3.5 h-3.5" />
+                          Close stream
+                        </button>
+                      )}
                     </div>
                   </div>
                 </div>
