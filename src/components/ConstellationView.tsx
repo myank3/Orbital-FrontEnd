@@ -465,7 +465,7 @@ const Tier = React.memo(function Tier({
                     onMouseLeave={onLeave}
                     onFocus={() => onHover(f.userId)}
                     onBlur={onLeave}
-                    className="relative flex flex-col items-center focus:outline-none rounded-full touch-manipulation select-none"
+                    className="relative flex flex-col items-center focus:outline-none rounded-full cursor-pointer touch-manipulation select-none"
                     style={{
                       WebkitTapHighlightColor: 'transparent',
                       transform: isHovered ? 'scale(1.15)' : 'scale(1)',
@@ -700,7 +700,6 @@ export default function ConstellationView({ friends: friendsProp }: Constellatio
       const angle = Math.atan2(e.clientY - cy, e.clientX - cx) * (180 / Math.PI);
 
       pausedRef.current = false;
-      try { el.setPointerCapture(e.pointerId); } catch { /* ignore */ }
 
       dragRef.current = {
         active: true,
@@ -728,7 +727,10 @@ export default function ConstellationView({ friends: friendsProp }: Constellatio
 
       const dx = e.clientX - d.startX;
       const dy = e.clientY - d.startY;
-      if (!d.moved && Math.hypot(dx, dy) > DRAG_THRESHOLD) d.moved = true;
+      if (!d.moved && Math.hypot(dx, dy) > DRAG_THRESHOLD) {
+        d.moved = true;
+        try { stageRef.current?.setPointerCapture(e.pointerId); } catch { /* ignore */ }
+      }
       if (!d.moved) return;
 
       const angle = pointerAngle(e.clientX, e.clientY);
